@@ -1,9 +1,21 @@
 defmodule MonkeyClaw do
   @moduledoc """
-  MonkeyClaw keeps the contexts that define your domain
-  and business logic.
+  MonkeyClaw — secure-by-default personal AI assistant on BeamAgent.
 
-  Contexts are also responsible for managing your data, regardless
-  if it comes from the database, an external API or others.
+  This is the domain layer providing contexts for:
+
+    * Agent session management via `MonkeyClaw.AgentBridge`
+    * Persona configuration (planned)
+    * Workspace and channel organization (planned)
+    * Workflow orchestration (planned)
+
+  ## Security Model
+
+  MonkeyClaw inherits BEAM's process isolation and adds:
+
+    * Default-deny policy for all system access
+    * Audit trail for every agent action via BeamAgent.Journal
+    * No implicit filesystem or network access
+    * Encrypted distribution for multi-node deployments
   """
 end

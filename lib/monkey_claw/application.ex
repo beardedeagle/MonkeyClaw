@@ -14,8 +14,9 @@ defmodule MonkeyClaw.Application do
        repos: Application.fetch_env!(:monkey_claw, :ecto_repos), skip: skip_migrations?()},
       {DNSCluster, query: Application.get_env(:monkey_claw, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: MonkeyClaw.PubSub},
-      # Start a worker by calling: MonkeyClaw.Worker.start_link(arg)
-      # {MonkeyClaw.Worker, arg},
+      # AgentBridge: session registry and supervisor
+      {Registry, keys: :unique, name: MonkeyClaw.AgentBridge.SessionRegistry},
+      MonkeyClaw.AgentBridge.SessionSupervisor,
       # Start to serve requests, typically the last entry
       MonkeyClawWeb.Endpoint
     ]
