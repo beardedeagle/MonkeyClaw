@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "server",
+  "dolt_database": "MonkeyClaw",
+  "project_id": "5e46ea59-6cab-4a14-8a4c-2e4e0e46ace8"
+}
