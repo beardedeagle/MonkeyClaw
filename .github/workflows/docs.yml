@@ -1,0 +1,75 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Docs
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: monkey_claw
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: monkey_claw
+
+      - uses: actions/checkout@v6
+        with:
+          repository: beardedeagle/beam-agent
+          path: beam-agent
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: '28'
+          elixir-version: '1.19'
+
+      - name: Restore mix cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            monkey_claw/deps
+            monkey_claw/_build
+            ~/.mix
+            ~/.hex
+          key: docs-${{ runner.os }}-${{ hashFiles('monkey_claw/mix.lock') }}
+          restore-keys: |
+            docs-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+
+      - name: Build docs
+        run: |
+          mkdir -p _site/docs
+          mix docs --output _site/docs
+          cp ../.github/pages/index.html _site/index.html
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: monkey_claw/_site
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
