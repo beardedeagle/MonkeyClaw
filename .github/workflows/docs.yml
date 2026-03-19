@@ -57,7 +57,7 @@ jobs:
         run: |
           mkdir -p _site/docs
           mix docs --output _site/docs
-          cp ../.github/pages/index.html _site/index.html
+          cp .github/pages/index.html _site/index.html
 
       - uses: actions/upload-pages-artifact@v4
         with:
