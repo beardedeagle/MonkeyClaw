@@ -1,0 +1,185 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (Elixir ${{ matrix.elixir }}, OTP ${{ matrix.otp }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - elixir: '1.17'
+            otp: '27'
+          - elixir: '1.18'
+            otp: '27'
+          - elixir: '1.19'
+            otp: '27'
+          - elixir: '1.19'
+            otp: '28'
+    env:
+      MIX_ENV: test
+    defaults:
+      run:
+        working-directory: monkey_claw
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: monkey_claw
+
+      - uses: actions/checkout@v6
+        with:
+          repository: beardedeagle/beam-agent
+          path: beam-agent
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ matrix.otp }}
+          elixir-version: ${{ matrix.elixir }}
+
+      - name: Restore mix cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            monkey_claw/deps
+            monkey_claw/_build
+            ~/.mix
+            ~/.hex
+          key: test-${{ runner.os }}-${{ matrix.elixir }}-otp-${{ matrix.otp }}-${{ hashFiles('monkey_claw/mix.lock') }}
+          restore-keys: |
+            test-${{ runner.os }}-${{ matrix.elixir }}-otp-${{ matrix.otp }}-
+
+      - name: Install dependencies
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+
+      - name: Compile
+        run: mix compile --warnings-as-errors
+
+      - name: Run tests
+        run: mix test
+
+  credo:
+    name: Credo
+    runs-on: ubuntu-latest
+    env:
+      MIX_ENV: test
+    defaults:
+      run:
+        working-directory: monkey_claw
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: monkey_claw
+
+      - uses: actions/checkout@v6
+        with:
+          repository: beardedeagle/beam-agent
+          path: beam-agent
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: '28'
+          elixir-version: '1.19'
+
+      - name: Restore mix cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            monkey_claw/deps
+            monkey_claw/_build
+            ~/.mix
+            ~/.hex
+          key: credo-${{ runner.os }}-${{ hashFiles('monkey_claw/mix.lock') }}
+          restore-keys: |
+            credo-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+
+      - name: Run Credo
+        run: mix credo --strict
+
+  dialyzer:
+    name: Dialyzer
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: monkey_claw
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: monkey_claw
+
+      - uses: actions/checkout@v6
+        with:
+          repository: beardedeagle/beam-agent
+          path: beam-agent
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: '28'
+          elixir-version: '1.19'
+
+      - name: Restore mix cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            monkey_claw/deps
+            monkey_claw/_build
+            ~/.mix
+            ~/.hex
+          key: dialyzer-${{ runner.os }}-${{ hashFiles('monkey_claw/mix.lock') }}
+          restore-keys: |
+            dialyzer-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+
+      - name: Run Dialyzer
+        run: mix dialyzer
+
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: monkey_claw
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: monkey_claw
+
+      - uses: actions/checkout@v6
+        with:
+          repository: beardedeagle/beam-agent
+          path: beam-agent
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: '28'
+          elixir-version: '1.19'
+
+      - name: Install dependencies
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+
+      - name: Check formatting
+        run: mix format --check-formatted
