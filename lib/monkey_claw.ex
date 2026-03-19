@@ -5,7 +5,7 @@ defmodule MonkeyClaw do
   This is the domain layer providing contexts for:
 
     * Agent session management via `MonkeyClaw.AgentBridge`
-    * Persona configuration (planned)
+    * Assistant identity and personas via `MonkeyClaw.Assistants`
     * Workspace and channel organization (planned)
     * Workflow orchestration (planned)
 
