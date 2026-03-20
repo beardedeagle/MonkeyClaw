@@ -178,6 +178,7 @@
     }
 
     .arch-layer.arch-product { border-color: var(--mainLight); }
+    .arch-layer.arch-bridge { border-color: hsl(190, 50%, 58%); }
     .arch-layer.arch-substrate { border-color: hsl(250, 68%, 69%); }
 
     .arch-label {
@@ -282,8 +283,10 @@
   <section>
     <h2 class="section-title">Architecture</h2>
     <p class="section-desc">
-      MonkeyClaw is the product layer. BeamAgent is the runtime substrate.
-      Clean separation of concerns, connected through a public Elixir API.
+      MonkeyClaw is the product layer, BeamAgent is the runtime substrate,
+      and the bridge layers in between translate domain objects into agent
+      operations. Clean separation of concerns, connected through a public
+      Elixir API.
     </p>
     <div class="arch">
       <div class="arch-layer arch-product">
@@ -296,17 +299,17 @@
         <div class="arch-content">MonkeyClaw &mdash; assistants &middot; workspaces &middot; channels</div>
       </div>
       <div class="arch-arrow">&#9660;</div>
-      <div class="arch-layer">
+      <div class="arch-layer arch-bridge">
         <div class="arch-label">Extension Layer</div>
         <div class="arch-content">Plug pipelines &mdash; hooks &middot; contexts &middot; pipelines</div>
       </div>
       <div class="arch-arrow">&#9660;</div>
-      <div class="arch-layer">
+      <div class="arch-layer arch-bridge">
         <div class="arch-label">Agent Bridge</div>
         <div class="arch-content">Backend behaviour &middot; Session GenServer &middot; Telemetry</div>
       </div>
       <div class="arch-arrow">&#9660;</div>
-      <div class="arch-layer">
+      <div class="arch-layer arch-bridge">
         <div class="arch-label">Elixir API</div>
         <div class="arch-content">beam_agent_ex &mdash; sessions &middot; threads &middot; memory &middot; policy</div>
       </div>
