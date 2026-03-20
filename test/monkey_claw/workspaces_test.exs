@@ -5,22 +5,7 @@ defmodule MonkeyClaw.WorkspacesTest do
   alias MonkeyClaw.Workspaces
   alias MonkeyClaw.Workspaces.{Channel, Workspace}
 
-  @valid_workspace_attrs %{name: "Dev Project"}
-  @full_workspace_attrs %{
-    name: "Full Workspace",
-    description: "A complete workspace",
-    status: :active
-  }
-
-  defp create_workspace(attrs \\ @valid_workspace_attrs) do
-    {:ok, workspace} = Workspaces.create_workspace(attrs)
-    workspace
-  end
-
-  defp create_assistant(name \\ "Test Assistant") do
-    {:ok, assistant} = Assistants.create_assistant(%{name: name, backend: :claude})
-    assistant
-  end
+  import MonkeyClaw.Factory
 
   # ──────────────────────────────────────────────
   # Workspace CRUD
@@ -30,7 +15,7 @@ defmodule MonkeyClaw.WorkspacesTest do
 
   describe "create_workspace/1" do
     test "creates with required attrs" do
-      assert {:ok, %Workspace{} = workspace} = Workspaces.create_workspace(@valid_workspace_attrs)
+      assert {:ok, %Workspace{} = workspace} = Workspaces.create_workspace(%{name: "Dev Project"})
       assert workspace.name == "Dev Project"
       assert workspace.status == :active
       assert workspace.assistant_id == nil
@@ -38,8 +23,14 @@ defmodule MonkeyClaw.WorkspacesTest do
     end
 
     test "creates with all fields" do
-      assistant = create_assistant()
-      attrs = Map.put(@full_workspace_attrs, :assistant_id, assistant.id)
+      assistant = insert_assistant!()
+
+      attrs = %{
+        name: "Full Workspace",
+        description: "A complete workspace",
+        status: :active,
+        assistant_id: assistant.id
+      }
 
       assert {:ok, %Workspace{} = workspace} = Workspaces.create_workspace(attrs)
       assert workspace.name == "Full Workspace"
@@ -54,31 +45,31 @@ defmodule MonkeyClaw.WorkspacesTest do
     end
 
     test "fails with duplicate name" do
-      create_workspace()
-      assert {:error, changeset} = Workspaces.create_workspace(@valid_workspace_attrs)
+      workspace = insert_workspace!()
+      assert {:error, changeset} = Workspaces.create_workspace(%{name: workspace.name})
       assert "has already been taken" in errors_on(changeset).name
     end
 
     test "fails with nonexistent assistant_id" do
-      attrs = Map.put(@valid_workspace_attrs, :assistant_id, Ecto.UUID.generate())
+      attrs = %{name: "Dev Project", assistant_id: Ecto.UUID.generate()}
       assert {:error, changeset} = Workspaces.create_workspace(attrs)
       assert "does not exist" in errors_on(changeset).assistant_id
     end
 
     test "generates binary_id" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       assert is_binary(workspace.id)
       assert byte_size(workspace.id) == 36
     end
 
     test "sets timestamps" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       assert %DateTime{} = workspace.inserted_at
       assert %DateTime{} = workspace.updated_at
     end
 
     test "creates with archived status" do
-      attrs = Map.put(@valid_workspace_attrs, :status, :archived)
+      attrs = %{name: "Dev Project", status: :archived}
       assert {:ok, workspace} = Workspaces.create_workspace(attrs)
       assert workspace.status == :archived
     end
@@ -88,7 +79,7 @@ defmodule MonkeyClaw.WorkspacesTest do
 
   describe "get_workspace/1" do
     test "returns workspace by ID" do
-      created = create_workspace()
+      created = insert_workspace!()
       assert {:ok, found} = Workspaces.get_workspace(created.id)
       assert found.id == created.id
       assert found.name == created.name
@@ -109,7 +100,7 @@ defmodule MonkeyClaw.WorkspacesTest do
 
   describe "get_workspace!/1" do
     test "returns workspace by ID" do
-      created = create_workspace()
+      created = insert_workspace!()
       found = Workspaces.get_workspace!(created.id)
       assert found.id == created.id
     end
@@ -129,9 +120,9 @@ defmodule MonkeyClaw.WorkspacesTest do
     end
 
     test "returns all workspaces ordered by name" do
-      create_workspace(%{name: "Charlie"})
-      create_workspace(%{name: "Alpha"})
-      create_workspace(%{name: "Bravo"})
+      insert_workspace!(%{name: "Charlie"})
+      insert_workspace!(%{name: "Alpha"})
+      insert_workspace!(%{name: "Bravo"})
 
       workspaces = Workspaces.list_workspaces()
       assert length(workspaces) == 3
@@ -143,26 +134,26 @@ defmodule MonkeyClaw.WorkspacesTest do
 
   describe "update_workspace/2" do
     test "updates name" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       assert {:ok, updated} = Workspaces.update_workspace(workspace, %{name: "New Name"})
       assert updated.name == "New Name"
     end
 
     test "updates description" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       assert {:ok, updated} = Workspaces.update_workspace(workspace, %{description: "Desc"})
       assert updated.description == "Desc"
     end
 
     test "updates status" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       assert {:ok, updated} = Workspaces.update_workspace(workspace, %{status: :archived})
       assert updated.status == :archived
     end
 
     test "updates assistant_id" do
-      workspace = create_workspace()
-      assistant = create_assistant()
+      workspace = insert_workspace!()
+      assistant = insert_assistant!()
 
       assert {:ok, updated} =
                Workspaces.update_workspace(workspace, %{assistant_id: assistant.id})
@@ -171,26 +162,26 @@ defmodule MonkeyClaw.WorkspacesTest do
     end
 
     test "clears assistant_id" do
-      assistant = create_assistant()
-      workspace = create_workspace(%{name: "With Assistant", assistant_id: assistant.id})
+      assistant = insert_assistant!()
+      workspace = insert_workspace!(%{name: "With Assistant", assistant_id: assistant.id})
       assert {:ok, updated} = Workspaces.update_workspace(workspace, %{assistant_id: nil})
       assert updated.assistant_id == nil
     end
 
     test "fails with invalid attrs" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       assert {:error, _} = Workspaces.update_workspace(workspace, %{name: ""})
     end
 
     test "fails with duplicate name" do
-      create_workspace(%{name: "First"})
-      second = create_workspace(%{name: "Second"})
+      insert_workspace!(%{name: "First"})
+      second = insert_workspace!(%{name: "Second"})
       assert {:error, changeset} = Workspaces.update_workspace(second, %{name: "First"})
       assert "has already been taken" in errors_on(changeset).name
     end
 
     test "fails with nonexistent assistant_id" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
 
       assert {:error, changeset} =
                Workspaces.update_workspace(workspace, %{assistant_id: Ecto.UUID.generate()})
@@ -203,13 +194,13 @@ defmodule MonkeyClaw.WorkspacesTest do
 
   describe "delete_workspace/1" do
     test "deletes the workspace" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       assert {:ok, _} = Workspaces.delete_workspace(workspace)
       assert {:error, :not_found} = Workspaces.get_workspace(workspace.id)
     end
 
     test "cascades deletion to channels" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       {:ok, channel} = Workspaces.create_channel(workspace, %{name: "general"})
 
       assert {:ok, _} = Workspaces.delete_workspace(workspace)
@@ -225,7 +216,7 @@ defmodule MonkeyClaw.WorkspacesTest do
 
   describe "create_channel/2" do
     test "creates with required attrs" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
 
       assert {:ok, %Channel{} = channel} =
                Workspaces.create_channel(workspace, %{name: "general"})
@@ -238,7 +229,7 @@ defmodule MonkeyClaw.WorkspacesTest do
     end
 
     test "creates with all fields" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
 
       attrs = %{
         name: "development",
@@ -254,42 +245,42 @@ defmodule MonkeyClaw.WorkspacesTest do
     end
 
     test "fails without name" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       assert {:error, changeset} = Workspaces.create_channel(workspace, %{})
       assert "can't be blank" in errors_on(changeset).name
     end
 
     test "fails with duplicate name in same workspace" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       {:ok, _} = Workspaces.create_channel(workspace, %{name: "general"})
       assert {:error, changeset} = Workspaces.create_channel(workspace, %{name: "general"})
       assert "has already been taken" in errors_on(changeset).workspace_id
     end
 
     test "allows same channel name in different workspaces" do
-      ws1 = create_workspace(%{name: "Workspace 1"})
-      ws2 = create_workspace(%{name: "Workspace 2"})
+      ws1 = insert_workspace!(%{name: "Workspace 1"})
+      ws2 = insert_workspace!(%{name: "Workspace 2"})
 
       assert {:ok, _} = Workspaces.create_channel(ws1, %{name: "general"})
       assert {:ok, _} = Workspaces.create_channel(ws2, %{name: "general"})
     end
 
     test "generates binary_id" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       {:ok, channel} = Workspaces.create_channel(workspace, %{name: "general"})
       assert is_binary(channel.id)
       assert byte_size(channel.id) == 36
     end
 
     test "sets timestamps" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       {:ok, channel} = Workspaces.create_channel(workspace, %{name: "general"})
       assert %DateTime{} = channel.inserted_at
       assert %DateTime{} = channel.updated_at
     end
 
     test "creates with archived status" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
 
       assert {:ok, channel} =
                Workspaces.create_channel(workspace, %{name: "old", status: :archived})
@@ -302,7 +293,7 @@ defmodule MonkeyClaw.WorkspacesTest do
 
   describe "get_channel/1" do
     test "returns channel by ID" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       {:ok, created} = Workspaces.create_channel(workspace, %{name: "general"})
       assert {:ok, found} = Workspaces.get_channel(created.id)
       assert found.id == created.id
@@ -324,7 +315,7 @@ defmodule MonkeyClaw.WorkspacesTest do
 
   describe "get_channel!/1" do
     test "returns channel by ID" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       {:ok, created} = Workspaces.create_channel(workspace, %{name: "general"})
       found = Workspaces.get_channel!(created.id)
       assert found.id == created.id
@@ -341,12 +332,12 @@ defmodule MonkeyClaw.WorkspacesTest do
 
   describe "list_channels/1" do
     test "returns empty list for empty workspace" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       assert [] = Workspaces.list_channels(workspace)
     end
 
     test "returns channels ordered by pinned desc then name asc" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       {:ok, _} = Workspaces.create_channel(workspace, %{name: "charlie"})
       {:ok, _} = Workspaces.create_channel(workspace, %{name: "alpha", pinned: true})
       {:ok, _} = Workspaces.create_channel(workspace, %{name: "bravo"})
@@ -358,7 +349,7 @@ defmodule MonkeyClaw.WorkspacesTest do
     end
 
     test "accepts workspace_id string" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       {:ok, _} = Workspaces.create_channel(workspace, %{name: "general"})
 
       channels = Workspaces.list_channels(workspace.id)
@@ -366,8 +357,8 @@ defmodule MonkeyClaw.WorkspacesTest do
     end
 
     test "does not return channels from other workspaces" do
-      ws1 = create_workspace(%{name: "Workspace 1"})
-      ws2 = create_workspace(%{name: "Workspace 2"})
+      ws1 = insert_workspace!(%{name: "Workspace 1"})
+      ws2 = insert_workspace!(%{name: "Workspace 2"})
 
       {:ok, _} = Workspaces.create_channel(ws1, %{name: "ws1-channel"})
       {:ok, _} = Workspaces.create_channel(ws2, %{name: "ws2-channel"})
@@ -382,41 +373,41 @@ defmodule MonkeyClaw.WorkspacesTest do
 
   describe "update_channel/2" do
     test "updates name" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       {:ok, channel} = Workspaces.create_channel(workspace, %{name: "old"})
       assert {:ok, updated} = Workspaces.update_channel(channel, %{name: "new"})
       assert updated.name == "new"
     end
 
     test "updates description" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       {:ok, channel} = Workspaces.create_channel(workspace, %{name: "general"})
       assert {:ok, updated} = Workspaces.update_channel(channel, %{description: "Updated"})
       assert updated.description == "Updated"
     end
 
     test "updates status" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       {:ok, channel} = Workspaces.create_channel(workspace, %{name: "general"})
       assert {:ok, updated} = Workspaces.update_channel(channel, %{status: :archived})
       assert updated.status == :archived
     end
 
     test "updates pinned" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       {:ok, channel} = Workspaces.create_channel(workspace, %{name: "general"})
       assert {:ok, updated} = Workspaces.update_channel(channel, %{pinned: true})
       assert updated.pinned == true
     end
 
     test "fails with invalid attrs" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       {:ok, channel} = Workspaces.create_channel(workspace, %{name: "general"})
       assert {:error, _} = Workspaces.update_channel(channel, %{name: ""})
     end
 
     test "fails with duplicate name in same workspace" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       {:ok, _} = Workspaces.create_channel(workspace, %{name: "first"})
       {:ok, second} = Workspaces.create_channel(workspace, %{name: "second"})
       assert {:error, changeset} = Workspaces.update_channel(second, %{name: "first"})
@@ -428,14 +419,14 @@ defmodule MonkeyClaw.WorkspacesTest do
 
   describe "delete_channel/1" do
     test "deletes the channel" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       {:ok, channel} = Workspaces.create_channel(workspace, %{name: "general"})
       assert {:ok, _} = Workspaces.delete_channel(channel)
       assert {:error, :not_found} = Workspaces.get_channel(channel.id)
     end
 
     test "does not delete the workspace" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       {:ok, channel} = Workspaces.create_channel(workspace, %{name: "general"})
       {:ok, _} = Workspaces.delete_channel(channel)
       assert {:ok, _} = Workspaces.get_workspace(workspace.id)
@@ -450,7 +441,7 @@ defmodule MonkeyClaw.WorkspacesTest do
 
   describe "to_session_config/1" do
     test "renders workspace without assistant" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       config = Workspaces.to_session_config(workspace)
 
       assert config.id == workspace.id
@@ -458,10 +449,10 @@ defmodule MonkeyClaw.WorkspacesTest do
     end
 
     test "renders workspace with assistant" do
-      assistant = create_assistant()
+      assistant = insert_assistant!()
 
       workspace =
-        create_workspace(%{
+        insert_workspace!(%{
           name: "With Assistant",
           assistant_id: assistant.id
         })
@@ -482,7 +473,7 @@ defmodule MonkeyClaw.WorkspacesTest do
           permission_mode: :auto
         })
 
-      workspace = create_workspace(%{name: "Full WS", assistant_id: assistant.id})
+      workspace = insert_workspace!(%{name: "Full WS", assistant_id: assistant.id})
       config = Workspaces.to_session_config(workspace)
 
       assert config.session_opts.backend == :claude
@@ -492,8 +483,8 @@ defmodule MonkeyClaw.WorkspacesTest do
     end
 
     test "handles already-preloaded assistant" do
-      assistant = create_assistant()
-      workspace = create_workspace(%{name: "Preloaded", assistant_id: assistant.id})
+      assistant = insert_assistant!()
+      workspace = insert_workspace!(%{name: "Preloaded", assistant_id: assistant.id})
       workspace = Repo.preload(workspace, :assistant)
 
       # Should not fail on double preload
@@ -513,7 +504,7 @@ defmodule MonkeyClaw.WorkspacesTest do
 
   describe "to_thread_config/1" do
     test "renders channel as thread config" do
-      workspace = create_workspace()
+      workspace = insert_workspace!()
       {:ok, channel} = Workspaces.create_channel(workspace, %{name: "general"})
 
       thread_config = Workspaces.to_thread_config(channel)
@@ -534,8 +525,8 @@ defmodule MonkeyClaw.WorkspacesTest do
 
   describe "assistant deletion nilifies workspace reference" do
     test "workspace assistant_id becomes nil when assistant is deleted" do
-      assistant = create_assistant()
-      workspace = create_workspace(%{name: "Linked WS", assistant_id: assistant.id})
+      assistant = insert_assistant!()
+      workspace = insert_workspace!(%{name: "Linked WS", assistant_id: assistant.id})
       assert workspace.assistant_id == assistant.id
 
       {:ok, _} = Assistants.delete_assistant(assistant)

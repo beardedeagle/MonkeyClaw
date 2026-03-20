@@ -1,16 +1,7 @@
 defmodule MonkeyClaw.Workspaces.ChannelTest do
-  use ExUnit.Case, async: true
+  use MonkeyClaw.ChangesetCase, async: true
 
   alias MonkeyClaw.Workspaces.Channel
-
-  # Local helper — avoids pulling in DataCase for pure changeset tests
-  defp errors_on(changeset) do
-    Ecto.Changeset.traverse_errors(changeset, fn {message, opts} ->
-      Regex.replace(~r"%{(\w+)}", message, fn _, key ->
-        opts |> Keyword.get(String.to_existing_atom(key), key) |> to_string()
-      end)
-    end)
-  end
 
   # Builds a channel struct with workspace_id pre-set (simulating Ecto.build_assoc)
   defp build_channel(workspace_id \\ Ecto.UUID.generate()) do

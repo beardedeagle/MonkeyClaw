@@ -9,7 +9,18 @@ import Config
 
 config :monkey_claw,
   ecto_repos: [MonkeyClaw.Repo],
-  generators: [timestamp_type: :utc_datetime]
+  generators: [timestamp_type: :utc_datetime_usec]
+
+# SQLite3 PRAGMA configuration — shared across all environments.
+# ecto_sqlite3 sets sensible defaults; we make them explicit here.
+config :monkey_claw, MonkeyClaw.Repo,
+  journal_mode: :wal,
+  synchronous: :normal,
+  foreign_keys: :on,
+  cache_size: -64_000,
+  temp_store: :memory,
+  busy_timeout: 2_000,
+  auto_vacuum: :incremental
 
 # Configure the endpoint
 config :monkey_claw, MonkeyClawWeb.Endpoint,

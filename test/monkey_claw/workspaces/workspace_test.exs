@@ -1,16 +1,7 @@
 defmodule MonkeyClaw.Workspaces.WorkspaceTest do
-  use ExUnit.Case, async: true
+  use MonkeyClaw.ChangesetCase, async: true
 
   alias MonkeyClaw.Workspaces.Workspace
-
-  # Local helper — avoids pulling in DataCase for pure changeset tests
-  defp errors_on(changeset) do
-    Ecto.Changeset.traverse_errors(changeset, fn {message, opts} ->
-      Regex.replace(~r"%{(\w+)}", message, fn _, key ->
-        opts |> Keyword.get(String.to_existing_atom(key), key) |> to_string()
-      end)
-    end)
-  end
 
   # --- create_changeset/2 ---
 
