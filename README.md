@@ -32,6 +32,9 @@ capabilities with security built into the platform, not patched on top.
 ┌─────────────────────────────────────────────────────┐
 │  Product Layer                                      │
 │  MonkeyClaw — assistants · workspaces · channels    │
+├─────────────────────────────────────────────────────┤
+│  Extension Layer                                    │
+│  Plug pipelines — hooks · contexts · pipelines      │
 └────────────────────────┬────────────────────────────┘
                          │
 ┌────────────────────────▼────────────────────────────┐
@@ -55,10 +58,26 @@ Clean separation of concerns, connected through a public Elixir API.
 | **Assistant** | `MonkeyClaw.Assistants.Assistant` | AI persona — name, model, system prompt, provider |
 | **Workspace** | `MonkeyClaw.Workspaces.Workspace` | Project container, maps 1:1 to a BeamAgent session |
 | **Channel**   | `MonkeyClaw.Workspaces.Channel`   | Conversation thread within a workspace            |
+| **Plug**      | `MonkeyClaw.Extensions.Plug`      | Extension behaviour — `init/1` + `call/2` on a context |
+| **Context**   | `MonkeyClaw.Extensions.Context`   | Data struct flowing through extension pipelines   |
+| **Pipeline**  | `MonkeyClaw.Extensions.Pipeline`  | Compiled, ordered chain of plugs for a hook point |
 
 Contexts (`MonkeyClaw.Assistants`, `MonkeyClaw.Workspaces`) provide the
 public CRUD API. `MonkeyClaw.AgentBridge` translates domain objects into
 BeamAgent session and thread configurations.
+
+### Extensions
+
+Plug-based extension system for application-level capabilities. Plugs
+use the `init/1` + `call/2` pattern on a context struct — the same
+contract as `Plug.Conn`, applied to MonkeyClaw lifecycle events instead
+of HTTP requests. Extensions do not replace agent-level MCP, skills, or
+plugins, which flow through BeamAgent.
+
+Twelve hook points span queries, sessions, workspaces, and channels.
+Global plugs run on every event; hook-specific plugs run only on their
+declared hook. Pipelines are compiled once at application start and
+cached in `:persistent_term` for zero-overhead runtime lookups.
 
 ### Persistence
 
