@@ -6,7 +6,7 @@ defmodule MonkeyClaw do
 
     * Agent session management via `MonkeyClaw.AgentBridge`
     * Assistant identity and personas via `MonkeyClaw.Assistants`
-    * Workspace and channel organization (planned)
+    * Workspace and channel organization via `MonkeyClaw.Workspaces`
     * Workflow orchestration (planned)
 
   ## Security Model
