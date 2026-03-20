@@ -156,6 +156,46 @@ defmodule MonkeyClaw.AgentBridge.Session do
   end
 
   @doc """
+  Start a new thread within the session.
+
+  Creates a BeamAgent thread and sets it as the active thread.
+  Thread opts are passed to `BeamAgent.Threads.thread_start/2`.
+
+  ## Options
+
+    * `:name` — Thread name (e.g., channel name)
+    * `:metadata` — Arbitrary metadata map
+
+  Returns `{:ok, thread_info}` on success or `{:error, reason}` on failure.
+  """
+  @spec start_thread(GenServer.server(), map()) :: {:ok, map()} | {:error, term()}
+  def start_thread(session, thread_opts \\ %{}) when is_map(thread_opts) do
+    GenServer.call(session, {:start_thread, thread_opts})
+  end
+
+  @doc """
+  Resume an existing thread within the session.
+
+  Makes the specified thread the active thread for subsequent
+  queries.
+  """
+  @spec resume_thread(GenServer.server(), String.t()) :: {:ok, map()} | {:error, term()}
+  def resume_thread(session, thread_id)
+      when is_binary(thread_id) and byte_size(thread_id) > 0 do
+    GenServer.call(session, {:resume_thread, thread_id})
+  end
+
+  @doc """
+  List all threads within the session.
+
+  Returns `{:ok, threads}` with a list of thread info maps.
+  """
+  @spec list_threads(GenServer.server()) :: {:ok, list()} | {:error, term()}
+  def list_threads(session) do
+    GenServer.call(session, :list_threads)
+  end
+
+  @doc """
   Gracefully stop the session.
 
   Stops the underlying BeamAgent session and terminates the GenServer.
@@ -263,6 +303,33 @@ defmodule MonkeyClaw.AgentBridge.Session do
   end
 
   def handle_call({:query, _prompt, _opts}, _from, state) do
+    {:reply, {:error, {:session_not_active, state.status}}, state}
+  end
+
+  def handle_call({:start_thread, thread_opts}, _from, %{status: :active} = state) do
+    result = BeamAgent.Threads.thread_start(state.session_pid, thread_opts)
+    {:reply, result, state}
+  end
+
+  def handle_call({:start_thread, _opts}, _from, state) do
+    {:reply, {:error, {:session_not_active, state.status}}, state}
+  end
+
+  def handle_call({:resume_thread, thread_id}, _from, %{status: :active} = state) do
+    result = BeamAgent.Threads.thread_resume(state.session_pid, thread_id)
+    {:reply, result, state}
+  end
+
+  def handle_call({:resume_thread, _thread_id}, _from, state) do
+    {:reply, {:error, {:session_not_active, state.status}}, state}
+  end
+
+  def handle_call(:list_threads, _from, %{status: :active} = state) do
+    result = BeamAgent.Threads.thread_list(state.session_pid)
+    {:reply, result, state}
+  end
+
+  def handle_call(:list_threads, _from, state) do
     {:reply, {:error, {:session_not_active, state.status}}, state}
   end
 

@@ -41,6 +41,57 @@ defmodule MonkeyClaw.AgentBridgeTest do
     end
   end
 
+  describe "start_thread/2" do
+    test "returns error for non-existent session" do
+      assert {:error, {:session_not_found, "nonexistent"}} =
+               AgentBridge.start_thread("nonexistent")
+    end
+
+    test "rejects non-binary session_id" do
+      assert_raise FunctionClauseError, fn ->
+        AgentBridge.start_thread(123)
+      end
+    end
+  end
+
+  describe "resume_thread/2" do
+    test "returns error for non-existent session" do
+      assert {:error, {:session_not_found, "nonexistent"}} =
+               AgentBridge.resume_thread("nonexistent", "thread-1")
+    end
+
+    test "rejects non-binary session_id" do
+      assert_raise FunctionClauseError, fn ->
+        AgentBridge.resume_thread(123, "thread-1")
+      end
+    end
+
+    test "rejects non-binary thread_id" do
+      assert_raise FunctionClauseError, fn ->
+        AgentBridge.resume_thread("session-1", 123)
+      end
+    end
+
+    test "rejects empty thread_id" do
+      assert_raise FunctionClauseError, fn ->
+        AgentBridge.resume_thread("session-1", "")
+      end
+    end
+  end
+
+  describe "list_threads/1" do
+    test "returns error for non-existent session" do
+      assert {:error, {:session_not_found, "nonexistent"}} =
+               AgentBridge.list_threads("nonexistent")
+    end
+
+    test "rejects non-binary session_id" do
+      assert_raise FunctionClauseError, fn ->
+        AgentBridge.list_threads(123)
+      end
+    end
+  end
+
   describe "session_info/1" do
     test "returns error for non-existent session" do
       assert {:error, {:session_not_found, "nonexistent"}} =
