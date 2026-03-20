@@ -463,7 +463,10 @@ defmodule MonkeyClaw.AgentBridge.Session do
 
   defp drain_events(_state, 0), do: :ok
 
-  defp drain_events(%{session_pid: pid, event_ref: ref, id: id, backend: backend} = state, remaining) do
+  defp drain_events(
+         %{session_pid: pid, event_ref: ref, id: id, backend: backend} = state,
+         remaining
+       ) do
     case backend.receive_event(pid, ref, 0) do
       {:ok, event} ->
         event_type = Map.get(event, :type, :unknown)

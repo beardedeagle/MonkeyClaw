@@ -163,7 +163,11 @@ defmodule MonkeyClaw.AgentBridge.Backend.Test do
           {:ok, [%{type: :text, content: "response to: #{prompt}"}]}
 
         responses when is_list(responses) ->
-          Enum.at(responses, state.query_count, {:ok, [%{type: :text, content: "default response"}]})
+          Enum.at(
+            responses,
+            state.query_count,
+            {:ok, [%{type: :text, content: "default response"}]}
+          )
 
         fun when is_function(fun, 2) ->
           fun.(prompt, state.query_count)

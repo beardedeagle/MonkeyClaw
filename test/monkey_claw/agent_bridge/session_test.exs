@@ -566,7 +566,9 @@ defmodule MonkeyClaw.AgentBridge.SessionTest do
 
       _pid = start_supervised!({Session, config})
 
-      assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :session, :start], measurements, metadata}
+      assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :session, :start], measurements,
+                      metadata}
+
       assert is_integer(measurements.system_time)
       assert metadata.session_id == session_id
 
@@ -582,7 +584,9 @@ defmodule MonkeyClaw.AgentBridge.SessionTest do
 
       Session.stop(pid)
 
-      assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :session, :stop], %{duration: duration}, metadata}
+      assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :session, :stop],
+                      %{duration: duration}, metadata}
+
       assert is_integer(duration)
       assert duration >= 0
       assert metadata.session_id == config.id
@@ -603,6 +607,7 @@ defmodule MonkeyClaw.AgentBridge.SessionTest do
       start_supervised({Session, config})
 
       assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :session, :start], _, _}
+
       assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :session, :exception], _,
                       %{session_id: ^session_id, kind: :start_failure, reason: :boom}}
 
@@ -642,9 +647,12 @@ defmodule MonkeyClaw.AgentBridge.SessionTest do
       pid = start_supervised!({Session, config})
       Session.query(pid, "hello")
 
-      assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :query, :start], _, %{session_id: ^session_id}}
-      assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :query, :stop],
-                     %{duration: d}, %{session_id: ^session_id, message_count: 1}}
+      assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :query, :start], _,
+                      %{session_id: ^session_id}}
+
+      assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :query, :stop], %{duration: d},
+                      %{session_id: ^session_id, message_count: 1}}
+
       assert is_integer(d) and d >= 0
 
       :telemetry.detach(handler_id)
@@ -664,6 +672,7 @@ defmodule MonkeyClaw.AgentBridge.SessionTest do
       Session.query(pid, "hello")
 
       assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :query, :start], _, _}
+
       assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :query, :exception], _,
                       %{session_id: ^session_id, kind: :query_error, reason: :overloaded}}
 
