@@ -303,7 +303,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
   end
 
   def handle_call({:query, _prompt, _opts}, _from, state) do
-    {:reply, {:error, {:session_not_active, state.status}}, state}
+    {:reply, {:error, :session_unavailable}, state}
   end
 
   def handle_call({:start_thread, thread_opts}, _from, %{status: :active} = state) do
@@ -312,7 +312,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
   end
 
   def handle_call({:start_thread, _opts}, _from, state) do
-    {:reply, {:error, {:session_not_active, state.status}}, state}
+    {:reply, {:error, :session_unavailable}, state}
   end
 
   def handle_call({:resume_thread, thread_id}, _from, %{status: :active} = state) do
@@ -321,7 +321,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
   end
 
   def handle_call({:resume_thread, _thread_id}, _from, state) do
-    {:reply, {:error, {:session_not_active, state.status}}, state}
+    {:reply, {:error, :session_unavailable}, state}
   end
 
   def handle_call(:list_threads, _from, %{status: :active} = state) do
@@ -330,7 +330,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
   end
 
   def handle_call(:list_threads, _from, state) do
-    {:reply, {:error, {:session_not_active, state.status}}, state}
+    {:reply, {:error, :session_unavailable}, state}
   end
 
   def handle_call(:info, _from, state) do

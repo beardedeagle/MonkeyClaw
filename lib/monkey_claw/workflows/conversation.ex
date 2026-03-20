@@ -53,6 +53,13 @@ defmodule MonkeyClaw.Workflows.Conversation do
   alias MonkeyClaw.Workspaces
   alias MonkeyClaw.Workspaces.{Channel, Workspace}
 
+  # Maximum allowed byte size for channel names (stored in DB).
+  @max_channel_name_bytes 255
+
+  # Maximum allowed byte size for prompts. Generous enough for any
+  # reasonable query, small enough to prevent cost-inflation abuse.
+  @max_prompt_bytes 500_000
+
   @type message_result ::
           {:ok, %{messages: list(), context: Extensions.Context.t()}}
           | {:error, term()}
@@ -90,7 +97,9 @@ defmodule MonkeyClaw.Workflows.Conversation do
   def send_message(workspace_id, channel_name, prompt, opts \\ [])
       when is_binary(workspace_id) and byte_size(workspace_id) > 0 and
              is_binary(channel_name) and byte_size(channel_name) > 0 and
-             is_binary(prompt) and byte_size(prompt) > 0 do
+             byte_size(channel_name) <= @max_channel_name_bytes and
+             is_binary(prompt) and byte_size(prompt) > 0 and
+             byte_size(prompt) <= @max_prompt_bytes do
     with {:ok, workspace} <- resolve_workspace(workspace_id),
          {:ok, session_config} <- build_session_config(workspace),
          :ok <- ensure_session(session_config),
@@ -107,16 +116,21 @@ defmodule MonkeyClaw.Workflows.Conversation do
   # --- Entity Resolution ---
 
   @doc """
-  Load a workspace by ID with its assistant preloaded.
+  Load a workspace by ID.
 
-  Returns `{:ok, workspace}` with the assistant association loaded,
-  or `{:error, {:workspace_not_found, id}}` if the workspace does
+  Returns `{:ok, workspace}` if found, or
+  `{:error, {:workspace_not_found, id}}` if the workspace does
   not exist.
+
+  Note: the assistant association is NOT preloaded here.
+  `build_session_config/1` handles preloading via
+  `Workspaces.to_session_config/1`, which is the single
+  preload site for assistant data.
   """
   @spec resolve_workspace(String.t()) :: {:ok, Workspace.t()} | {:error, term()}
   def resolve_workspace(workspace_id) when is_binary(workspace_id) do
     case Workspaces.get_workspace(workspace_id) do
-      {:ok, workspace} -> {:ok, Repo.preload(workspace, :assistant)}
+      {:ok, workspace} -> {:ok, workspace}
       {:error, :not_found} -> {:error, {:workspace_not_found, workspace_id}}
     end
   end
@@ -171,7 +185,7 @@ defmodule MonkeyClaw.Workflows.Conversation do
   active, returns an error.
   """
   @spec ensure_session(%{id: String.t(), session_opts: map()}) ::
-          :ok | {:error, {:session_start_failed, term()} | {:session_not_active, atom()}}
+          :ok | {:error, {:session_start_failed, term()} | :session_unavailable}
   def ensure_session(%{id: session_id} = config) do
     case AgentBridge.session_info(session_id) do
       {:ok, %{status: :active}} ->
@@ -183,8 +197,8 @@ defmodule MonkeyClaw.Workflows.Conversation do
           {:error, reason} -> {:error, {:session_start_failed, reason}}
         end
 
-      {:ok, %{status: status}} ->
-        {:error, {:session_not_active, status}}
+      {:ok, %{status: _status}} ->
+        {:error, :session_unavailable}
     end
   end
 
@@ -245,19 +259,43 @@ defmodule MonkeyClaw.Workflows.Conversation do
     end
   end
 
-  # --- Private Helpers ---
+  # --- Prompt Selection ---
 
-  # If a query_pre plug sets :effective_prompt in assigns,
-  # use it instead of the original prompt. This enables prompt
-  # enrichment or transformation by extension plugs.
-  @doc false
-  @spec effective_prompt(Extensions.Context.t(), String.t()) :: String.t()
-  def effective_prompt(%{assigns: %{effective_prompt: prompt}}, _original)
-      when is_binary(prompt) and byte_size(prompt) > 0 do
+  @doc """
+  Select the effective prompt from extension assigns.
+
+  If the assigns map contains an `:effective_prompt` key with a
+  non-empty binary value within `@max_prompt_bytes`, that value
+  is used. Otherwise, the original prompt is returned.
+
+  This is the public, testable core of the prompt selection logic
+  used by the conversation workflow after `:query_pre` hooks.
+  Oversized substitutions are silently rejected — the original
+  prompt is used instead.
+
+  ## Examples
+
+      iex> select_prompt(%{effective_prompt: "modified"}, "original")
+      "modified"
+
+      iex> select_prompt(%{}, "original")
+      "original"
+  """
+  @spec select_prompt(map(), String.t()) :: String.t()
+  def select_prompt(%{effective_prompt: prompt}, _original)
+      when is_binary(prompt) and byte_size(prompt) > 0 and
+             byte_size(prompt) <= @max_prompt_bytes do
     prompt
   end
 
-  def effective_prompt(_ctx, original), do: original
+  def select_prompt(_assigns, original), do: original
+
+  # --- Private Helpers ---
+
+  # Unwraps the context struct and delegates to select_prompt/2.
+  defp effective_prompt(%{assigns: assigns}, original) do
+    select_prompt(assigns, original)
+  end
 
   defp find_channel_by_name(workspace_id, channel_name) do
     query =
