@@ -478,7 +478,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
     end
   rescue
     error ->
-      Logger.debug("Failed to drain beam agent event: #{Exception.message(error)}")
+      Logger.warning("Failed to drain beam agent event: #{Exception.message(error)}")
       :ok
   end
 

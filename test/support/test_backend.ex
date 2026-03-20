@@ -109,7 +109,8 @@ defmodule MonkeyClaw.AgentBridge.Backend.Test do
     {:reply, {:ok, ref}, %{state | event_ref: ref}}
   end
 
-  def handle_call({:receive_event, _ref, _timeout}, _from, state) do
+  def handle_call({:receive_event, ref, _timeout}, _from, %{event_ref: ref} = state)
+      when not is_nil(ref) do
     case state.events do
       [event | rest] ->
         {:reply, {:ok, event}, %{state | events: rest}}
@@ -117,6 +118,10 @@ defmodule MonkeyClaw.AgentBridge.Backend.Test do
       [] ->
         {:reply, {:error, :timeout}, state}
     end
+  end
+
+  def handle_call({:receive_event, _ref, _timeout}, _from, state) do
+    {:reply, {:error, :invalid_ref}, state}
   end
 
   def handle_call({:thread_start, opts}, _from, state) do
