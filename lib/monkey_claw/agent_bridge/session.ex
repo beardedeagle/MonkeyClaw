@@ -59,6 +59,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
   @type config :: %{
           required(:id) => session_id(),
           required(:session_opts) => map(),
+          optional(:backend) => module(),
           optional(:query_timeout) => pos_integer()
         }
 
@@ -69,6 +70,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
           event_ref: reference() | nil,
           monitor_ref: reference() | nil,
           config: config(),
+          backend: module(),
           status: :starting | :active | :stopping | :stopped | :terminated,
           started_at: DateTime.t() | nil,
           telemetry_start: integer() | nil
@@ -84,6 +86,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
     :config,
     :started_at,
     :telemetry_start,
+    :backend,
     status: :starting
   ]
 
@@ -230,16 +233,17 @@ defmodule MonkeyClaw.AgentBridge.Session do
 
   @impl true
   def init(%{id: id, session_opts: session_opts} = config) do
-    state = %__MODULE__{id: id, config: config, status: :starting}
+    backend = Map.get(config, :backend, MonkeyClaw.AgentBridge.Backend.BeamAgent)
+    state = %__MODULE__{id: id, config: config, status: :starting, backend: backend}
 
     telemetry_start =
       BridgeTelemetry.session_start(%{session_id: id, config: sanitize_config(config)})
 
-    case BeamAgent.start_session(session_opts) do
+    case backend.start_session(session_opts) do
       {:ok, session_pid} ->
         monitor_ref = Process.monitor(session_pid)
-        beam_session_id = extract_session_id(session_pid)
-        event_ref = subscribe_events(session_pid)
+        beam_session_id = extract_session_id(backend, session_pid)
+        event_ref = subscribe_events(backend, session_pid)
 
         active_state = %{
           state
@@ -275,12 +279,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
   def handle_call({:query, prompt, beam_params}, _from, %{status: :active} = state) do
     telemetry_start = BridgeTelemetry.query_start(%{session_id: state.id})
 
-    result =
-      if beam_params == %{} do
-        BeamAgent.query(state.session_pid, prompt)
-      else
-        BeamAgent.query(state.session_pid, prompt, beam_params)
-      end
+    result = state.backend.query(state.session_pid, prompt, beam_params)
 
     case result do
       {:ok, messages} = result ->
@@ -307,7 +306,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
   end
 
   def handle_call({:start_thread, thread_opts}, _from, %{status: :active} = state) do
-    result = BeamAgent.Threads.thread_start(state.session_pid, thread_opts)
+    result = state.backend.thread_start(state.session_pid, thread_opts)
     {:reply, result, state}
   end
 
@@ -316,7 +315,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
   end
 
   def handle_call({:resume_thread, thread_id}, _from, %{status: :active} = state) do
-    result = BeamAgent.Threads.thread_resume(state.session_pid, thread_id)
+    result = state.backend.thread_resume(state.session_pid, thread_id)
     {:reply, result, state}
   end
 
@@ -325,7 +324,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
   end
 
   def handle_call(:list_threads, _from, %{status: :active} = state) do
-    result = BeamAgent.Threads.thread_list(state.session_pid)
+    result = state.backend.thread_list(state.session_pid)
     {:reply, result, state}
   end
 
@@ -414,7 +413,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
 
       pid ->
         try do
-          BeamAgent.stop(pid)
+          state.backend.stop_session(pid)
         catch
           kind, error ->
             Logger.debug(
@@ -440,8 +439,8 @@ defmodule MonkeyClaw.AgentBridge.Session do
     %{state | status: :stopped, session_pid: nil, monitor_ref: nil}
   end
 
-  defp extract_session_id(session_pid) when is_pid(session_pid) do
-    case BeamAgent.session_info(session_pid) do
+  defp extract_session_id(backend, session_pid) when is_pid(session_pid) do
+    case backend.session_info(session_pid) do
       {:ok, info} when is_map(info) -> Map.get(info, :session_id, inspect(session_pid))
       _ -> inspect(session_pid)
     end
@@ -451,8 +450,8 @@ defmodule MonkeyClaw.AgentBridge.Session do
       inspect(session_pid)
   end
 
-  defp subscribe_events(session_pid) do
-    case BeamAgent.event_subscribe(session_pid) do
+  defp subscribe_events(backend, session_pid) do
+    case backend.event_subscribe(session_pid) do
       {:ok, ref} -> ref
       _ -> nil
     end
@@ -464,8 +463,11 @@ defmodule MonkeyClaw.AgentBridge.Session do
 
   defp drain_events(_state, 0), do: :ok
 
-  defp drain_events(%{session_pid: pid, event_ref: ref, id: id} = state, remaining) do
-    case BeamAgent.receive_event(pid, ref, 0) do
+  defp drain_events(
+         %{session_pid: pid, event_ref: ref, id: id, backend: backend} = state,
+         remaining
+       ) do
+    case backend.receive_event(pid, ref, 0) do
       {:ok, event} ->
         event_type = Map.get(event, :type, :unknown)
 
@@ -479,7 +481,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
     end
   rescue
     error ->
-      Logger.debug("Failed to drain beam agent event: #{Exception.message(error)}")
+      Logger.warning("Failed to drain beam agent event: #{Exception.message(error)}")
       :ok
   end
 
@@ -492,7 +494,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
   end
 
   # Allowlist: only expose known-safe config keys (never session_opts which may contain credentials)
-  @safe_config_keys [:id, :query_timeout]
+  @safe_config_keys [:id, :query_timeout, :backend]
 
   defp sanitize_config(config) when is_map(config) do
     Map.take(config, @safe_config_keys)
