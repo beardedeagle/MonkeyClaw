@@ -30,6 +30,9 @@ capabilities with security built into the platform, not patched on top.
 
 ```
 ┌─────────────────────────────────────────────────────┐
+│  Workflow Layer                                      │
+│  MonkeyClaw.Workflows — conversation recipes         │
+├─────────────────────────────────────────────────────┤
 │  Product Layer                                      │
 │  MonkeyClaw — assistants · workspaces · channels    │
 ├─────────────────────────────────────────────────────┤
@@ -61,10 +64,12 @@ Clean separation of concerns, connected through a public Elixir API.
 | **Plug**      | `MonkeyClaw.Extensions.Plug`      | Extension behaviour — `init/1` + `call/2` on a context |
 | **Context**   | `MonkeyClaw.Extensions.Context`   | Data struct flowing through extension pipelines   |
 | **Pipeline**  | `MonkeyClaw.Extensions.Pipeline`  | Compiled, ordered chain of plugs for a hook point |
+| **Workflow**  | `MonkeyClaw.Workflows.Conversation` | Product-level orchestration recipe              |
 
 Contexts (`MonkeyClaw.Assistants`, `MonkeyClaw.Workspaces`) provide the
 public CRUD API. `MonkeyClaw.AgentBridge` translates domain objects into
-BeamAgent session and thread configurations.
+BeamAgent session and thread configurations. `MonkeyClaw.Workflows`
+composes these into user-facing operations.
 
 ### Extensions
 
@@ -78,6 +83,23 @@ Twelve hook points span queries, sessions, workspaces, and channels.
 Global plugs run on every event; hook-specific plugs run only on their
 declared hook. Pipelines are compiled once at application start and
 cached in `:persistent_term` for zero-overhead runtime lookups.
+
+### Workflows
+
+Workflows are product-level recipes that compose domain entities, agent
+sessions, and extension hooks into cohesive user-facing operations. The
+`Conversation` workflow implements the canonical "talk to an agent" flow:
+
+1. Load workspace and assistant from the database
+2. Ensure a BeamAgent session is running
+3. Find or create the conversation channel and thread
+4. Fire `:query_pre` extension hooks (plugs can halt or enrich)
+5. Send the query through AgentBridge
+6. Fire `:query_post` extension hooks
+7. Return the result
+
+Workflows are pure function modules — no processes. They orchestrate
+existing APIs; generic mechanics stay in BeamAgent.
 
 ### Persistence
 

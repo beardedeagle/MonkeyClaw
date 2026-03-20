@@ -129,6 +129,61 @@ defmodule MonkeyClaw.AgentBridge do
     end
   end
 
+  # --- Thread Management ---
+
+  @doc """
+  Start a new thread within a session.
+
+  Creates a BeamAgent thread and sets it as the active thread.
+  Thread opts are passed through to `BeamAgent.Threads.thread_start/2`.
+
+  ## Options
+
+    * `:name` — Thread name (e.g., channel name)
+    * `:metadata` — Arbitrary metadata map
+
+  Returns `{:ok, thread_info}` on success or `{:error, reason}` on failure.
+  """
+  @spec start_thread(session_id(), map()) :: {:ok, map()} | {:error, term()}
+  def start_thread(session_id, thread_opts \\ %{})
+      when is_binary(session_id) and byte_size(session_id) > 0 and
+             is_map(thread_opts) do
+    case Session.lookup(session_id) do
+      {:ok, pid} -> Session.start_thread(pid, thread_opts)
+      {:error, :not_found} -> {:error, {:session_not_found, session_id}}
+    end
+  end
+
+  @doc """
+  Resume an existing thread within a session.
+
+  Makes the specified thread the active thread for subsequent
+  queries.
+  """
+  @spec resume_thread(session_id(), String.t()) :: {:ok, map()} | {:error, term()}
+  def resume_thread(session_id, thread_id)
+      when is_binary(session_id) and byte_size(session_id) > 0 and
+             is_binary(thread_id) and byte_size(thread_id) > 0 do
+    case Session.lookup(session_id) do
+      {:ok, pid} -> Session.resume_thread(pid, thread_id)
+      {:error, :not_found} -> {:error, {:session_not_found, session_id}}
+    end
+  end
+
+  @doc """
+  List all threads within a session.
+
+  Returns `{:ok, threads}` with a list of thread info maps.
+  """
+  @spec list_threads(session_id()) :: {:ok, list()} | {:error, term()}
+  def list_threads(session_id)
+      when is_binary(session_id) and byte_size(session_id) > 0 do
+    case Session.lookup(session_id) do
+      {:ok, pid} -> Session.list_threads(pid)
+      {:error, :not_found} -> {:error, {:session_not_found, session_id}}
+    end
+  end
+
   # --- Session Info ---
 
   @doc """
