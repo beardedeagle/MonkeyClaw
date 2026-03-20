@@ -3,6 +3,7 @@ defmodule MonkeyClaw.AssistantsTest do
 
   alias MonkeyClaw.Assistants
   alias MonkeyClaw.Assistants.Assistant
+  import MonkeyClaw.Factory
 
   @valid_attrs %{name: "Dev Assistant", backend: :claude}
   @full_attrs %{
@@ -80,7 +81,7 @@ defmodule MonkeyClaw.AssistantsTest do
 
   describe "get_assistant/1" do
     test "returns assistant by ID" do
-      {:ok, created} = Assistants.create_assistant(@valid_attrs)
+      created = insert_assistant!()
       assert {:ok, found} = Assistants.get_assistant(created.id)
       assert found.id == created.id
       assert found.name == created.name
@@ -101,7 +102,7 @@ defmodule MonkeyClaw.AssistantsTest do
 
   describe "get_assistant!/1" do
     test "returns assistant by ID" do
-      {:ok, created} = Assistants.create_assistant(@valid_attrs)
+      created = insert_assistant!()
       found = Assistants.get_assistant!(created.id)
       assert found.id == created.id
     end
@@ -135,19 +136,19 @@ defmodule MonkeyClaw.AssistantsTest do
 
   describe "update_assistant/2" do
     test "updates name" do
-      {:ok, assistant} = Assistants.create_assistant(@valid_attrs)
+      assistant = insert_assistant!()
       assert {:ok, updated} = Assistants.update_assistant(assistant, %{name: "New Name"})
       assert updated.name == "New Name"
     end
 
     test "updates backend" do
-      {:ok, assistant} = Assistants.create_assistant(@valid_attrs)
+      assistant = insert_assistant!()
       assert {:ok, updated} = Assistants.update_assistant(assistant, %{backend: :gemini})
       assert updated.backend == :gemini
     end
 
     test "updates prompt layers" do
-      {:ok, assistant} = Assistants.create_assistant(@valid_attrs)
+      assistant = insert_assistant!()
 
       assert {:ok, updated} =
                Assistants.update_assistant(assistant, %{
@@ -160,7 +161,7 @@ defmodule MonkeyClaw.AssistantsTest do
     end
 
     test "fails with invalid attrs" do
-      {:ok, assistant} = Assistants.create_assistant(@valid_attrs)
+      assistant = insert_assistant!()
       assert {:error, _} = Assistants.update_assistant(assistant, %{name: ""})
     end
 
@@ -172,7 +173,7 @@ defmodule MonkeyClaw.AssistantsTest do
     end
 
     test "does not change is_default" do
-      {:ok, assistant} = Assistants.create_assistant(@valid_attrs)
+      assistant = insert_assistant!()
       {:ok, updated} = Assistants.update_assistant(assistant, %{is_default: true})
       refute updated.is_default
     end
@@ -182,7 +183,7 @@ defmodule MonkeyClaw.AssistantsTest do
 
   describe "delete_assistant/1" do
     test "deletes the assistant" do
-      {:ok, assistant} = Assistants.create_assistant(@valid_attrs)
+      assistant = insert_assistant!()
       assert {:ok, _} = Assistants.delete_assistant(assistant)
       assert {:error, :not_found} = Assistants.get_assistant(assistant.id)
     end
@@ -192,12 +193,12 @@ defmodule MonkeyClaw.AssistantsTest do
 
   describe "get_default_assistant/0" do
     test "returns error when no default exists" do
-      {:ok, _} = Assistants.create_assistant(@valid_attrs)
+      _assistant = insert_assistant!()
       assert {:error, :no_default} = Assistants.get_default_assistant()
     end
 
     test "returns the default assistant" do
-      {:ok, created} = Assistants.create_assistant(@valid_attrs)
+      created = insert_assistant!()
       {:ok, _} = Assistants.set_default_assistant(created)
       assert {:ok, found} = Assistants.get_default_assistant()
       assert found.id == created.id
@@ -212,7 +213,7 @@ defmodule MonkeyClaw.AssistantsTest do
 
   describe "set_default_assistant/1" do
     test "sets assistant as default" do
-      {:ok, assistant} = Assistants.create_assistant(@valid_attrs)
+      assistant = insert_assistant!()
       assert {:ok, updated} = Assistants.set_default_assistant(assistant)
       assert updated.is_default == true
     end
@@ -235,7 +236,7 @@ defmodule MonkeyClaw.AssistantsTest do
     end
 
     test "can re-set same assistant as default" do
-      {:ok, assistant} = Assistants.create_assistant(%{name: "Solo", backend: :claude})
+      assistant = insert_assistant!()
       {:ok, assistant} = Assistants.set_default_assistant(assistant)
 
       assert {:ok, updated} = Assistants.set_default_assistant(assistant)
