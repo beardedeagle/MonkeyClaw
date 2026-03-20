@@ -230,9 +230,16 @@ defmodule MonkeyClaw.AgentBridge do
     * `{:session_terminated, id, reason}`
     * `{:beam_agent_event, id, event}`
   """
-  @spec subscribe(session_id()) :: :ok | {:error, {:already_registered, pid()}}
+  @spec subscribe(session_id()) ::
+          :ok | {:error, {:session_not_found, session_id()} | {:already_registered, pid()}}
   def subscribe(session_id) when is_binary(session_id) and byte_size(session_id) > 0 do
-    Phoenix.PubSub.subscribe(MonkeyClaw.PubSub, "agent_session:#{session_id}")
+    case Session.lookup(session_id) do
+      {:ok, _pid} ->
+        Phoenix.PubSub.subscribe(MonkeyClaw.PubSub, "agent_session:#{session_id}")
+
+      {:error, :not_found} ->
+        {:error, {:session_not_found, session_id}}
+    end
   end
 
   @doc """

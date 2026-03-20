@@ -100,8 +100,17 @@ defmodule MonkeyClaw.AgentBridgeTest do
   end
 
   describe "subscribe/1 and unsubscribe/1" do
-    test "subscribes and receives PubSub broadcasts" do
+    test "returns error when subscribing to non-existent session" do
+      assert {:error, {:session_not_found, "no-such-session"}} =
+               AgentBridge.subscribe("no-such-session")
+    end
+
+    test "subscribes and receives PubSub broadcasts for registered session" do
       session_id = "pubsub-test-#{System.unique_integer([:positive])}"
+
+      # Register the current process as a session in the Registry
+      # so subscribe's existence check passes.
+      {:ok, _} = Registry.register(MonkeyClaw.AgentBridge.SessionRegistry, session_id, nil)
 
       assert :ok = AgentBridge.subscribe(session_id)
 
@@ -116,6 +125,8 @@ defmodule MonkeyClaw.AgentBridgeTest do
 
     test "unsubscribes and stops receiving broadcasts" do
       session_id = "unsub-test-#{System.unique_integer([:positive])}"
+
+      {:ok, _} = Registry.register(MonkeyClaw.AgentBridge.SessionRegistry, session_id, nil)
 
       AgentBridge.subscribe(session_id)
       assert :ok = AgentBridge.unsubscribe(session_id)

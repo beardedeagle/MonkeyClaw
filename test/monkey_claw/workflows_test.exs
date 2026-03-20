@@ -1,4 +1,6 @@
 defmodule MonkeyClaw.WorkflowsTest do
+  # Not async: delegates to Conversation which performs DB operations
+  # through the Ecto SQL sandbox.
   use MonkeyClaw.DataCase
 
   alias MonkeyClaw.Workflows

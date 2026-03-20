@@ -23,22 +23,21 @@ defmodule MonkeyClaw.Workflows.ConversationTest do
   # ──────────────────────────────────────────────
 
   describe "resolve_workspace/1" do
-    test "returns workspace with preloaded assistant" do
+    test "returns workspace by ID" do
       assistant = insert_assistant!()
       workspace = insert_workspace!(%{assistant_id: assistant.id})
 
       assert {:ok, resolved} = Conversation.resolve_workspace(workspace.id)
       assert resolved.id == workspace.id
-      assert %MonkeyClaw.Assistants.Assistant{} = resolved.assistant
-      assert resolved.assistant.id == assistant.id
+      assert resolved.assistant_id == assistant.id
     end
 
-    test "returns workspace without assistant when none assigned" do
+    test "returns workspace without assistant" do
       workspace = insert_workspace!()
 
       assert {:ok, resolved} = Conversation.resolve_workspace(workspace.id)
       assert resolved.id == workspace.id
-      assert is_nil(resolved.assistant)
+      assert is_nil(resolved.assistant_id)
     end
 
     test "returns error for unknown workspace" do
@@ -196,37 +195,34 @@ defmodule MonkeyClaw.Workflows.ConversationTest do
   end
 
   # ──────────────────────────────────────────────
-  # Effective Prompt
+  # Prompt Selection
   # ──────────────────────────────────────────────
 
-  describe "effective_prompt/2" do
+  describe "select_prompt/2" do
     test "uses original prompt when no override in assigns" do
-      ctx = Extensions.Context.new!(:query_pre)
-      assert Conversation.effective_prompt(ctx, "original") == "original"
+      assert Conversation.select_prompt(%{}, "original") == "original"
     end
 
-    test "uses assigns effective_prompt when present" do
-      ctx =
-        Extensions.Context.new!(:query_pre)
-        |> Extensions.Context.assign(:effective_prompt, "modified")
-
-      assert Conversation.effective_prompt(ctx, "original") == "modified"
+    test "uses effective_prompt when present" do
+      assert Conversation.select_prompt(%{effective_prompt: "modified"}, "original") == "modified"
     end
 
-    test "ignores empty effective_prompt in assigns" do
-      ctx =
-        Extensions.Context.new!(:query_pre)
-        |> Extensions.Context.assign(:effective_prompt, "")
-
-      assert Conversation.effective_prompt(ctx, "original") == "original"
+    test "ignores empty effective_prompt" do
+      assert Conversation.select_prompt(%{effective_prompt: ""}, "original") == "original"
     end
 
-    test "ignores non-binary effective_prompt in assigns" do
-      ctx =
-        Extensions.Context.new!(:query_pre)
-        |> Extensions.Context.assign(:effective_prompt, 42)
+    test "ignores non-binary effective_prompt" do
+      assert Conversation.select_prompt(%{effective_prompt: 42}, "original") == "original"
+    end
 
-      assert Conversation.effective_prompt(ctx, "original") == "original"
+    test "falls back to original when effective_prompt exceeds max size" do
+      oversized = String.duplicate("a", 500_001)
+      assert Conversation.select_prompt(%{effective_prompt: oversized}, "original") == "original"
+    end
+
+    test "accepts effective_prompt at max size boundary" do
+      at_limit = String.duplicate("a", 500_000)
+      assert Conversation.select_prompt(%{effective_prompt: at_limit}, "original") == at_limit
     end
   end
 
@@ -257,6 +253,27 @@ defmodule MonkeyClaw.Workflows.ConversationTest do
     test "rejects empty prompt" do
       assert_raise FunctionClauseError, fn ->
         Conversation.send_message("workspace-id", "general", "")
+      end
+    end
+
+    test "rejects oversized channel_name" do
+      assert_raise FunctionClauseError, fn ->
+        Conversation.send_message("workspace-id", String.duplicate("a", 256), "Hello")
+      end
+    end
+
+    test "accepts channel_name at max size boundary" do
+      # Should not raise FunctionClauseError for the guard — will fail
+      # downstream at workspace resolution, which is the expected path.
+      name_at_limit = String.duplicate("a", 255)
+
+      assert {:error, {:workspace_not_found, "workspace-id"}} =
+               Conversation.send_message("workspace-id", name_at_limit, "Hello")
+    end
+
+    test "rejects oversized prompt" do
+      assert_raise FunctionClauseError, fn ->
+        Conversation.send_message("workspace-id", "general", String.duplicate("a", 500_001))
       end
     end
   end
