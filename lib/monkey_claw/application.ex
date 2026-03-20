@@ -21,6 +21,10 @@ defmodule MonkeyClaw.Application do
       MonkeyClawWeb.Endpoint
     ]
 
+    # Compile extension pipelines from config before serving requests.
+    # Pure config read — no processes or DB access required.
+    MonkeyClaw.Extensions.compile_pipelines()
+
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: MonkeyClaw.Supervisor]
