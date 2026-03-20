@@ -228,8 +228,8 @@
     OTP-native, fault-tolerant, and distributed by design.
   </p>
   <div class="badges">
-    <span class="badge">OTP 28</span>
-    <span class="badge">Elixir 1.19</span>
+    <span class="badge">OTP 27+</span>
+    <span class="badge">Elixir 1.17+</span>
     <span class="badge">Phoenix 1.8</span>
     <span class="badge">BeamAgent</span>
     <span class="badge">Security-First</span>
@@ -287,8 +287,23 @@
     </p>
     <div class="arch">
       <div class="arch-layer arch-product">
+        <div class="arch-label">Workflow Layer</div>
+        <div class="arch-content">MonkeyClaw.Workflows &mdash; conversation recipes</div>
+      </div>
+      <div class="arch-arrow">&#9660;</div>
+      <div class="arch-layer arch-product">
         <div class="arch-label">Product Layer</div>
-        <div class="arch-content">MonkeyClaw &mdash; personas &middot; workspaces &middot; channels &middot; workflows</div>
+        <div class="arch-content">MonkeyClaw &mdash; assistants &middot; workspaces &middot; channels</div>
+      </div>
+      <div class="arch-arrow">&#9660;</div>
+      <div class="arch-layer">
+        <div class="arch-label">Extension Layer</div>
+        <div class="arch-content">Plug pipelines &mdash; hooks &middot; contexts &middot; pipelines</div>
+      </div>
+      <div class="arch-arrow">&#9660;</div>
+      <div class="arch-layer">
+        <div class="arch-label">Agent Bridge</div>
+        <div class="arch-content">Backend behaviour &middot; Session GenServer &middot; Telemetry</div>
       </div>
       <div class="arch-arrow">&#9660;</div>
       <div class="arch-layer">
@@ -320,7 +335,7 @@
       &nbsp;&middot;&nbsp;
       <a href="https://github.com/beardedeagle/beam-agent">BeamAgent</a>
       &nbsp;&middot;&nbsp;
-      MIT License
+      Private. All rights reserved.
     </p>
   </div>
 </footer>

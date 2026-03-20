@@ -38,6 +38,9 @@ capabilities with security built into the platform, not patched on top.
 ├─────────────────────────────────────────────────────┤
 │  Extension Layer                                    │
 │  Plug pipelines — hooks · contexts · pipelines      │
+├─────────────────────────────────────────────────────┤
+│  Agent Bridge                                       │
+│  Backend behaviour · Session GenServer · Telemetry   │
 └────────────────────────┬────────────────────────────┘
                          │
 ┌────────────────────────▼────────────────────────────┐
@@ -109,8 +112,8 @@ WITHOUT ROWID for type safety and efficient UUID-keyed lookups.
 
 ## Prerequisites
 
-- Erlang/OTP 28+
-- Elixir 1.19+
+- Erlang/OTP 27+
+- Elixir 1.17+
 - [BeamAgent](https://github.com/beardedeagle/beam-agent) cloned as a
   sibling directory (`../beam-agent/beam_agent_ex`)
 
