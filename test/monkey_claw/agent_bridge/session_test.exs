@@ -684,11 +684,14 @@ defmodule MonkeyClaw.AgentBridge.SessionTest do
       %{session_pid: backend_pid} = :sys.get_state(pid)
       Process.exit(backend_pid, :kill)
 
-      # Wait for Session to terminate from the :DOWN
-      assert_receive {:DOWN, ^session_ref, :process, ^pid, _}
+      # Wait for Session to terminate from the backend :DOWN.
+      # Generous timeout — CI runners can be slow to propagate the
+      # kill → Session handle_info → telemetry → Session terminate chain.
+      assert_receive {:DOWN, ^session_ref, :process, ^pid, _}, 5_000
 
       assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :session, :exception], _,
-                      %{kind: :beam_agent_down, reason: :killed}}
+                      %{kind: :beam_agent_down, reason: :killed}},
+                     5_000
 
       :telemetry.detach(handler_id)
     end
