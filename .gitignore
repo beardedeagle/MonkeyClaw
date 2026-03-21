@@ -51,6 +51,9 @@ npm-debug.log
 # Compiled BEAM files (standalone)
 *.beam
 
+# mTLS certificates (generated per-deployment, contain private keys)
+/priv/cert/
+
 # User added files
 .claude/
 .omc/
