@@ -80,6 +80,14 @@ defmodule MonkeyClawWeb.Telemetry do
         description: "Total mTLS connection attempts"
       ),
 
+      # Subscribe Metrics
+      counter("monkey_claw.agent_bridge.subscribe.success.count",
+        description: "Successful PubSub subscription attempts"
+      ),
+      counter("monkey_claw.agent_bridge.subscribe.unauthorized.count",
+        description: "Rejected PubSub subscription attempts"
+      ),
+
       # VM Metrics
       summary("vm.memory.total", unit: {:byte, :kilobyte}),
       summary("vm.total_run_queue_lengths.total"),

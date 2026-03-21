@@ -38,14 +38,14 @@ defmodule MonkeyClaw.AgentBridge do
 
   ## Usage
 
-      # Start a session
-      {:ok, pid} = MonkeyClaw.AgentBridge.start_session(%{
+      # Start a session (returns subscribe token for event authorization)
+      {:ok, result} = MonkeyClaw.AgentBridge.start_session(%{
         id: "workspace-123",
         session_opts: %{backend: :claude, model: "opus"}
       })
 
-      # Subscribe to events
-      MonkeyClaw.AgentBridge.subscribe("workspace-123")
+      # Subscribe to events (requires the token from start_session)
+      :ok = MonkeyClaw.AgentBridge.subscribe(result.id, result.subscribe_token)
 
       # Send a query
       {:ok, messages} = MonkeyClaw.AgentBridge.query("workspace-123", "Hello!")
@@ -63,8 +63,18 @@ defmodule MonkeyClaw.AgentBridge do
   """
 
   alias MonkeyClaw.AgentBridge.{Capabilities, Session, SessionSupervisor}
+  alias MonkeyClaw.AgentBridge.Telemetry, as: BridgeTelemetry
 
   @type session_id :: Session.session_id()
+
+  @type session_result :: %{
+          pid: pid(),
+          id: session_id(),
+          subscribe_token: binary()
+        }
+
+  # Subscribe token size in bytes (256-bit entropy)
+  @subscribe_token_size 32
 
   # --- Session Lifecycle ---
 
@@ -76,18 +86,33 @@ defmodule MonkeyClaw.AgentBridge do
     * `:id` — Unique session identifier (typically a workspace ID)
     * `:session_opts` — Map of options for `BeamAgent.start_session/1`
 
-  Returns `{:ok, pid}` on success or `{:error, reason}` on failure.
+  Returns `{:ok, session_result()}` on success, where `session_result()`
+  includes the `pid`, `id`, and a cryptographic `subscribe_token` required
+  for subscribing to session events via `subscribe/2`.
 
   ## Examples
 
-      MonkeyClaw.AgentBridge.start_session(%{
+      {:ok, result} = MonkeyClaw.AgentBridge.start_session(%{
         id: "workspace-123",
         session_opts: %{backend: :claude}
       })
+
+      # Use the token to subscribe to events
+      :ok = MonkeyClaw.AgentBridge.subscribe(result.id, result.subscribe_token)
   """
-  @spec start_session(Session.config()) :: {:ok, pid()} | {:error, term()}
-  def start_session(%{id: _id, session_opts: _opts} = config) do
-    SessionSupervisor.start_session(config)
+  @spec start_session(Session.config()) :: {:ok, session_result()} | {:error, term()}
+  def start_session(%{id: id, session_opts: _opts} = config) do
+    subscribe_token = :crypto.strong_rand_bytes(@subscribe_token_size)
+    token_hash = :crypto.hash(:sha256, subscribe_token)
+    config_with_token = Map.put(config, :subscribe_token, token_hash)
+
+    case SessionSupervisor.start_session(config_with_token) do
+      {:ok, pid} ->
+        {:ok, %{pid: pid, id: id, subscribe_token: subscribe_token}}
+
+      {:error, _} = error ->
+        error
+    end
   end
 
   @doc """
@@ -223,15 +248,24 @@ defmodule MonkeyClaw.AgentBridge do
   @doc """
   Subscribe the calling process to session events via PubSub.
 
+  Requires the `subscribe_token` returned by `start_session/1`.
+  The token is verified against the value stored in the session
+  Registry using constant-time comparison. This provides
+  defense-in-depth within the BEAM — even though mTLS secures
+  the transport layer, only processes holding the subscribe token
+  can receive session events.
+
   ## Security
 
-  Access to this function is gated by mTLS at the transport layer.
-  Unauthenticated connections are rejected during the TLS handshake
-  before any application code executes. The session existence check
-  below is defense-in-depth — it ensures the caller cannot subscribe
-  to a non-existent session, not that they are authorized (authorization
-  is handled by the client certificate). In MonkeyClaw's single-user
-  model, all sessions belong to the owner.
+  Three layers of access control protect session events:
+
+    1. **mTLS** — Unauthenticated connections are rejected during
+       the TLS handshake before any application code executes
+    2. **Token verification** — The subscribe token is generated
+       during session creation and must be presented to subscribe.
+       Verified via constant-time comparison to prevent timing attacks.
+    3. **PubSub isolation** — Each session broadcasts on its own
+       topic; subscribers only receive events for their session
 
   ## Events
 
@@ -242,12 +276,29 @@ defmodule MonkeyClaw.AgentBridge do
     * `{:session_terminated, id, reason}`
     * `{:beam_agent_event, id, event}`
   """
-  @spec subscribe(session_id()) ::
-          :ok | {:error, {:session_not_found, session_id()} | {:already_registered, pid()}}
-  def subscribe(session_id) when is_binary(session_id) and byte_size(session_id) > 0 do
-    case Session.lookup(session_id) do
-      {:ok, _pid} ->
-        Phoenix.PubSub.subscribe(MonkeyClaw.PubSub, "agent_session:#{session_id}")
+  @spec subscribe(session_id(), binary()) ::
+          :ok
+          | {:error,
+             {:session_not_found, session_id()} | :unauthorized | {:already_registered, pid()}}
+  def subscribe(session_id, subscribe_token)
+      when is_binary(session_id) and byte_size(session_id) > 0 and
+             is_binary(subscribe_token) and byte_size(subscribe_token) == @subscribe_token_size do
+    case Session.lookup_with_token_hash(session_id) do
+      {:ok, _pid, stored_hash} when is_binary(stored_hash) ->
+        presented_hash = :crypto.hash(:sha256, subscribe_token)
+
+        if Plug.Crypto.secure_compare(stored_hash, presented_hash) do
+          BridgeTelemetry.subscribe_success(%{session_id: session_id})
+          Phoenix.PubSub.subscribe(MonkeyClaw.PubSub, "agent_session:#{session_id}")
+        else
+          BridgeTelemetry.subscribe_unauthorized(%{session_id: session_id})
+          {:error, :unauthorized}
+        end
+
+      {:ok, _pid, _no_token} ->
+        # Session exists but has no token — reject for defense in depth
+        BridgeTelemetry.subscribe_unauthorized(%{session_id: session_id})
+        {:error, :unauthorized}
 
       {:error, :not_found} ->
         {:error, {:session_not_found, session_id}}
