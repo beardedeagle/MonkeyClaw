@@ -223,6 +223,18 @@ defmodule MonkeyClaw.AgentBridge do
   @doc """
   Subscribe the calling process to session events via PubSub.
 
+  ## Security
+
+  Access to this function is gated by mTLS at the transport layer.
+  Unauthenticated connections are rejected during the TLS handshake
+  before any application code executes. The session existence check
+  below is defense-in-depth — it ensures the caller cannot subscribe
+  to a non-existent session, not that they are authorized (authorization
+  is handled by the client certificate). In MonkeyClaw's single-user
+  model, all sessions belong to the owner.
+
+  ## Events
+
   Events are delivered as messages to the subscriber:
 
     * `{:session_started, id}`

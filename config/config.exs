@@ -8,6 +8,7 @@
 import Config
 
 config :monkey_claw,
+  env: config_env(),
   ecto_repos: [MonkeyClaw.Repo],
   generators: [timestamp_type: :utc_datetime_usec]
 

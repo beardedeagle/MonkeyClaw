@@ -12,7 +12,13 @@ defmodule MonkeyClaw.MixProject do
       aliases: aliases(),
       deps: deps(),
       dialyzer: [
-        flags: [:error_handling, :underspecs, :unmatched_returns]
+        flags: [:error_handling, :underspecs, :unmatched_returns],
+        plt_add_apps: [:mix]
+      ],
+      releases: [
+        monkey_claw: [
+          strip_beams: [keep: ["Docs"]]
+        ]
       ],
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
       listeners: [Phoenix.CodeReloader]
@@ -77,7 +83,8 @@ defmodule MonkeyClaw.MixProject do
       # Dev tooling
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:ex_doc, "~> 0.35", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.35", only: :dev, runtime: false},
+      {:x509, "~> 0.9", runtime: false}
     ]
   end
 

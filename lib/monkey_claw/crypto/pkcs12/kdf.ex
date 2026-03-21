@@ -134,17 +134,19 @@ defmodule MonkeyClaw.Crypto.PKCS12.KDF do
     :binary.part(copies, 0, len)
   end
 
-  defp adjust_i_blocks(i, b, v), do: adjust_i_blocks(i, b, v, <<>>)
-
-  defp adjust_i_blocks(<<>>, _b, _v, acc), do: acc
-
-  defp adjust_i_blocks(i, b, v, acc) do
-    <<block::binary-size(v), rest::binary>> = i
-    block_int = :binary.decode_unsigned(block, :big)
+  defp adjust_i_blocks(i, b, v) do
     b_int = :binary.decode_unsigned(b, :big)
     modulus = bsl(1, v * 8)
+    adjust_i_blocks(i, b_int, modulus, v, <<>>)
+  end
+
+  defp adjust_i_blocks(<<>>, _b_int, _modulus, _v, acc), do: acc
+
+  defp adjust_i_blocks(i, b_int, modulus, v, acc) do
+    <<block::binary-size(v), rest::binary>> = i
+    block_int = :binary.decode_unsigned(block, :big)
     sum = rem(block_int + b_int + 1, modulus)
     new_block = <<sum::integer-size(v)-unit(8)>>
-    adjust_i_blocks(rest, b, v, <<acc::binary, new_block::binary>>)
+    adjust_i_blocks(rest, b_int, modulus, v, <<acc::binary, new_block::binary>>)
   end
 end
