@@ -8,10 +8,21 @@ defmodule MonkeyClaw.AgentBridge.SessionTest do
   # Client API (pure, no live GenServer)
   # ──────────────────────────────────────────────
 
-  describe "via/1" do
-    test "returns a registry via tuple" do
+  describe "via/1 and via/2" do
+    test "returns a registry via tuple without token" do
       assert {:via, Registry, {MonkeyClaw.AgentBridge.SessionRegistry, "test-id"}} =
                Session.via("test-id")
+    end
+
+    test "returns a registry via tuple with token" do
+      token = :crypto.strong_rand_bytes(32)
+
+      assert {:via, Registry, {MonkeyClaw.AgentBridge.SessionRegistry, "test-id", ^token}} =
+               Session.via("test-id", token)
+    end
+
+    test "nil token produces same result as via/1" do
+      assert Session.via("test-id") == Session.via("test-id", nil)
     end
 
     test "rejects non-binary input" do
@@ -47,6 +58,51 @@ defmodule MonkeyClaw.AgentBridge.SessionTest do
   describe "lookup/1" do
     test "returns {:error, :not_found} for unregistered session" do
       assert {:error, :not_found} = Session.lookup("nonexistent-#{System.unique_integer()}")
+    end
+  end
+
+  describe "Registry token storage" do
+    test "stores subscribe_token as Registry value when provided" do
+      token = :crypto.strong_rand_bytes(32)
+      session_id = unique_session_id()
+      config = %{id: session_id, backend: Backend.Test, session_opts: %{}, subscribe_token: token}
+
+      _pid = start_supervised!({Session, config})
+
+      [{_pid, stored_token}] =
+        Registry.lookup(MonkeyClaw.AgentBridge.SessionRegistry, session_id)
+
+      assert stored_token == token
+    end
+
+    test "stores nil as Registry value when no token provided" do
+      session_id = unique_session_id()
+      config = %{id: session_id, backend: Backend.Test, session_opts: %{}}
+
+      _pid = start_supervised!({Session, config})
+
+      [{_pid, stored_value}] =
+        Registry.lookup(MonkeyClaw.AgentBridge.SessionRegistry, session_id)
+
+      assert is_nil(stored_value)
+    end
+
+    test "token is cleaned up when session terminates" do
+      session_id = unique_session_id()
+      token = :crypto.strong_rand_bytes(32)
+      config = %{id: session_id, backend: Backend.Test, session_opts: %{}, subscribe_token: token}
+
+      pid = start_supervised!({Session, config})
+
+      # Verify token is stored
+      assert [{^pid, ^token}] =
+               Registry.lookup(MonkeyClaw.AgentBridge.SessionRegistry, session_id)
+
+      # Stop session — Registry entry should be cleaned up automatically
+      Session.stop(pid)
+      Process.sleep(50)
+
+      assert [] = Registry.lookup(MonkeyClaw.AgentBridge.SessionRegistry, session_id)
     end
   end
 
@@ -725,7 +781,8 @@ defmodule MonkeyClaw.AgentBridge.SessionTest do
     %{
       id: session_id || unique_session_id(),
       backend: Backend.Test,
-      session_opts: %{}
+      session_opts: %{},
+      subscribe_token: :crypto.strong_rand_bytes(32)
     }
   end
 
@@ -739,7 +796,12 @@ defmodule MonkeyClaw.AgentBridge.SessionTest do
     # Drain the :session_started message so tests start from a clean slate
     assert_receive {:session_started, ^session_id}
 
-    %{session_id: session_id, session_pid: pid, config: config}
+    %{
+      session_id: session_id,
+      session_pid: pid,
+      config: config,
+      subscribe_token: config.subscribe_token
+    }
   end
 
   defp attach_session_telemetry do

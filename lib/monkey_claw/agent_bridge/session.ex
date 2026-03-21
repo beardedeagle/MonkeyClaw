@@ -60,7 +60,8 @@ defmodule MonkeyClaw.AgentBridge.Session do
           required(:id) => session_id(),
           required(:session_opts) => map(),
           optional(:backend) => module(),
-          optional(:query_timeout) => pos_integer()
+          optional(:query_timeout) => pos_integer(),
+          optional(:subscribe_token) => binary()
         }
 
   @type t :: %__MODULE__{
@@ -118,7 +119,8 @@ defmodule MonkeyClaw.AgentBridge.Session do
   @spec start_link(config()) :: GenServer.on_start()
   def start_link(%{id: id} = config)
       when is_binary(id) and byte_size(id) > 0 do
-    GenServer.start_link(__MODULE__, config, name: via(id))
+    subscribe_token = Map.get(config, :subscribe_token)
+    GenServer.start_link(__MODULE__, config, name: via(id, subscribe_token))
   end
 
   @doc """
@@ -209,11 +211,25 @@ defmodule MonkeyClaw.AgentBridge.Session do
   end
 
   @doc """
-  Build a `{:via, Registry, ...}` tuple for session lookup.
+  Build a `{:via, Registry, ...}` tuple for session registration.
+
+  When a `subscribe_token` hash is provided, it is stored as the
+  Registry value for later verification in `AgentBridge.subscribe/2`.
+  The value is a SHA-256 hash — the raw token is never stored.
+  Without a token, the Registry value defaults to `nil`.
   """
-  @spec via(session_id()) :: {:via, Registry, {atom(), session_id()}}
-  def via(id) when is_binary(id) do
-    {:via, Registry, {MonkeyClaw.AgentBridge.SessionRegistry, id}}
+  @spec via(session_id(), binary() | nil) ::
+          {:via, Registry,
+           {MonkeyClaw.AgentBridge.SessionRegistry, session_id()}
+           | {MonkeyClaw.AgentBridge.SessionRegistry, session_id(), binary()}}
+  def via(id, subscribe_token \\ nil) when is_binary(id) do
+    case subscribe_token do
+      nil ->
+        {:via, Registry, {MonkeyClaw.AgentBridge.SessionRegistry, id}}
+
+      token when is_binary(token) ->
+        {:via, Registry, {MonkeyClaw.AgentBridge.SessionRegistry, id, token}}
+    end
   end
 
   @doc """
@@ -225,6 +241,25 @@ defmodule MonkeyClaw.AgentBridge.Session do
   def lookup(id) when is_binary(id) do
     case Registry.lookup(MonkeyClaw.AgentBridge.SessionRegistry, id) do
       [{pid, _value}] -> {:ok, pid}
+      [] -> {:error, :not_found}
+    end
+  end
+
+  @doc """
+  Look up a session pid and its stored token hash by ID.
+
+  Returns `{:ok, pid, token_hash}` if found, where `token_hash`
+  is the SHA-256 hash stored during registration (or `nil` if no
+  token was provided). Returns `{:error, :not_found}` otherwise.
+
+  This keeps all Registry access encapsulated within the Session
+  module — callers never need to know about Registry internals.
+  """
+  @spec lookup_with_token_hash(session_id()) ::
+          {:ok, pid(), binary() | nil} | {:error, :not_found}
+  def lookup_with_token_hash(id) when is_binary(id) do
+    case Registry.lookup(MonkeyClaw.AgentBridge.SessionRegistry, id) do
+      [{pid, token_hash}] -> {:ok, pid, token_hash}
       [] -> {:error, :not_found}
     end
   end
@@ -493,7 +528,9 @@ defmodule MonkeyClaw.AgentBridge.Session do
     Phoenix.PubSub.broadcast(MonkeyClaw.PubSub, "agent_session:#{session_id}", message)
   end
 
-  # Allowlist: only expose known-safe config keys (never session_opts which may contain credentials)
+  # Allowlist: only expose known-safe config keys.
+  # Never expose session_opts (may contain credentials) or
+  # subscribe_token (auth material stored as hash in Registry).
   @safe_config_keys [:id, :query_timeout, :backend]
 
   defp sanitize_config(config) when is_map(config) do

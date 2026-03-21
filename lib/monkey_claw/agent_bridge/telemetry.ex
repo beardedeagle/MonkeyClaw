@@ -37,6 +37,16 @@ defmodule MonkeyClaw.AgentBridge.Telemetry do
     * `[:monkey_claw, :agent_bridge, :event, :received]` — Emitted for each BeamAgent event.
       * Measurements: `%{count: 1}`
       * Metadata: `%{session_id: String.t(), event_type: atom()}`
+
+  ## Subscribe Events
+
+    * `[:monkey_claw, :agent_bridge, :subscribe, :success]` — Emitted on successful subscription.
+      * Measurements: `%{count: 1}`
+      * Metadata: `%{session_id: String.t()}`
+
+    * `[:monkey_claw, :agent_bridge, :subscribe, :unauthorized]` — Emitted on rejected subscription.
+      * Measurements: `%{count: 1}`
+      * Metadata: `%{session_id: String.t()}`
   """
 
   @prefix [:monkey_claw, :agent_bridge]
@@ -134,6 +144,28 @@ defmodule MonkeyClaw.AgentBridge.Telemetry do
   def event_received(metadata) when is_map(metadata) do
     :telemetry.execute(
       @prefix ++ [:event, :received],
+      %{count: 1},
+      metadata
+    )
+  end
+
+  # --- Subscribe Events ---
+
+  @doc "Emit a successful subscription event."
+  @spec subscribe_success(map()) :: :ok
+  def subscribe_success(metadata) when is_map(metadata) do
+    :telemetry.execute(
+      @prefix ++ [:subscribe, :success],
+      %{count: 1},
+      metadata
+    )
+  end
+
+  @doc "Emit an unauthorized subscription attempt event."
+  @spec subscribe_unauthorized(map()) :: :ok
+  def subscribe_unauthorized(metadata) when is_map(metadata) do
+    :telemetry.execute(
+      @prefix ++ [:subscribe, :unauthorized],
       %{count: 1},
       metadata
     )

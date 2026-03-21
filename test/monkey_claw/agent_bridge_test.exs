@@ -2,6 +2,8 @@ defmodule MonkeyClaw.AgentBridgeTest do
   use ExUnit.Case, async: true
 
   alias MonkeyClaw.AgentBridge
+  alias MonkeyClaw.AgentBridge.Backend
+  alias MonkeyClaw.AgentBridge.Session
 
   describe "list_sessions/0" do
     test "returns a list of session IDs" do
@@ -100,20 +102,67 @@ defmodule MonkeyClaw.AgentBridgeTest do
     end
   end
 
-  describe "subscribe/1 and unsubscribe/1" do
-    test "returns error when subscribing to non-existent session" do
-      assert {:error, {:session_not_found, "no-such-session"}} =
-               AgentBridge.subscribe("no-such-session")
+  describe "start_session/1" do
+    test "returns session result with subscribe token" do
+      session_id = "start-test-#{System.unique_integer([:positive])}"
+      config = %{id: session_id, backend: Backend.Test, session_opts: %{}}
+
+      assert {:ok, result} = AgentBridge.start_session(config)
+
+      assert result.id == session_id
+      assert is_pid(result.pid)
+      assert is_binary(result.subscribe_token)
+      assert byte_size(result.subscribe_token) == 32
+
+      AgentBridge.stop_session(session_id)
     end
 
-    test "subscribes and receives PubSub broadcasts for registered session" do
+    test "generates unique tokens per session" do
+      config1 = %{
+        id: "tok-1-#{System.unique_integer([:positive])}",
+        backend: Backend.Test,
+        session_opts: %{}
+      }
+
+      config2 = %{
+        id: "tok-2-#{System.unique_integer([:positive])}",
+        backend: Backend.Test,
+        session_opts: %{}
+      }
+
+      {:ok, result1} = AgentBridge.start_session(config1)
+      {:ok, result2} = AgentBridge.start_session(config2)
+
+      refute result1.subscribe_token == result2.subscribe_token
+
+      AgentBridge.stop_session(result1.id)
+      AgentBridge.stop_session(result2.id)
+    end
+  end
+
+  describe "subscribe/2 and unsubscribe/1" do
+    test "returns error when subscribing to non-existent session" do
+      token = :crypto.strong_rand_bytes(32)
+
+      assert {:error, {:session_not_found, "no-such-session"}} =
+               AgentBridge.subscribe("no-such-session", token)
+    end
+
+    test "subscribes and receives PubSub broadcasts with valid token" do
       session_id = "pubsub-test-#{System.unique_integer([:positive])}"
+      token = :crypto.strong_rand_bytes(32)
+      token_hash = :crypto.hash(:sha256, token)
 
-      # Register the current process as a session in the Registry
-      # so subscribe's existence check passes.
-      {:ok, _} = Registry.register(MonkeyClaw.AgentBridge.SessionRegistry, session_id, nil)
+      config = %{
+        id: session_id,
+        backend: Backend.Test,
+        session_opts: %{},
+        subscribe_token: token_hash
+      }
 
-      assert :ok = AgentBridge.subscribe(session_id)
+      _pid = start_supervised!({Session, config})
+
+      assert :ok = AgentBridge.subscribe(session_id, token)
 
       Phoenix.PubSub.broadcast(
         MonkeyClaw.PubSub,
@@ -124,12 +173,104 @@ defmodule MonkeyClaw.AgentBridgeTest do
       assert_receive {:session_started, ^session_id}
     end
 
+    test "rejects subscription with invalid token" do
+      session_id = "pubsub-reject-#{System.unique_integer([:positive])}"
+      valid_token = :crypto.strong_rand_bytes(32)
+      invalid_token = :crypto.strong_rand_bytes(32)
+
+      config = %{
+        id: session_id,
+        backend: Backend.Test,
+        session_opts: %{},
+        subscribe_token: :crypto.hash(:sha256, valid_token)
+      }
+
+      _pid = start_supervised!({Session, config})
+
+      assert {:error, :unauthorized} = AgentBridge.subscribe(session_id, invalid_token)
+    end
+
+    test "rejects subscription when session has no token" do
+      session_id = "pubsub-notoken-#{System.unique_integer([:positive])}"
+      config = %{id: session_id, backend: Backend.Test, session_opts: %{}}
+
+      _pid = start_supervised!({Session, config})
+
+      assert {:error, :unauthorized} =
+               AgentBridge.subscribe(session_id, :crypto.strong_rand_bytes(32))
+    end
+
+    test "rejects subscription with wrong-size token via guard" do
+      assert_raise FunctionClauseError, fn ->
+        AgentBridge.subscribe("some-session", "too-short")
+      end
+    end
+
+    test "does not receive events after rejected subscription" do
+      session_id = "pubsub-noleak-#{System.unique_integer([:positive])}"
+      valid_token = :crypto.strong_rand_bytes(32)
+
+      config = %{
+        id: session_id,
+        backend: Backend.Test,
+        session_opts: %{},
+        subscribe_token: :crypto.hash(:sha256, valid_token)
+      }
+
+      _pid = start_supervised!({Session, config})
+
+      {:error, :unauthorized} = AgentBridge.subscribe(session_id, :crypto.strong_rand_bytes(32))
+
+      Phoenix.PubSub.broadcast(
+        MonkeyClaw.PubSub,
+        "agent_session:#{session_id}",
+        {:session_started, session_id}
+      )
+
+      refute_receive {:session_started, ^session_id}
+    end
+
+    test "token from session A cannot subscribe to session B" do
+      token_a = :crypto.strong_rand_bytes(32)
+      token_b = :crypto.strong_rand_bytes(32)
+
+      id_a = "cross-a-#{System.unique_integer([:positive])}"
+      id_b = "cross-b-#{System.unique_integer([:positive])}"
+
+      config_a = %{
+        id: id_a,
+        backend: Backend.Test,
+        session_opts: %{},
+        subscribe_token: :crypto.hash(:sha256, token_a)
+      }
+
+      config_b = %{
+        id: id_b,
+        backend: Backend.Test,
+        session_opts: %{},
+        subscribe_token: :crypto.hash(:sha256, token_b)
+      }
+
+      start_supervised!({Session, config_a}, id: :cross_a)
+      start_supervised!({Session, config_b}, id: :cross_b)
+
+      assert {:error, :unauthorized} = AgentBridge.subscribe(id_b, token_a)
+    end
+
     test "unsubscribes and stops receiving broadcasts" do
       session_id = "unsub-test-#{System.unique_integer([:positive])}"
+      token = :crypto.strong_rand_bytes(32)
 
-      {:ok, _} = Registry.register(MonkeyClaw.AgentBridge.SessionRegistry, session_id, nil)
+      config = %{
+        id: session_id,
+        backend: Backend.Test,
+        session_opts: %{},
+        subscribe_token: :crypto.hash(:sha256, token)
+      }
 
-      AgentBridge.subscribe(session_id)
+      _pid = start_supervised!({Session, config})
+
+      AgentBridge.subscribe(session_id, token)
       assert :ok = AgentBridge.unsubscribe(session_id)
 
       Phoenix.PubSub.broadcast(
