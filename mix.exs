@@ -13,7 +13,7 @@ defmodule MonkeyClaw.MixProject do
       deps: deps(),
       dialyzer: [
         flags: [:error_handling, :underspecs, :unmatched_returns],
-        plt_add_apps: [:mix]
+        plt_add_apps: [:mix, :x509]
       ],
       releases: [
         monkey_claw: [
