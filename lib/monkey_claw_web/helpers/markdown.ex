@@ -71,13 +71,12 @@ defmodule MonkeyClawWeb.Markdown do
         items =
           trimmed
           |> String.split(~r/\n/)
-          |> Enum.map(fn line ->
+          |> Enum.map_join("", fn line ->
             line
             |> String.replace(~r/^\s*[-*] /, "")
             |> inline()
             |> then(&"<li>#{&1}</li>")
           end)
-          |> Enum.join("")
 
         "<ul>#{items}</ul>"
 
@@ -86,13 +85,12 @@ defmodule MonkeyClawWeb.Markdown do
         items =
           trimmed
           |> String.split(~r/\n/)
-          |> Enum.map(fn line ->
+          |> Enum.map_join("", fn line ->
             line
             |> String.replace(~r/^\s*\d+\. /, "")
             |> inline()
             |> then(&"<li>#{&1}</li>")
           end)
-          |> Enum.join("")
 
         "<ol>#{items}</ol>"
 

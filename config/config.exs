@@ -64,6 +64,18 @@ config :tailwind,
     cd: Path.expand("..", __DIR__)
   ]
 
+# Available AI models for the chat model selector.
+# Each entry needs an :id (the model string sent to BeamAgent)
+# and a :label (what the user sees in the dropdown).
+config :monkey_claw, :available_models, [
+  %{id: "claude-opus-4-6", label: "Opus 4.6"},
+  %{id: "claude-sonnet-4-6", label: "Sonnet 4.6"},
+  %{id: "claude-haiku-4-5-20251001", label: "Haiku 4.5"}
+]
+
+# Default model used when no assistant is configured on the workspace.
+config :monkey_claw, :default_model, "claude-sonnet-4-6"
+
 # Configure Elixir's Logger
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",

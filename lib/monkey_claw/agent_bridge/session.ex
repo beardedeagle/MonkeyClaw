@@ -151,6 +151,18 @@ defmodule MonkeyClaw.AgentBridge.Session do
   end
 
   @doc """
+  Change the model used by the session at runtime.
+
+  Sends a control message to the underlying agent session to switch
+  models. Returns `{:ok, term()}` on success or `{:error, term()}`
+  on failure.
+  """
+  @spec set_model(GenServer.server(), String.t()) :: {:ok, term()} | {:error, term()}
+  def set_model(session, model) when is_binary(model) and byte_size(model) > 0 do
+    GenServer.call(session, {:set_model, model}, 10_000)
+  end
+
+  @doc """
   Get session metadata.
 
   Returns `{:ok, info_map}` with `:id`, `:status`, `:beam_session_id`,
@@ -281,6 +293,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
       session_opts
       |> Map.put_new(:session_id, Ecto.UUID.generate())
       |> CliResolver.resolve()
+
     state = %__MODULE__{id: id, config: config, status: :starting, backend: backend}
 
     telemetry_start =
@@ -355,6 +368,15 @@ defmodule MonkeyClaw.AgentBridge.Session do
   end
 
   def handle_call({:query, _prompt, _opts}, _from, state) do
+    {:reply, {:error, :session_unavailable}, state}
+  end
+
+  def handle_call({:set_model, model}, _from, %{status: :active} = state) do
+    result = state.backend.set_model(state.session_pid, model)
+    {:reply, result, state}
+  end
+
+  def handle_call({:set_model, _model}, _from, state) do
     {:reply, {:error, :session_unavailable}, state}
   end
 

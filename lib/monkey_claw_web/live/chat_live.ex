@@ -24,8 +24,12 @@ defmodule MonkeyClawWeb.ChatLive do
 
   use MonkeyClawWeb, :live_view
 
-  alias MonkeyClaw.Workspaces
+  require Logger
+
+  alias MonkeyClaw.AgentBridge
+  alias MonkeyClaw.Assistants
   alias MonkeyClaw.Workflows.Conversation
+  alias MonkeyClaw.Workspaces
 
   @impl true
   def mount(_params, _session, socket) do
@@ -40,11 +44,13 @@ defmodule MonkeyClawWeb.ChatLive do
         total_input_tokens: 0,
         total_output_tokens: 0,
         total_cached_tokens: 0,
+        total_thinking_tokens: 0,
         started_at: DateTime.utc_now(),
         message_count: 0,
         current_model: nil,
         working_dir: File.cwd!() |> Path.basename()
       })
+      |> assign(:available_models, available_models())
       |> assign_workspace()
 
     {:ok, socket, layout: {MonkeyClawWeb.Layouts, :chat}}
@@ -65,10 +71,36 @@ defmodule MonkeyClawWeb.ChatLive do
         |> assign(:sent_at, System.monotonic_time(:millisecond))
         |> push_event("clear-input", %{})
 
-      dispatch_query(socket.assigns.workspace.id, socket.assigns.channel_name, message)
+      query_opts =
+        if model = socket.assigns.selected_model do
+          [model: model]
+        else
+          []
+        end
+
+      _ignore =
+        dispatch_query(
+          socket.assigns.workspace.id,
+          socket.assigns.channel_name,
+          message,
+          query_opts
+        )
 
       {:noreply, socket}
     end
+  end
+
+  def handle_event("select_model", %{"model" => model}, socket)
+      when is_binary(model) and byte_size(model) > 0 do
+    # Change the model on the live session. set_model sends a
+    # control message to the BeamAgent gen_statem; the per-query
+    # model override in query_opts acts as a fallback.
+    _ignore = maybe_set_backend_model(socket.assigns.workspace, model)
+    {:noreply, assign(socket, :selected_model, model)}
+  end
+
+  def handle_event("select_model", _params, socket) do
+    {:noreply, socket}
   end
 
   def handle_event("dismiss_error", _params, socket) do
@@ -91,12 +123,17 @@ defmodule MonkeyClawWeb.ChatLive do
               (Map.get(usage, "cache_read_input_tokens", 0) || 0) +
                 (Map.get(usage, "cache_creation_input_tokens", 0) || 0)
 
+            thinking_tokens = Map.get(usage, "thinking_tokens")
+
             metadata = %{
               latency_ms: latency_ms,
               input_tokens: Map.get(usage, "input_tokens"),
               output_tokens: Map.get(usage, "output_tokens"),
               cached_tokens: if(cached > 0, do: cached, else: nil),
-              model: Map.get(msg, :model)
+              thinking_tokens:
+                if(thinking_tokens && thinking_tokens > 0, do: thinking_tokens, else: nil),
+              model: Map.get(msg, :model),
+              thinking: extract_thinking(msg)
             }
 
             append_message(acc, :assistant, content, metadata)
@@ -125,14 +162,18 @@ defmodule MonkeyClawWeb.ChatLive do
   defp assign_workspace(socket) do
     case find_or_create_default_workspace() do
       {:ok, workspace} ->
+        model = resolve_assistant_model(workspace)
+
         socket
         |> assign(:workspace, workspace)
         |> assign(:channel_name, "general")
+        |> assign(:selected_model, model || default_model())
 
       {:error, _reason} ->
         socket
         |> assign(:workspace, nil)
         |> assign(:channel_name, nil)
+        |> assign(:selected_model, default_model())
         |> assign(:error, "Failed to initialize workspace.")
     end
   end
@@ -144,11 +185,22 @@ defmodule MonkeyClawWeb.ChatLive do
     end
   end
 
-  defp dispatch_query(workspace_id, channel_name, message) do
+  defp maybe_set_backend_model(nil, _model), do: :ok
+
+  defp maybe_set_backend_model(workspace, model) do
+    Task.start(fn ->
+      case AgentBridge.set_model(workspace.id, model) do
+        {:ok, _} -> :ok
+        {:error, reason} -> Logger.warning("set_model failed: #{inspect(reason)}")
+      end
+    end)
+  end
+
+  defp dispatch_query(workspace_id, channel_name, message, opts) do
     lv = self()
 
     Task.start(fn ->
-      result = Conversation.send_message(workspace_id, channel_name, message)
+      result = Conversation.send_message(workspace_id, channel_name, message, opts)
       send(lv, {:ai_response, result})
     end)
   end
@@ -158,11 +210,13 @@ defmodule MonkeyClawWeb.ChatLive do
       id: System.unique_integer([:positive]),
       role: :assistant,
       content: MonkeyClawWeb.Markdown.render(content),
+      thinking: metadata.thinking,
       timestamp: DateTime.utc_now(),
       latency_ms: metadata.latency_ms,
       input_tokens: metadata.input_tokens,
       output_tokens: metadata.output_tokens,
       cached_tokens: metadata.cached_tokens,
+      thinking_tokens: metadata.thinking_tokens,
       model: metadata.model
     }
 
@@ -174,6 +228,7 @@ defmodule MonkeyClawWeb.ChatLive do
         | total_input_tokens: stats.total_input_tokens + (metadata.input_tokens || 0),
           total_output_tokens: stats.total_output_tokens + (metadata.output_tokens || 0),
           total_cached_tokens: stats.total_cached_tokens + (metadata.cached_tokens || 0),
+          total_thinking_tokens: stats.total_thinking_tokens + (metadata.thinking_tokens || 0),
           message_count: stats.message_count + 1,
           current_model: metadata.model || stats.current_model
       }
@@ -185,11 +240,13 @@ defmodule MonkeyClawWeb.ChatLive do
       id: System.unique_integer([:positive]),
       role: role,
       content: content,
+      thinking: nil,
       timestamp: DateTime.utc_now(),
       latency_ms: nil,
       input_tokens: nil,
       output_tokens: nil,
       cached_tokens: nil,
+      thinking_tokens: nil,
       model: nil
     }
 
@@ -201,8 +258,7 @@ defmodule MonkeyClawWeb.ChatLive do
   defp extract_content(%{type: :assistant, content_blocks: blocks}) when is_list(blocks) do
     blocks
     |> Enum.filter(fn block -> Map.get(block, :type) == :text end)
-    |> Enum.map(fn block -> Map.get(block, :text, "") end)
-    |> Enum.join("\n")
+    |> Enum.map_join("\n", fn block -> Map.get(block, :text, "") end)
   end
 
   # Text and result messages have a top-level content binary.
@@ -212,6 +268,19 @@ defmodule MonkeyClawWeb.ChatLive do
   # Fallback for any message with binary content.
   defp extract_content(%{content: content}) when is_binary(content), do: content
   defp extract_content(_other), do: nil
+
+  # Extract thinking blocks from assistant content_blocks.
+  # Returns the joined thinking text or nil if no thinking blocks.
+  defp extract_thinking(%{type: :assistant, content_blocks: blocks}) when is_list(blocks) do
+    thinking =
+      blocks
+      |> Enum.filter(fn block -> Map.get(block, :type) == :thinking end)
+      |> Enum.map_join("\n", fn block -> Map.get(block, :thinking, "") end)
+
+    if byte_size(thinking) > 0, do: thinking, else: nil
+  end
+
+  defp extract_thinking(_), do: nil
 
   # Only display user-facing message types. Filter out protocol
   # internals (system init, control messages, tool use, etc.).
@@ -262,10 +331,37 @@ defmodule MonkeyClawWeb.ChatLive do
   end
 
   @doc false
-  def format_total_tokens(%{total_input_tokens: inp, total_output_tokens: out}) do
-    format_tokens(inp + out)
+  def format_total_tokens(%{
+        total_input_tokens: inp,
+        total_output_tokens: out,
+        total_thinking_tokens: think
+      }) do
+    format_tokens(inp + out + think)
   end
 
   defp calculate_latency(nil), do: nil
   defp calculate_latency(sent_at), do: System.monotonic_time(:millisecond) - sent_at
+
+  # --- Model Selection Helpers ---
+
+  defp resolve_assistant_model(%{assistant_id: nil}), do: nil
+
+  defp resolve_assistant_model(%{assistant_id: id}) when is_binary(id) do
+    case Assistants.get_assistant(id) do
+      {:ok, %{model: model}} when is_binary(model) and byte_size(model) > 0 -> model
+      _ -> nil
+    end
+  end
+
+  defp default_model do
+    Application.get_env(:monkey_claw, :default_model, "claude-sonnet-4-6")
+  end
+
+  defp available_models do
+    Application.get_env(:monkey_claw, :available_models, [
+      %{id: "claude-opus-4-6", label: "Opus 4.6"},
+      %{id: "claude-sonnet-4-6", label: "Sonnet 4.6"},
+      %{id: "claude-haiku-4-5-20251001", label: "Haiku 4.5"}
+    ])
+  end
 end

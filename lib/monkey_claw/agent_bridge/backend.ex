@@ -91,6 +91,15 @@ defmodule MonkeyClaw.AgentBridge.Backend do
               {:ok, message()} | {:error, term()}
 
   @doc """
+  Change the model used by the session at runtime.
+
+  Sends a control message to the underlying agent session to switch
+  models for all subsequent queries.
+  """
+  @callback set_model(session_pid(), model :: String.t()) ::
+              {:ok, term()} | {:error, term()}
+
+  @doc """
   Start a new conversation thread within the session.
   """
   @callback thread_start(session_pid(), opts :: map()) ::

@@ -15,12 +15,16 @@ defmodule MonkeyClaw.AgentBridge.CliResolverTest do
       assert resolved.cli_path == "/opt/bin/claude"
     end
 
-    test "ignores empty cli_path and resolves dynamically" do
-      # Empty string cli_path should trigger resolution
+    test "ignores empty cli_path and attempts resolution" do
+      # Empty string cli_path should trigger resolution, not short-circuit
       opts = %{backend: :claude, cli_path: ""}
       resolved = CliResolver.resolve(opts)
-      # Should attempt resolution (cli_path may or may not be found)
-      refute resolved.cli_path == ""
+
+      # On CI the binary may not be installed — assert based on actual availability
+      case CliResolver.find_binary("claude") do
+        {:ok, path} -> assert resolved.cli_path == path
+        :not_found -> assert resolved == opts
+      end
     end
 
     test "passes through opts for unknown backends" do

@@ -154,6 +154,23 @@ defmodule MonkeyClaw.AgentBridge do
     end
   end
 
+  @doc """
+  Change the model used by a session at runtime.
+
+  Looks up the session by ID and sends a control message to the
+  underlying agent to switch models. If the session doesn't exist
+  (e.g. no messages sent yet), returns `{:error, {:session_not_found, id}}`.
+  """
+  @spec set_model(session_id(), String.t()) :: {:ok, term()} | {:error, term()}
+  def set_model(session_id, model)
+      when is_binary(session_id) and byte_size(session_id) > 0 and
+             is_binary(model) and byte_size(model) > 0 do
+    case Session.lookup(session_id) do
+      {:ok, pid} -> Session.set_model(pid, model)
+      {:error, :not_found} -> {:error, {:session_not_found, session_id}}
+    end
+  end
+
   # --- Thread Management ---
 
   @doc """

@@ -24,12 +24,37 @@
       </div>
 
       <div :if={message.role == :assistant} class="chat chat-start">
-        <div class="chat-bubble max-w-[80%] [&_p]:mb-2 [&_p:last-child]:mb-0 [&_pre]:bg-base-300 [&_pre]:rounded [&_pre]:p-2 [&_pre]:my-2 [&_pre]:overflow-x-auto [&_code]:bg-base-300 [&_code]:rounded [&_code]:px-1 [&_code]:text-sm [&_ul]:list-disc [&_ul]:ml-4 [&_ol]:list-decimal [&_ol]:ml-4 [&_h1]:text-lg [&_h1]:font-bold [&_h2]:text-base [&_h2]:font-bold [&_h3]:font-bold [&_strong]:font-bold [&_a]:underline">{message.content}</div>
+        <div :if={message.thinking} class="max-w-[80%] mb-1">
+          <div class="collapse collapse-arrow bg-base-200/50 rounded-lg">
+            <input type="checkbox" />
+            <div class="collapse-title text-xs font-medium text-base-content/50 min-h-0 py-1.5 px-3">
+              Thinking
+              <span :if={format_tokens(message.thinking_tokens)} class="text-base-content/30 ml-1">
+                ({format_tokens(message.thinking_tokens)} tokens)
+              </span>
+            </div>
+            <div class="collapse-content text-sm text-base-content/60 px-3">
+              <p class="whitespace-pre-wrap">{message.thinking}</p>
+            </div>
+          </div>
+        </div>
+        <div class="chat-bubble max-w-[80%] [&_p]:mb-2 [&_p:last-child]:mb-0 [&_pre]:bg-base-300 [&_pre]:rounded [&_pre]:p-2 [&_pre]:my-2 [&_pre]:overflow-x-auto [&_code]:bg-base-300 [&_code]:rounded [&_code]:px-1 [&_code]:text-sm [&_ul]:list-disc [&_ul]:ml-4 [&_ol]:list-decimal [&_ol]:ml-4 [&_h1]:text-lg [&_h1]:font-bold [&_h2]:text-base [&_h2]:font-bold [&_h3]:font-bold [&_strong]:font-bold [&_a]:underline">
+          {message.content}
+        </div>
         <div class="chat-footer text-xs text-base-content/40 mt-0.5 flex gap-2">
           <span>{format_time(message.timestamp)}</span>
-          <span :if={format_latency(message.latency_ms)}>⏱ {format_latency(message.latency_ms)}</span>
-          <span :if={format_tokens(message.input_tokens)}>↓{format_tokens(message.input_tokens)}</span>
-          <span :if={format_tokens(message.output_tokens)}>↑{format_tokens(message.output_tokens)}</span>
+          <span :if={format_latency(message.latency_ms)}>
+            ⏱ {format_latency(message.latency_ms)}
+          </span>
+          <span :if={format_tokens(message.input_tokens)}>
+            ↓{format_tokens(message.input_tokens)}
+          </span>
+          <span :if={format_tokens(message.output_tokens)}>
+            ↑{format_tokens(message.output_tokens)}
+          </span>
+          <span :if={format_tokens(message.thinking_tokens)}>
+            ~{format_tokens(message.thinking_tokens)}
+          </span>
           <span :if={format_model(message.model)}>{format_model(message.model)}</span>
         </div>
       </div>
@@ -61,10 +86,15 @@
     </span>
     <span class="text-base-content/20">·</span>
     <span>
-      ↓{format_tokens(@session_stats.total_input_tokens)}
-      ↑{format_tokens(@session_stats.total_output_tokens)}
-      {if @session_stats.total_cached_tokens > 0, do: "⚡#{format_tokens(@session_stats.total_cached_tokens)}"}
-      = {format_total_tokens(@session_stats)}
+      ↓{format_tokens(@session_stats.total_input_tokens)} ↑{format_tokens(
+        @session_stats.total_output_tokens
+      )}
+      {if @session_stats.total_thinking_tokens > 0,
+        do: "~#{format_tokens(@session_stats.total_thinking_tokens)}"}
+      {if @session_stats.total_cached_tokens > 0,
+        do: "⚡#{format_tokens(@session_stats.total_cached_tokens)}"} = {format_total_tokens(
+        @session_stats
+      )}
     </span>
     <span class="text-base-content/20">·</span>
     <span>{format_model(@session_stats.current_model)}</span>
@@ -73,23 +103,36 @@
 
   <%!-- Input --%>
   <div class="border-t border-base-300 p-4 flex-none">
-    <form id="chat-form" phx-submit="send_message" phx-hook="ChatForm" class="flex gap-2">
-      <input
-        type="text"
-        name="message"
-        placeholder="Type a message..."
-        class="input input-bordered flex-1"
-        autocomplete="off"
-        disabled={@loading}
-        autofocus
-      />
-      <button
-        type="submit"
-        class="btn btn-primary"
-        disabled={@loading || is_nil(@workspace)}
-      >
-        <.icon name="hero-paper-airplane-solid" class="size-5" />
-      </button>
-    </form>
+    <div class="flex gap-2">
+      <form phx-change="select_model" class="flex-none">
+        <select name="model" class="select select-bordered select-sm">
+          <option
+            :for={model <- @available_models}
+            value={model.id}
+            selected={model.id == @selected_model}
+          >
+            {model.label}
+          </option>
+        </select>
+      </form>
+      <form id="chat-form" phx-submit="send_message" phx-hook="ChatForm" class="flex gap-2 flex-1">
+        <input
+          type="text"
+          name="message"
+          placeholder="Type a message..."
+          class="input input-bordered flex-1"
+          autocomplete="off"
+          disabled={@loading}
+          autofocus
+        />
+        <button
+          type="submit"
+          class="btn btn-primary"
+          disabled={@loading || is_nil(@workspace)}
+        >
+          <.icon name="hero-paper-airplane-solid" class="size-5" />
+        </button>
+      </form>
+    </div>
   </div>
 </div>
