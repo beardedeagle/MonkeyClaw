@@ -116,6 +116,44 @@ defmodule MonkeyClawWeb.Layouts do
   end
 
   @doc """
+  Renders the chat layout.
+
+  Full-height layout with a minimal header and no content padding,
+  designed for the chat interface where the inner content manages
+  its own scrolling and spacing.
+
+  ## Examples
+
+      <Layouts.chat flash={@flash}>
+        <div>Chat content</div>
+      </Layouts.chat>
+
+  """
+  def chat(assigns) do
+    ~H"""
+    <div class="h-screen flex flex-col bg-base-100">
+      <header class="navbar bg-base-200 border-b border-base-300 px-4 flex-none">
+        <div class="flex-1">
+          <a href="/" class="flex items-center gap-2">
+            <img src={~p"/images/logo.svg"} width="28" />
+            <span class="text-lg font-bold">MonkeyClaw</span>
+          </a>
+        </div>
+        <div class="flex-none">
+          <.theme_toggle />
+        </div>
+      </header>
+
+      <div class="flex-1 overflow-hidden">
+        {@inner_content}
+      </div>
+    </div>
+
+    <.flash_group flash={@flash} />
+    """
+  end
+
+  @doc """
   Provides dark vs light theme toggle based on themes defined in app.css.
 
   See <head> in root.html.heex which applies the theme before page load.
