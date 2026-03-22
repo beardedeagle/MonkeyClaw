@@ -2,10 +2,12 @@ defmodule MonkeyClawWeb.ChatLive do
   @moduledoc """
   LiveView for the main chat interface.
 
-  Provides a real-time chat UI that sends messages through the
-  `Conversation` workflow and displays AI responses. Messages
-  are held in LiveView assigns for the duration of the session —
-  no persistence layer yet.
+  Provides a real-time chat UI with a sidebar for managing multiple
+  conversations. Messages are sent through the `Conversation` workflow
+  and displayed with markdown rendering and per-message token stats.
+
+  Conversations are held in-memory for the duration of the LiveView
+  session — no persistence layer yet.
 
   ## Flow
 
@@ -14,12 +16,7 @@ defmodule MonkeyClawWeb.ChatLive do
   3. Message is dispatched asynchronously through
      `Conversation.send_message/4`
   4. Response is appended to the message list when it arrives
-
-  ## Error Handling
-
-  Backend errors (no session, rate limited, extension halted) are
-  caught and displayed as dismissible alerts. The chat remains
-  functional — users can retry after resolving the issue.
+  5. First user message auto-titles the conversation in the sidebar
   """
 
   use MonkeyClawWeb, :live_view
@@ -33,28 +30,27 @@ defmodule MonkeyClawWeb.ChatLive do
 
   @impl true
   def mount(_params, _session, socket) do
+    initial_convo = new_conversation()
+
     socket =
       socket
+      |> assign(:conversations, %{initial_convo.id => initial_convo})
+      |> assign(:conversation_order, [initial_convo.id])
+      |> assign(:active_conversation_id, initial_convo.id)
       |> assign(:messages, [])
       |> assign(:loading, false)
       |> assign(:error, nil)
       |> assign(:page_title, "Chat")
       |> assign(:sent_at, nil)
-      |> assign(:session_stats, %{
-        total_input_tokens: 0,
-        total_output_tokens: 0,
-        total_cached_tokens: 0,
-        total_thinking_tokens: 0,
-        started_at: DateTime.utc_now(),
-        message_count: 0,
-        current_model: nil,
-        working_dir: File.cwd!() |> Path.basename()
-      })
+      |> assign(:session_stats, initial_stats())
       |> assign(:available_models, available_models())
+      |> assign(:sidebar_open, true)
       |> assign_workspace()
 
     {:ok, socket, layout: {MonkeyClawWeb.Layouts, :chat}}
   end
+
+  # --- Events ---
 
   @impl true
   def handle_event("send_message", %{"message" => message}, socket) do
@@ -92,9 +88,6 @@ defmodule MonkeyClawWeb.ChatLive do
 
   def handle_event("select_model", %{"model" => model}, socket)
       when is_binary(model) and byte_size(model) > 0 do
-    # Change the model on the live session. set_model sends a
-    # control message to the BeamAgent gen_statem; the per-query
-    # model override in query_opts acts as a fallback.
     _ignore = maybe_set_backend_model(socket.assigns.workspace, model)
     {:noreply, assign(socket, :selected_model, model)}
   end
@@ -106,6 +99,79 @@ defmodule MonkeyClawWeb.ChatLive do
   def handle_event("dismiss_error", _params, socket) do
     {:noreply, assign(socket, :error, nil)}
   end
+
+  def handle_event("new_conversation", _params, socket) do
+    socket = persist_active_conversation(socket)
+    convo = new_conversation()
+
+    socket =
+      socket
+      |> update(:conversations, &Map.put(&1, convo.id, convo))
+      |> update(:conversation_order, &[convo.id | &1])
+      |> assign(:active_conversation_id, convo.id)
+      |> assign(:messages, [])
+      |> assign(:session_stats, initial_stats())
+      |> assign(:loading, false)
+      |> assign(:error, nil)
+
+    {:noreply, socket}
+  end
+
+  def handle_event("switch_conversation", %{"id" => id}, socket) do
+    if id == socket.assigns.active_conversation_id do
+      {:noreply, socket}
+    else
+      socket = persist_active_conversation(socket)
+
+      case Map.fetch(socket.assigns.conversations, id) do
+        {:ok, convo} ->
+          socket =
+            socket
+            |> assign(:active_conversation_id, id)
+            |> assign(:messages, convo.messages)
+            |> assign(:session_stats, convo.session_stats)
+            |> assign(:loading, false)
+            |> assign(:error, nil)
+
+          {:noreply, socket}
+
+        :error ->
+          {:noreply, socket}
+      end
+    end
+  end
+
+  def handle_event("delete_conversation", %{"id" => id}, socket) do
+    if map_size(socket.assigns.conversations) <= 1 do
+      {:noreply, socket}
+    else
+      conversations = Map.delete(socket.assigns.conversations, id)
+      order = Enum.reject(socket.assigns.conversation_order, &(&1 == id))
+
+      socket =
+        if id == socket.assigns.active_conversation_id do
+          next_id = hd(order)
+          next_convo = conversations[next_id]
+
+          socket
+          |> assign(:active_conversation_id, next_id)
+          |> assign(:messages, next_convo.messages)
+          |> assign(:session_stats, next_convo.session_stats)
+        else
+          socket
+        end
+        |> assign(:conversations, conversations)
+        |> assign(:conversation_order, order)
+
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("toggle_sidebar", _params, socket) do
+    {:noreply, update(socket, :sidebar_open, &(!&1))}
+  end
+
+  # --- Info handlers ---
 
   @impl true
   def handle_info({:ai_response, {:ok, %{messages: messages}}}, socket) do
@@ -205,6 +271,62 @@ defmodule MonkeyClawWeb.ChatLive do
     end)
   end
 
+  # --- Conversation management ---
+
+  defp new_conversation do
+    %{
+      id: Ecto.UUID.generate(),
+      title: "New conversation",
+      messages: [],
+      session_stats: initial_stats(),
+      created_at: DateTime.utc_now()
+    }
+  end
+
+  defp initial_stats do
+    %{
+      total_input_tokens: 0,
+      total_output_tokens: 0,
+      total_cached_tokens: 0,
+      total_thinking_tokens: 0,
+      started_at: DateTime.utc_now(),
+      message_count: 0,
+      current_model: nil,
+      working_dir: File.cwd!() |> Path.basename()
+    }
+  end
+
+  defp persist_active_conversation(socket) do
+    id = socket.assigns.active_conversation_id
+
+    convo =
+      socket.assigns.conversations[id]
+      |> Map.merge(%{
+        messages: socket.assigns.messages,
+        session_stats: socket.assigns.session_stats
+      })
+      |> maybe_auto_title()
+
+    update(socket, :conversations, &Map.put(&1, id, convo))
+  end
+
+  defp maybe_auto_title(
+         %{title: "New conversation", messages: [%{role: :user, content: content} | _]} = convo
+       )
+       when is_binary(content) do
+    title =
+      content
+      |> String.slice(0, 50)
+      |> String.trim()
+
+    title = if String.length(content) > 50, do: title <> "...", else: title
+    %{convo | title: title}
+  end
+
+  defp maybe_auto_title(convo), do: convo
+
+  # --- Message helpers ---
+
   defp append_message(socket, :assistant, content, metadata) when is_binary(content) do
     message = %{
       id: System.unique_integer([:positive]),
@@ -253,24 +375,19 @@ defmodule MonkeyClawWeb.ChatLive do
     update(socket, :messages, &(&1 ++ [message]))
   end
 
-  # Assistant messages carry content_blocks (parsed by BeamAgent).
-  # Extract text blocks and join them.
+  # --- Content extraction ---
+
   defp extract_content(%{type: :assistant, content_blocks: blocks}) when is_list(blocks) do
     blocks
     |> Enum.filter(fn block -> Map.get(block, :type) == :text end)
     |> Enum.map_join("\n", fn block -> Map.get(block, :text, "") end)
   end
 
-  # Text and result messages have a top-level content binary.
   defp extract_content(%{type: :text, content: content}) when is_binary(content), do: content
   defp extract_content(%{type: :result, content: content}) when is_binary(content), do: content
-
-  # Fallback for any message with binary content.
   defp extract_content(%{content: content}) when is_binary(content), do: content
   defp extract_content(_other), do: nil
 
-  # Extract thinking blocks from assistant content_blocks.
-  # Returns the joined thinking text or nil if no thinking blocks.
   defp extract_thinking(%{type: :assistant, content_blocks: blocks}) when is_list(blocks) do
     thinking =
       blocks
@@ -282,12 +399,10 @@ defmodule MonkeyClawWeb.ChatLive do
 
   defp extract_thinking(_), do: nil
 
-  # Only display user-facing message types. Filter out protocol
-  # internals (system init, control messages, tool use, etc.).
-  # :assistant has the full content (including tool output) via
-  # content_blocks. :result is a summary that may truncate.
   defp displayable_message?(%{type: :assistant}), do: true
   defp displayable_message?(_), do: false
+
+  # --- Error formatting ---
 
   defp format_error({:workspace_not_found, _id}), do: "Workspace not found."
 
@@ -301,7 +416,7 @@ defmodule MonkeyClawWeb.ChatLive do
   defp format_error(:rate_limited), do: "Rate limited — please wait a moment."
   defp format_error(reason), do: "Something went wrong: #{inspect(reason)}"
 
-  # --- Formatting Helpers ---
+  # --- Formatting helpers (used by template) ---
 
   @doc false
   def format_time(%DateTime{} = dt), do: Calendar.strftime(dt, "%-I:%M %p")
@@ -342,7 +457,7 @@ defmodule MonkeyClawWeb.ChatLive do
   defp calculate_latency(nil), do: nil
   defp calculate_latency(sent_at), do: System.monotonic_time(:millisecond) - sent_at
 
-  # --- Model Selection Helpers ---
+  # --- Model selection ---
 
   defp resolve_assistant_model(%{assistant_id: nil}), do: nil
 
@@ -363,5 +478,21 @@ defmodule MonkeyClawWeb.ChatLive do
       %{id: "claude-sonnet-4-6", label: "Sonnet 4.6"},
       %{id: "claude-haiku-4-5-20251001", label: "Haiku 4.5"}
     ])
+  end
+
+  @doc false
+  def conversation_title(conversations, id) do
+    case Map.fetch(conversations, id) do
+      {:ok, convo} -> convo.title
+      :error -> "Unknown"
+    end
+  end
+
+  @doc false
+  def conversation_time(conversations, id) do
+    case Map.fetch(conversations, id) do
+      {:ok, convo} -> Calendar.strftime(convo.created_at, "%-I:%M %p")
+      :error -> ""
+    end
   end
 end
