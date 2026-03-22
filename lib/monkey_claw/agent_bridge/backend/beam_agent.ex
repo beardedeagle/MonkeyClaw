@@ -30,6 +30,9 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
   end
 
   @impl true
+  def set_model(pid, model), do: :beam_agent_core.set_model(pid, model)
+
+  @impl true
   def session_info(pid), do: BeamAgent.session_info(pid)
 
   @impl true

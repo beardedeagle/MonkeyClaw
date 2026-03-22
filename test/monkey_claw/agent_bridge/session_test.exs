@@ -151,7 +151,9 @@ defmodule MonkeyClaw.AgentBridge.SessionTest do
     test "extracts beam session ID from backend", %{session_pid: pid} do
       state = :sys.get_state(pid)
       assert is_binary(state.beam_session_id)
-      assert state.beam_session_id =~ "test-beam-"
+      # Session.init/1 generates a fresh UUID for each session to
+      # satisfy Claude CLI's --session-id format requirement.
+      assert {:ok, _} = Ecto.UUID.cast(state.beam_session_id)
     end
 
     test "monitors backend process", %{session_pid: pid} do

@@ -102,6 +102,7 @@ defmodule MonkeyClaw.Workflows.Conversation do
              byte_size(prompt) <= @max_prompt_bytes do
     with {:ok, workspace} <- resolve_workspace(workspace_id),
          {:ok, session_config} <- build_session_config(workspace),
+         session_config = apply_model_override(session_config, opts),
          :ok <- ensure_session(session_config),
          {:ok, channel} <- resolve_channel(workspace, channel_name, opts),
          {:ok, _thread} <- ensure_thread(workspace.id, channel),
@@ -175,6 +176,18 @@ defmodule MonkeyClaw.Workflows.Conversation do
   @spec build_session_config(Workspace.t()) :: {:ok, %{id: String.t(), session_opts: map()}}
   def build_session_config(%Workspace{} = workspace) do
     {:ok, Workspaces.to_session_config(workspace)}
+  end
+
+  # Merge the :model from query opts into session_config so that
+  # ensure_session starts the CLI process with the correct model.
+  defp apply_model_override(config, opts) do
+    case Keyword.fetch(opts, :model) do
+      {:ok, model} ->
+        update_in(config, [:session_opts], &Map.put(&1, :model, model))
+
+      :error ->
+        config
+    end
   end
 
   @doc """

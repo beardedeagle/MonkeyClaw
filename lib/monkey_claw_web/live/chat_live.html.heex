@@ -1,0 +1,203 @@
+<div class="flex h-full">
+  <%!-- Sidebar --%>
+  <aside class={[
+    "flex flex-col border-r border-base-300 bg-base-200 transition-all duration-200 flex-none",
+    @sidebar_open && "w-64",
+    !@sidebar_open && "w-0 overflow-hidden"
+  ]}>
+    <div class="p-3 border-b border-base-300">
+      <button
+        phx-click="new_conversation"
+        class="btn btn-ghost btn-sm w-full justify-start gap-2"
+      >
+        <.icon name="hero-plus" class="size-4" />
+        <span>New chat</span>
+      </button>
+    </div>
+
+    <nav class="flex-1 overflow-y-auto p-2 space-y-0.5">
+      <button
+        :for={id <- @conversation_order}
+        phx-click="switch_conversation"
+        phx-value-id={id}
+        class={[
+          "group w-full text-left px-3 py-2 rounded-lg text-sm truncate block transition-colors",
+          id == @active_conversation_id && "bg-base-300 text-base-content",
+          id != @active_conversation_id && "text-base-content/60 hover:bg-base-300/50"
+        ]}
+      >
+        <div class="flex items-center justify-between gap-1">
+          <span class="truncate">{conversation_title(@conversations, id)}</span>
+          <span
+            :if={map_size(@conversations) > 1}
+            phx-click="delete_conversation"
+            phx-value-id={id}
+            class="opacity-0 group-hover:opacity-100 hover:text-error flex-none cursor-pointer"
+            title="Delete"
+          >
+            <.icon name="hero-x-mark-micro" class="size-3.5" />
+          </span>
+        </div>
+        <div class="text-xs text-base-content/30 mt-0.5">
+          {conversation_time(@conversations, id)}
+        </div>
+      </button>
+    </nav>
+  </aside>
+
+  <%!-- Main chat area --%>
+  <div class="flex flex-col flex-1 min-w-0">
+    <%!-- Messages --%>
+    <div
+      id="chat-messages"
+      class="flex-1 overflow-y-auto p-4 space-y-1"
+      phx-hook="ScrollDown"
+    >
+      <div
+        :if={@messages == []}
+        class="flex items-center justify-center h-full text-base-content/50"
+      >
+        <div class="text-center space-y-3">
+          <div class="text-5xl">🐒</div>
+          <h2 class="text-2xl font-bold text-base-content">MonkeyClaw</h2>
+          <p class="text-sm">Send a message to start a conversation.</p>
+          <div class="flex gap-2 justify-center text-xs text-base-content/30">
+            <span>Enter to send</span>
+            <span>·</span>
+            <span>Shift+Enter for newline</span>
+          </div>
+        </div>
+      </div>
+
+      <div :for={message <- @messages} id={"msg-#{message.id}"}>
+        <div :if={message.role == :user} class="chat chat-end">
+          <div class="chat-bubble chat-bubble-primary whitespace-pre-wrap">
+            {message.content}
+          </div>
+          <div class="chat-footer text-xs text-base-content/40 mt-0.5">
+            {format_time(message.timestamp)}
+          </div>
+        </div>
+
+        <div :if={message.role == :assistant} class="chat chat-start">
+          <div :if={message.thinking} class="max-w-[80%] mb-1">
+            <div class="collapse collapse-arrow bg-base-200/50 rounded-lg">
+              <input type="checkbox" />
+              <div class="collapse-title text-xs font-medium text-base-content/50 min-h-0 py-1.5 px-3">
+                Thinking
+                <span
+                  :if={format_tokens(message.thinking_tokens)}
+                  class="text-base-content/30 ml-1"
+                >
+                  ({format_tokens(message.thinking_tokens)} tokens)
+                </span>
+              </div>
+              <div class="collapse-content text-sm text-base-content/60 px-3">
+                <p class="whitespace-pre-wrap">{message.thinking}</p>
+              </div>
+            </div>
+          </div>
+          <div class="chat-bubble max-w-[80%] [&_p]:mb-2 [&_p:last-child]:mb-0 [&_pre]:bg-base-300 [&_pre]:rounded [&_pre]:p-2 [&_pre]:my-2 [&_pre]:overflow-x-auto [&_code]:bg-base-300 [&_code]:rounded [&_code]:px-1 [&_code]:text-sm [&_ul]:list-disc [&_ul]:ml-4 [&_ol]:list-decimal [&_ol]:ml-4 [&_h1]:text-lg [&_h1]:font-bold [&_h2]:text-base [&_h2]:font-bold [&_h3]:font-bold [&_strong]:font-bold [&_a]:underline">
+            {message.content}
+          </div>
+          <div class="chat-footer text-xs text-base-content/40 mt-0.5 flex gap-2">
+            <span>{format_time(message.timestamp)}</span>
+            <span :if={format_latency(message.latency_ms)}>
+              ⏱ {format_latency(message.latency_ms)}
+            </span>
+            <span :if={format_tokens(message.input_tokens)}>
+              ↓{format_tokens(message.input_tokens)}
+            </span>
+            <span :if={format_tokens(message.output_tokens)}>
+              ↑{format_tokens(message.output_tokens)}
+            </span>
+            <span :if={format_tokens(message.thinking_tokens)}>
+              ~{format_tokens(message.thinking_tokens)}
+            </span>
+            <span :if={format_model(message.model)}>{format_model(message.model)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div :if={@loading} class="chat chat-start">
+        <div class="chat-bubble">
+          <span class="loading loading-dots loading-sm"></span>
+        </div>
+      </div>
+    </div>
+
+    <%!-- Error --%>
+    <div :if={@error} class="mx-4 mb-2">
+      <div role="alert" class="alert alert-error">
+        <span>{@error}</span>
+        <button phx-click="dismiss_error" class="btn btn-ghost btn-sm">Dismiss</button>
+      </div>
+    </div>
+
+    <%!-- Stats Footer --%>
+    <div
+      :if={@session_stats.message_count > 0}
+      class="border-t border-base-300 px-4 py-1 text-xs text-base-content/40 flex items-center gap-3 flex-none"
+    >
+      <span>
+        {@session_stats.message_count}
+        {if @session_stats.message_count == 1, do: "response", else: "responses"}
+      </span>
+      <span class="text-base-content/20">·</span>
+      <span>
+        ↓{format_tokens(@session_stats.total_input_tokens)} ↑{format_tokens(
+          @session_stats.total_output_tokens
+        )}
+        {if @session_stats.total_thinking_tokens > 0,
+          do: "~#{format_tokens(@session_stats.total_thinking_tokens)}"}
+        {if @session_stats.total_cached_tokens > 0,
+          do: "⚡#{format_tokens(@session_stats.total_cached_tokens)}"} = {format_total_tokens(
+          @session_stats
+        )}
+      </span>
+      <span class="text-base-content/20">·</span>
+      <span>{format_model(@session_stats.current_model)}</span>
+      <span class="ml-auto text-base-content/30">{@session_stats.working_dir}</span>
+    </div>
+
+    <%!-- Input --%>
+    <div class="border-t border-base-300 p-3 flex-none">
+      <div class="flex gap-2 items-end">
+        <form phx-change="select_model" class="flex-none self-end">
+          <select name="model" class="select select-bordered select-sm">
+            <option
+              :for={model <- @available_models}
+              value={model.id}
+              selected={model.id == @selected_model}
+            >
+              {model.label}
+            </option>
+          </select>
+        </form>
+        <form
+          id="chat-form"
+          phx-submit="send_message"
+          phx-hook="ChatInput"
+          class="flex gap-2 flex-1 items-end"
+        >
+          <textarea
+            name="message"
+            placeholder="Message MonkeyClaw..."
+            class="textarea textarea-bordered flex-1 min-h-[2.5rem] max-h-[200px] resize-none leading-normal py-2"
+            rows="1"
+            autocomplete="off"
+            disabled={@loading}
+            autofocus
+          />
+          <button
+            type="submit"
+            class="btn btn-primary"
+            disabled={@loading || is_nil(@workspace)}
+          >
+            <.icon name="hero-paper-airplane-solid" class="size-5" />
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>

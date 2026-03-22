@@ -1,22 +1,3 @@
-// If you want to use Phoenix channels, run `mix help phx.gen.channel`
-// to get started and then uncomment the line below.
-// import "./user_socket.js"
-
-// You can include dependencies in two ways.
-//
-// The simplest option is to put them in assets/vendor and
-// import them using relative paths:
-//
-//     import "../vendor/some-package.js"
-//
-// Alternatively, you can `npm install some-package --prefix assets` and import
-// them using a path starting with the package name:
-//
-//     import "some-package"
-//
-// If you have dependencies that try to import CSS, esbuild will generate a separate `app.css` file.
-// To load it, simply add a second `<link>` to your `root.html.heex` file.
-
 // Include phoenix_html to handle method=PUT/DELETE in forms and buttons.
 import "phoenix_html"
 // Establish Phoenix Socket and LiveView configuration.
@@ -25,11 +6,79 @@ import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/monkey_claw"
 import topbar from "../vendor/topbar"
 
+const Hooks = {
+  ScrollDown: {
+    mounted() {
+      this.scrollToBottom()
+      this.addCopyButtons()
+    },
+    updated() {
+      this.scrollToBottom()
+      this.addCopyButtons()
+    },
+    scrollToBottom() {
+      this.el.scrollTop = this.el.scrollHeight
+    },
+    addCopyButtons() {
+      this.el.querySelectorAll("pre:not([data-copy])").forEach(pre => {
+        pre.setAttribute("data-copy", "true")
+        pre.classList.add("relative", "group")
+        const btn = document.createElement("button")
+        btn.className =
+          "absolute top-1.5 right-1.5 px-2 py-0.5 text-xs rounded " +
+          "bg-base-100/80 hover:bg-base-100 text-base-content/50 " +
+          "hover:text-base-content opacity-0 group-hover:opacity-100 " +
+          "transition-all cursor-pointer"
+        btn.textContent = "Copy"
+        btn.addEventListener("click", () => {
+          const code = pre.querySelector("code") || pre
+          navigator.clipboard.writeText(code.textContent).then(() => {
+            btn.textContent = "Copied!"
+            setTimeout(() => { btn.textContent = "Copy" }, 2000)
+          })
+        })
+        pre.appendChild(btn)
+      })
+    }
+  },
+  ChatInput: {
+    mounted() {
+      this.textarea = this.el.querySelector("textarea[name='message']")
+      if (!this.textarea) return
+
+      // Auto-resize on input
+      this.textarea.addEventListener("input", () => this.resize())
+
+      // Enter sends, Shift+Enter adds newline
+      this.textarea.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+          e.preventDefault()
+          if (this.textarea.value.trim()) {
+            this.el.requestSubmit()
+          }
+        }
+      })
+
+      // Clear and refocus after send
+      this.handleEvent("clear-input", () => {
+        this.textarea.value = ""
+        this.resize()
+        this.textarea.focus()
+      })
+    },
+    resize() {
+      if (!this.textarea) return
+      this.textarea.style.height = "auto"
+      this.textarea.style.height = Math.min(this.textarea.scrollHeight, 200) + "px"
+    }
+  }
+}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks},
+  hooks: {...colocatedHooks, ...Hooks},
 })
 
 // Show progress bar on live navigation and form submits
@@ -80,4 +129,3 @@ if (process.env.NODE_ENV === "development") {
     window.liveReloader = reloader
   })
 }
-

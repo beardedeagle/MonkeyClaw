@@ -85,5 +85,12 @@ config :phoenix_live_view,
   # Enable helpful, but potentially expensive runtime checks
   enable_expensive_runtime_checks: true
 
+# Default backend for workspaces without an assistant.
+# Uses Claude via BeamAgent — CLI path is resolved at runtime.
+# init_timeout: Claude CLI cold-start can exceed BeamAgent's 15s default.
+# 30s allows headroom for Node.js startup + API handshake.
+config :monkey_claw, MonkeyClaw.Workspaces,
+  default_session_opts: %{backend: :claude, init_timeout: 30_000}
+
 # Disable swoosh api client as it is only required for production adapters.
 config :swoosh, :api_client, false

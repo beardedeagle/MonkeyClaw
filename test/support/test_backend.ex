@@ -40,6 +40,9 @@ defmodule MonkeyClaw.AgentBridge.Backend.Test do
   end
 
   @impl MonkeyClaw.AgentBridge.Backend
+  def set_model(_pid, _model), do: {:ok, :noop}
+
+  @impl MonkeyClaw.AgentBridge.Backend
   def session_info(pid) do
     GenServer.call(pid, :session_info)
   end

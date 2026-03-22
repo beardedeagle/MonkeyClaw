@@ -43,6 +43,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
 
   require Logger
 
+  alias MonkeyClaw.AgentBridge.CliResolver
   alias MonkeyClaw.AgentBridge.Telemetry, as: BridgeTelemetry
 
   # Default query timeout: 2 minutes (LLM queries can be slow)
@@ -147,6 +148,18 @@ defmodule MonkeyClaw.AgentBridge.Session do
       |> Map.new()
 
     GenServer.call(session, {:query, prompt, beam_params}, timeout)
+  end
+
+  @doc """
+  Change the model used by the session at runtime.
+
+  Sends a control message to the underlying agent session to switch
+  models. Returns `{:ok, term()}` on success or `{:error, term()}`
+  on failure.
+  """
+  @spec set_model(GenServer.server(), String.t()) :: {:ok, term()} | {:error, term()}
+  def set_model(session, model) when is_binary(model) and byte_size(model) > 0 do
+    GenServer.call(session, {:set_model, model}, 10_000)
   end
 
   @doc """
@@ -269,35 +282,53 @@ defmodule MonkeyClaw.AgentBridge.Session do
   @impl true
   def init(%{id: id, session_opts: session_opts} = config) do
     backend = Map.get(config, :backend, MonkeyClaw.AgentBridge.Backend.BeamAgent)
+
+    # Generate a fresh UUID for each BeamAgent session. Claude CLI
+    # requires --session-id to be a valid UUID (rejects BeamAgent's
+    # default "session_<hex>" format with exit code 1). We use a
+    # fresh UUID rather than the workspace ID because Claude CLI
+    # accumulates conversation state per session_id — reusing a
+    # stale ID can cause init failures.
+    session_opts =
+      session_opts
+      |> Map.put_new(:session_id, Ecto.UUID.generate())
+      |> CliResolver.resolve()
+
     state = %__MODULE__{id: id, config: config, status: :starting, backend: backend}
 
     telemetry_start =
       BridgeTelemetry.session_start(%{session_id: id, config: sanitize_config(config)})
 
-    case backend.start_session(session_opts) do
-      {:ok, session_pid} ->
-        monitor_ref = Process.monitor(session_pid)
-        beam_session_id = extract_session_id(backend, session_pid)
-        event_ref = subscribe_events(backend, session_pid)
+    init_timeout = Map.get(session_opts, :init_timeout, 30_000)
 
-        active_state = %{
-          state
-          | session_pid: session_pid,
-            beam_session_id: beam_session_id,
-            event_ref: event_ref,
-            monitor_ref: monitor_ref,
-            status: :active,
-            started_at: DateTime.utc_now(),
-            telemetry_start: telemetry_start
-        }
+    with {:ok, session_pid} <- backend.start_session(session_opts),
+         # Wait for the BeamAgent session engine to reach :ready state.
+         # start_session returns as soon as the gen_statem spawns, but
+         # the CLI init handshake happens asynchronously. Querying
+         # before :ready yields {error, unsupported}.
+         :ok <- await_ready(backend, session_pid, init_timeout) do
+      monitor_ref = Process.monitor(session_pid)
+      beam_session_id = extract_session_id(backend, session_pid)
+      event_ref = subscribe_events(backend, session_pid)
 
-        _ = if is_reference(event_ref), do: schedule_event_poll()
+      active_state = %{
+        state
+        | session_pid: session_pid,
+          beam_session_id: beam_session_id,
+          event_ref: event_ref,
+          monitor_ref: monitor_ref,
+          status: :active,
+          started_at: DateTime.utc_now(),
+          telemetry_start: telemetry_start
+      }
 
-        _ = broadcast(id, {:session_started, id})
-        Logger.info("AgentBridge session #{id} started (beam_agent: #{beam_session_id})")
+      _ = if is_reference(event_ref), do: schedule_event_poll()
 
-        {:ok, active_state}
+      _ = broadcast(id, {:session_started, id})
+      Logger.info("AgentBridge session #{id} started (beam_agent: #{beam_session_id})")
 
+      {:ok, active_state}
+    else
       {:error, reason} ->
         BridgeTelemetry.session_exception(telemetry_start, %{
           session_id: id,
@@ -337,6 +368,15 @@ defmodule MonkeyClaw.AgentBridge.Session do
   end
 
   def handle_call({:query, _prompt, _opts}, _from, state) do
+    {:reply, {:error, :session_unavailable}, state}
+  end
+
+  def handle_call({:set_model, model}, _from, %{status: :active} = state) do
+    result = state.backend.set_model(state.session_pid, model)
+    {:reply, result, state}
+  end
+
+  def handle_call({:set_model, _model}, _from, state) do
     {:reply, {:error, :session_unavailable}, state}
   end
 
@@ -472,6 +512,40 @@ defmodule MonkeyClaw.AgentBridge.Session do
     Logger.info("AgentBridge session #{state.id} stopped: #{inspect(reason)}")
 
     %{state | status: :stopped, session_pid: nil, monitor_ref: nil}
+  end
+
+  # Poll session_info until the BeamAgent session engine reaches :ready.
+  # Returns :ok on success, {:error, reason} on failure or timeout.
+  # Poll interval is 100ms — fast enough for a cold-start handshake,
+  # cheap enough to not spin the CPU.
+  @ready_poll_interval_ms 100
+
+  defp await_ready(backend, session_pid, timeout_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    do_await_ready(backend, session_pid, deadline)
+  end
+
+  defp do_await_ready(backend, session_pid, deadline) do
+    case backend.session_info(session_pid) do
+      {:ok, %{state: :ready}} ->
+        :ok
+
+      {:ok, %{state: :error}} ->
+        {:error, :session_entered_error_state}
+
+      {:ok, %{state: state}} ->
+        remaining = deadline - System.monotonic_time(:millisecond)
+
+        if remaining <= 0 do
+          {:error, {:session_not_ready, state}}
+        else
+          Process.sleep(min(@ready_poll_interval_ms, remaining))
+          do_await_ready(backend, session_pid, deadline)
+        end
+
+      {:error, reason} ->
+        {:error, {:health_check_failed, reason}}
+    end
   end
 
   defp extract_session_id(backend, session_pid) when is_pid(session_pid) do
