@@ -132,10 +132,13 @@ defmodule MonkeyClawWeb.Layouts do
   def chat(assigns) do
     ~H"""
     <div class="h-screen flex flex-col bg-base-100">
-      <header class="navbar bg-base-200 border-b border-base-300 px-4 flex-none">
-        <div class="flex-1">
+      <header class="navbar bg-base-200 border-b border-base-300 px-4 flex-none min-h-0 h-12">
+        <div class="flex-1 flex items-center gap-2">
+          <button phx-click="toggle_sidebar" class="btn btn-ghost btn-sm btn-square">
+            <.icon name="hero-bars-3" class="size-5" />
+          </button>
           <a href="/" class="flex items-center gap-2">
-            <img src={~p"/images/logo.svg"} width="28" />
+            <span class="text-2xl leading-none">🐒</span>
             <span class="text-lg font-bold">MonkeyClaw</span>
           </a>
         </div>
