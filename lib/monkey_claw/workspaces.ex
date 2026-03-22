@@ -244,7 +244,7 @@ defmodule MonkeyClaw.Workspaces do
           Assistants.to_session_opts(assistant)
 
         nil ->
-          %{}
+          default_session_opts()
       end
 
     %{id: workspace.id, session_opts: session_opts}
@@ -268,6 +268,14 @@ defmodule MonkeyClaw.Workspaces do
   # ──────────────────────────────────────────────
   # Private Helpers
   # ──────────────────────────────────────────────
+
+  # Returns the default session options for workspaces without an
+  # assistant. Configurable via Application env to allow dev/prod
+  # to specify different backends (e.g., :claude in dev).
+  defp default_session_opts do
+    Application.get_env(:monkey_claw, __MODULE__, [])
+    |> Keyword.get(:default_session_opts, %{})
+  end
 
   # Validates that the referenced assistant_id exists in the database.
   #
