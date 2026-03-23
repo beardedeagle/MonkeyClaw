@@ -17,7 +17,7 @@ defmodule MonkeyClawWeb.DashboardLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    if connected?(socket), do: schedule_refresh()
+    _ = if connected?(socket), do: schedule_refresh()
 
     {:ok, refresh_data(socket), layout: {MonkeyClawWeb.Layouts, :app}}
   end
