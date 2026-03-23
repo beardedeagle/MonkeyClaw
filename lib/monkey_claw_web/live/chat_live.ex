@@ -35,6 +35,8 @@ defmodule MonkeyClawWeb.ChatLive do
   alias MonkeyClaw.Workflows.Conversation
   alias MonkeyClaw.Workspaces
 
+  alias MonkeyClawWeb.ErrorFormatter
+
   @impl true
   def mount(params, _session, socket) do
     initial_convo = new_conversation()
@@ -184,38 +186,13 @@ defmodule MonkeyClawWeb.ChatLive do
   @impl true
   def handle_info({:ai_response, {:ok, %{messages: messages}}}, socket) do
     latency_ms = calculate_latency(socket.assigns[:sent_at])
+    displayable = Enum.filter(messages, &displayable_message?/1)
 
     socket =
-      messages
-      |> Enum.filter(&displayable_message?/1)
-      |> Enum.reduce(socket, fn msg, acc ->
-        case extract_content(msg) do
-          content when is_binary(content) and byte_size(content) > 0 ->
-            usage = Map.get(msg, :usage, %{})
-
-            cached =
-              (Map.get(usage, "cache_read_input_tokens", 0) || 0) +
-                (Map.get(usage, "cache_creation_input_tokens", 0) || 0)
-
-            thinking_tokens = Map.get(usage, "thinking_tokens")
-
-            metadata = %{
-              latency_ms: latency_ms,
-              input_tokens: Map.get(usage, "input_tokens"),
-              output_tokens: Map.get(usage, "output_tokens"),
-              cached_tokens: if(cached > 0, do: cached, else: nil),
-              thinking_tokens:
-                if(thinking_tokens && thinking_tokens > 0, do: thinking_tokens, else: nil),
-              model: Map.get(msg, :model),
-              thinking: extract_thinking(msg)
-            }
-
-            append_message(acc, :assistant, content, metadata)
-
-          _ ->
-            acc
-        end
-      end)
+      case displayable do
+        [] -> maybe_surface_error(socket, messages)
+        _ -> apply_displayable_messages(socket, displayable, latency_ms)
+      end
       |> assign(:loading, false)
       |> assign(:sent_at, nil)
 
@@ -226,7 +203,7 @@ defmodule MonkeyClawWeb.ChatLive do
     socket =
       socket
       |> assign(:loading, false)
-      |> assign(:error, format_error(reason))
+      |> assign(:error, ErrorFormatter.format(reason))
 
     {:noreply, socket}
   end
@@ -427,26 +404,50 @@ defmodule MonkeyClawWeb.ChatLive do
   defp displayable_message?(%{type: :assistant}), do: true
   defp displayable_message?(_), do: false
 
-  # --- Error formatting ---
-
-  defp format_error({:workspace_not_found, _id}), do: "Workspace not found."
-
-  defp format_error({:session_start_failed, reason}) do
-    Logger.warning("Session failed to start: #{inspect(reason)}")
-    "Session failed to start. Check server logs for details."
+  # No assistant content — surface the first categorized error
+  # from the message stream (e.g., rate_limit with retry_after).
+  defp maybe_surface_error(socket, messages) do
+    case Enum.find(messages, &ErrorFormatter.categorized_error?/1) do
+      nil -> socket
+      error -> assign(socket, :error, ErrorFormatter.format(error))
+    end
   end
 
-  defp format_error({:thread_start_failed, reason}) do
-    Logger.warning("Thread failed to start: #{inspect(reason)}")
-    "Thread failed to start. Check server logs for details."
+  defp apply_displayable_messages(socket, messages, latency_ms) do
+    Enum.reduce(messages, socket, fn msg, acc ->
+      apply_assistant_message(acc, msg, latency_ms)
+    end)
   end
 
-  defp format_error({:halted, _ctx}), do: "Request blocked by an extension hook."
-  defp format_error(:rate_limited), do: "Rate limited — please wait a moment."
+  defp apply_assistant_message(socket, msg, latency_ms) do
+    case extract_content(msg) do
+      content when is_binary(content) and byte_size(content) > 0 ->
+        metadata = build_message_metadata(msg, latency_ms)
+        append_message(socket, :assistant, content, metadata)
 
-  defp format_error(reason) do
-    Logger.warning("Unexpected chat error: #{inspect(reason)}")
-    "Something went wrong. Check server logs for details."
+      _ ->
+        socket
+    end
+  end
+
+  defp build_message_metadata(msg, latency_ms) do
+    usage = Map.get(msg, :usage, %{})
+
+    cached =
+      (Map.get(usage, "cache_read_input_tokens", 0) || 0) +
+        (Map.get(usage, "cache_creation_input_tokens", 0) || 0)
+
+    thinking_tokens = Map.get(usage, "thinking_tokens")
+
+    %{
+      latency_ms: latency_ms,
+      input_tokens: Map.get(usage, "input_tokens"),
+      output_tokens: Map.get(usage, "output_tokens"),
+      cached_tokens: if(cached > 0, do: cached, else: nil),
+      thinking_tokens: if(thinking_tokens && thinking_tokens > 0, do: thinking_tokens, else: nil),
+      model: Map.get(msg, :model),
+      thinking: extract_thinking(msg)
+    }
   end
 
   # --- Formatting helpers (used by template) ---
