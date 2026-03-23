@@ -1,4 +1,13 @@
 defmodule MonkeyClawWeb.Endpoint do
+  @moduledoc """
+  Phoenix endpoint for MonkeyClaw.
+
+  Handles HTTP/HTTPS transport, static asset serving, LiveView
+  WebSocket connections, session management, and the plug pipeline.
+  In production, all connections are gated by mTLS at the transport
+  layer — only requests with a valid client certificate reach any
+  route.
+  """
   use Phoenix.Endpoint, otp_app: :monkey_claw
 
   # The session will be stored in the cookie and signed,

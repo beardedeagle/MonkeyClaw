@@ -12,9 +12,13 @@ defmodule MonkeyClawWeb.ErrorJSON do
   #   %{errors: %{detail: "Internal Server Error"}}
   # end
 
-  # By default, Phoenix returns the status message from
-  # the template name. For example, "404.json" becomes
-  # "Not Found".
+  @doc """
+  Renders an error response as JSON with the HTTP status message.
+
+  Returns `%{errors: %{detail: message}}` where `message` is
+  derived from the template name (e.g., `"404.json"` becomes
+  `"Not Found"`).
+  """
   def render(template, _assigns) do
     %{errors: %{detail: Phoenix.Controller.status_message_from_template(template)}}
   end
