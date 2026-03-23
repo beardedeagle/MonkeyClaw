@@ -1,0 +1,95 @@
+<%!-- Hero --%>
+<div class="text-center space-y-3 py-8">
+  <div class="text-6xl">🐒</div>
+  <h1 class="text-4xl font-bold tracking-tight">MonkeyClaw</h1>
+  <p class="text-base-content/60 text-lg">Your secure-by-default AI assistant on the BEAM</p>
+</div>
+
+<%!-- Quick Actions --%>
+<div class="flex justify-center">
+  <a href="/chat" class="btn btn-primary btn-lg gap-2">
+    <.icon name="hero-chat-bubble-left-right" class="size-5" /> New Chat
+  </a>
+</div>
+
+<%!-- System Status --%>
+<div class="card bg-base-200 border border-base-300">
+  <div class="card-body p-4">
+    <h2 class="card-title text-base mb-2">System Status</h2>
+    <div class="stats stats-horizontal bg-transparent w-full">
+      <div class="stat px-4 py-2">
+        <div class="stat-title text-xs">Active Sessions</div>
+        <div class="stat-value text-2xl">{@active_sessions}</div>
+      </div>
+      <div class="stat px-4 py-2">
+        <div class="stat-title text-xs">Available Backends</div>
+        <div class="stat-value text-base font-normal flex flex-wrap gap-1 pt-1">
+          <span
+            :for={backend <- @backends}
+            class="badge badge-neutral badge-sm font-mono"
+          >
+            {Atom.to_string(backend)}
+          </span>
+          <span :if={@backends == []} class="text-base-content/40 text-sm">none</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<%!-- Placeholder Panels --%>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+  <%!-- Recent Conversations --%>
+  <div class="card bg-base-200 border border-base-300">
+    <div class="card-body p-4 space-y-2">
+      <div class="flex items-center justify-between">
+        <h3 class="font-semibold flex items-center gap-2">
+          <.icon name="hero-chat-bubble-left-right" class="size-5 text-base-content/50" />
+          Recent Conversations
+        </h3>
+        <span class="badge badge-ghost badge-sm">Coming soon</span>
+      </div>
+      <p class="text-sm text-base-content/50">Chat history will appear here</p>
+    </div>
+  </div>
+
+  <%!-- Events --%>
+  <div class="card bg-base-200 border border-base-300">
+    <div class="card-body p-4 space-y-2">
+      <div class="flex items-center justify-between">
+        <h3 class="font-semibold flex items-center gap-2">
+          <.icon name="hero-bell" class="size-5 text-base-content/50" /> Events
+        </h3>
+        <span class="badge badge-ghost badge-sm">Coming soon</span>
+      </div>
+      <p class="text-sm text-base-content/50">Extension hook events will appear here</p>
+    </div>
+  </div>
+
+  <%!-- Tasks --%>
+  <div class="card bg-base-200 border border-base-300">
+    <div class="card-body p-4 space-y-2">
+      <div class="flex items-center justify-between">
+        <h3 class="font-semibold flex items-center gap-2">
+          <.icon name="hero-clipboard-document-list" class="size-5 text-base-content/50" /> Tasks
+        </h3>
+        <span class="badge badge-ghost badge-sm">Coming soon</span>
+      </div>
+      <p class="text-sm text-base-content/50">Tracked tasks will appear here</p>
+    </div>
+  </div>
+
+  <%!-- Current Work --%>
+  <div class="card bg-base-200 border border-base-300">
+    <div class="card-body p-4 space-y-2">
+      <div class="flex items-center justify-between">
+        <h3 class="font-semibold flex items-center gap-2">
+          <.icon name="hero-wrench-screwdriver" class="size-5 text-base-content/50" />
+          Current Work
+        </h3>
+        <span class="badge badge-ghost badge-sm">Coming soon</span>
+      </div>
+      <p class="text-sm text-base-content/50">Active agent work will appear here</p>
+    </div>
+  </div>
+</div>
