@@ -165,8 +165,8 @@ defmodule MonkeyClaw.AgentBridge.Session do
   @doc """
   Get session metadata.
 
-  Returns `{:ok, info_map}` with `:id`, `:status`, `:beam_session_id`,
-  `:started_at`, and non-sensitive config.
+  Returns `{:ok, info_map}` with `:id`, `:status`, `:backend`,
+  `:beam_session_id`, `:started_at`, and non-sensitive config.
   """
   @spec info(GenServer.server()) :: {:ok, map()}
   def info(session) do
@@ -411,6 +411,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
     info = %{
       id: state.id,
       status: state.status,
+      backend: get_in(state.config, [:session_opts, :backend]),
       beam_session_id: state.beam_session_id,
       started_at: state.started_at,
       config: sanitize_config(state.config)

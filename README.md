@@ -104,6 +104,23 @@ sessions, and extension hooks into cohesive user-facing operations. The
 Workflows are pure function modules — no processes. They orchestrate
 existing APIs; generic mechanics stay in BeamAgent.
 
+### Dashboard
+
+Landing page at `/` with real-time system visibility, refreshing
+every 5 seconds. Four panels cover BEAM VM health (memory, processes,
+run queue, uptime), active agent sessions (clickable rows navigate
+to the session's chat), extension and hook status, and recent
+workspaces. Backend badges link directly to a new chat pre-configured
+with that backend.
+
+### Web Chat UI
+
+Phoenix LiveView chat interface at `/chat` with real-time streaming,
+markdown rendering, and per-message token stats. Features include
+multi-conversation management (sidebar with create/switch/delete),
+collapsible thinking blocks, code copy buttons, and runtime model
+selection across all supported backends.
+
 ### Persistence
 
 SQLite3 via `ecto_sqlite3`. Embedded and zero-ops — a natural fit

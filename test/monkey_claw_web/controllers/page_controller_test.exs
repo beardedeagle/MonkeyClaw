@@ -1,9 +1,13 @@
 defmodule MonkeyClawWeb.PageControllerTest do
   use MonkeyClawWeb.ConnCase
 
-  test "GET / redirects to LiveView chat", %{conn: conn} do
+  test "GET / renders the dashboard", %{conn: conn} do
     conn = get(conn, ~p"/")
-    # LiveView routes return a 200 with the LiveView mount
+    assert html_response(conn, 200) =~ "MonkeyClaw"
+  end
+
+  test "GET /chat renders the chat interface", %{conn: conn} do
+    conn = get(conn, ~p"/chat")
     assert html_response(conn, 200) =~ "MonkeyClaw"
   end
 end

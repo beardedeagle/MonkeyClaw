@@ -19,7 +19,9 @@ defmodule MonkeyClawWeb.Router do
   scope "/", MonkeyClawWeb do
     pipe_through :browser
 
-    live "/", ChatLive
+    live "/", DashboardLive
+    live "/chat", ChatLive
+    live "/chat/:workspace_id", ChatLive
   end
 
   # Other scopes may use custom stacks.
