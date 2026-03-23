@@ -106,10 +106,12 @@ existing APIs; generic mechanics stay in BeamAgent.
 
 ### Dashboard
 
-Landing page at `/` with at-a-glance system status — active agent
-sessions and configured backends. Placeholder panels for recent
-conversations, events, tasks, and current work provide the scaffold
-for future operational visibility.
+Landing page at `/` with real-time system visibility, refreshing
+every 5 seconds. Four panels cover BEAM VM health (memory, processes,
+run queue, uptime), active agent sessions (clickable rows navigate
+to the session's chat), extension and hook status, and recent
+workspaces. Backend badges link directly to a new chat pre-configured
+with that backend.
 
 ### Web Chat UI
 

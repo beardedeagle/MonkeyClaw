@@ -102,9 +102,7 @@ defmodule MonkeyClawWeb.Layouts do
 
   ## Examples
 
-      <Layouts.chat flash={@flash}>
-        <div>Chat content</div>
-      </Layouts.chat>
+      layout: {MonkeyClawWeb.Layouts, :chat}
 
   """
   def chat(assigns) do

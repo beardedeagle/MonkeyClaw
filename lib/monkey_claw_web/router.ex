@@ -21,6 +21,7 @@ defmodule MonkeyClawWeb.Router do
 
     live "/", DashboardLive
     live "/chat", ChatLive
+    live "/chat/:workspace_id", ChatLive
   end
 
   # Other scopes may use custom stacks.

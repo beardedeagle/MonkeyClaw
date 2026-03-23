@@ -1,95 +1,200 @@
 <%!-- Hero --%>
-<div class="text-center space-y-3 py-8">
-  <div class="text-6xl">🐒</div>
-  <h1 class="text-4xl font-bold tracking-tight">MonkeyClaw</h1>
-  <p class="text-base-content/60 text-lg">Your secure-by-default AI assistant on the BEAM</p>
+<div class="text-center space-y-2 pb-4">
+  <div class="flex items-center justify-center gap-3">
+    <span class="text-5xl">🐒</span>
+    <h1 class="text-3xl font-bold tracking-tight">MonkeyClaw</h1>
+  </div>
+  <p class="text-base-content/60">Your secure-by-default AI assistant on the BEAM</p>
+  <div class="pt-2">
+    <a href="/chat" class="btn btn-primary gap-2">
+      <.icon name="hero-chat-bubble-left-right" class="size-4" /> New Chat
+    </a>
+  </div>
 </div>
 
-<%!-- Quick Actions --%>
-<div class="flex justify-center">
-  <a href="/chat" class="btn btn-primary btn-lg gap-2">
-    <.icon name="hero-chat-bubble-left-right" class="size-5" /> New Chat
-  </a>
-</div>
-
-<%!-- System Status --%>
+<%!-- System Health --%>
 <div class="card bg-base-200 border border-base-300">
-  <div class="card-body p-4">
-    <h2 class="card-title text-base mb-2">System Status</h2>
-    <div class="stats stats-horizontal bg-transparent w-full">
-      <div class="stat px-4 py-2">
-        <div class="stat-title text-xs">Active Sessions</div>
-        <div class="stat-value text-2xl">{@active_sessions}</div>
+  <div class="card-body p-4 space-y-3">
+    <div class="flex items-center justify-between">
+      <h2 class="card-title text-base">
+        <.icon name="hero-cpu-chip" class="size-5 text-primary" /> System Health
+      </h2>
+      <span class="text-xs text-base-content/40">refreshes every 5s</span>
+    </div>
+
+    <div class="stats stats-horizontal bg-base-100 w-full shadow-sm">
+      <div class="stat px-4 py-3">
+        <div class="stat-title text-xs">Memory</div>
+        <div class="stat-value text-xl">{format_bytes(@system.total_memory)}</div>
+        <div class="stat-desc text-xs">of BEAM VM</div>
       </div>
-      <div class="stat px-4 py-2">
-        <div class="stat-title text-xs">Available Backends</div>
-        <div class="stat-value text-base font-normal flex flex-wrap gap-1 pt-1">
-          <span
-            :for={backend <- @backends}
-            class="badge badge-neutral badge-sm font-mono"
-          >
-            {Atom.to_string(backend)}
-          </span>
-          <span :if={@backends == []} class="text-base-content/40 text-sm">none</span>
+      <div class="stat px-4 py-3">
+        <div class="stat-title text-xs">Processes</div>
+        <div class="stat-value text-xl">{format_number(@system.process_count)}</div>
+        <div class="stat-desc text-xs">/ {format_number(@system.process_limit)}</div>
+      </div>
+      <div class="stat px-4 py-3">
+        <div class="stat-title text-xs">Run Queue</div>
+        <div class="stat-value text-xl">{@system.run_queue}</div>
+        <div class="stat-desc text-xs">schedulers busy</div>
+      </div>
+      <div class="stat px-4 py-3">
+        <div class="stat-title text-xs">Uptime</div>
+        <div class="stat-value text-xl">{format_uptime(@system.uptime_seconds)}</div>
+        <div class="stat-desc text-xs">
+          OTP {@system.otp_release} / Elixir {@system.elixir_version}
         </div>
       </div>
     </div>
+
+    <%!-- Memory breakdown --%>
+    <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-base-content/50 px-1">
+      <span>
+        <span class="font-medium text-base-content/70">Processes:</span>
+        {format_bytes(@system.process_memory)}
+      </span>
+      <span>
+        <span class="font-medium text-base-content/70">Atoms:</span>
+        {format_bytes(@system.atom_memory)}
+      </span>
+      <span>
+        <span class="font-medium text-base-content/70">Binary:</span>
+        {format_bytes(@system.binary_memory)}
+      </span>
+      <span>
+        <span class="font-medium text-base-content/70">ETS:</span>
+        {format_bytes(@system.ets_memory)}
+      </span>
+    </div>
   </div>
 </div>
 
-<%!-- Placeholder Panels --%>
+<%!-- Agent Sessions --%>
+<div class="card bg-base-200 border border-base-300">
+  <div class="card-body p-4 space-y-3">
+    <div class="flex items-center justify-between">
+      <h2 class="card-title text-base">
+        <.icon name="hero-bolt" class="size-5 text-secondary" /> Agent Sessions
+        <span class="badge badge-sm badge-secondary">{@session_count}</span>
+      </h2>
+    </div>
+
+    <div :if={@sessions != []} class="overflow-x-auto">
+      <table class="table table-sm table-zebra">
+        <thead>
+          <tr>
+            <th>Session</th>
+            <th>Backend</th>
+            <th>Status</th>
+            <th>Since</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            :for={session <- @sessions}
+            class="hover cursor-pointer"
+            phx-click={JS.navigate("/chat/#{session.id}")}
+          >
+            <td class="font-mono text-xs">{session.id}</td>
+            <td>
+              <span class="badge badge-neutral badge-sm font-mono">
+                {session.backend || "—"}
+              </span>
+            </td>
+            <td>
+              <span class={"badge badge-sm #{status_color(session.status)}"}>
+                {session.status}
+              </span>
+            </td>
+            <td class="text-xs text-base-content/60">{time_ago(session.started_at)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div :if={@sessions == []} class="text-sm text-base-content/40 text-center py-4">
+      No active sessions — start a chat to spin one up
+    </div>
+
+    <%!-- Backends roster --%>
+    <div class="flex items-center gap-2 text-xs px-1">
+      <span class="text-base-content/50 font-medium">Backends:</span>
+      <div class="flex flex-wrap gap-1">
+        <a
+          :for={backend <- @backends}
+          href={"/chat?backend=#{backend}"}
+          class="badge badge-outline badge-xs font-mono hover:badge-primary cursor-pointer transition-colors"
+        >
+          {Atom.to_string(backend)}
+        </a>
+        <span :if={@backends == []} class="text-base-content/40">none configured</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<%!-- Extensions & Recent Workspaces --%>
 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-  <%!-- Recent Conversations --%>
+  <%!-- Extensions & Hooks --%>
   <div class="card bg-base-200 border border-base-300">
-    <div class="card-body p-4 space-y-2">
-      <div class="flex items-center justify-between">
-        <h3 class="font-semibold flex items-center gap-2">
-          <.icon name="hero-chat-bubble-left-right" class="size-5 text-base-content/50" />
-          Recent Conversations
-        </h3>
-        <span class="badge badge-ghost badge-sm">Coming soon</span>
+    <div class="card-body p-4 space-y-3">
+      <h3 class="card-title text-base">
+        <.icon name="hero-puzzle-piece" class="size-5 text-accent" /> Extensions
+      </h3>
+
+      <div class="stats stats-vertical bg-base-100 w-full shadow-sm">
+        <div class="stat px-4 py-2">
+          <div class="stat-title text-xs">Active Hooks</div>
+          <div class="stat-value text-lg">
+            {@extensions.active_hooks |> length()}
+            <span class="text-sm font-normal text-base-content/50">
+              / {@extensions.total_hooks}
+            </span>
+          </div>
+        </div>
+        <div class="stat px-4 py-2">
+          <div class="stat-title text-xs">Registered Plugs</div>
+          <div class="stat-value text-lg">{@extensions.plugs |> length()}</div>
+        </div>
       </div>
-      <p class="text-sm text-base-content/50">Chat history will appear here</p>
+
+      <div :if={@extensions.active_hooks != []} class="flex flex-wrap gap-1 px-1">
+        <span :for={hook <- @extensions.active_hooks} class="badge badge-ghost badge-xs font-mono">
+          {Atom.to_string(hook)}
+        </span>
+      </div>
+
+      <p :if={@extensions.active_hooks == []} class="text-xs text-base-content/40 text-center">
+        No hooks configured
+      </p>
     </div>
   </div>
 
-  <%!-- Events --%>
+  <%!-- Recent Workspaces --%>
   <div class="card bg-base-200 border border-base-300">
-    <div class="card-body p-4 space-y-2">
-      <div class="flex items-center justify-between">
-        <h3 class="font-semibold flex items-center gap-2">
-          <.icon name="hero-bell" class="size-5 text-base-content/50" /> Events
-        </h3>
-        <span class="badge badge-ghost badge-sm">Coming soon</span>
-      </div>
-      <p class="text-sm text-base-content/50">Extension hook events will appear here</p>
-    </div>
-  </div>
+    <div class="card-body p-4 space-y-3">
+      <h3 class="card-title text-base">
+        <.icon name="hero-folder-open" class="size-5 text-warning" /> Recent Workspaces
+      </h3>
 
-  <%!-- Tasks --%>
-  <div class="card bg-base-200 border border-base-300">
-    <div class="card-body p-4 space-y-2">
-      <div class="flex items-center justify-between">
-        <h3 class="font-semibold flex items-center gap-2">
-          <.icon name="hero-clipboard-document-list" class="size-5 text-base-content/50" /> Tasks
-        </h3>
-        <span class="badge badge-ghost badge-sm">Coming soon</span>
+      <div :if={@workspaces != []} class="space-y-2">
+        <div
+          :for={ws <- @workspaces}
+          class="flex items-center justify-between bg-base-100 rounded-lg px-3 py-2"
+        >
+          <div class="flex items-center gap-2 min-w-0">
+            <span class={"badge badge-xs #{if ws.status == :active, do: "badge-success", else: "badge-ghost"}"} />
+            <span class="text-sm font-medium truncate">{ws.name}</span>
+          </div>
+          <span class="text-xs text-base-content/40 whitespace-nowrap ml-2">
+            {time_ago(ws.updated_at)}
+          </span>
+        </div>
       </div>
-      <p class="text-sm text-base-content/50">Tracked tasks will appear here</p>
-    </div>
-  </div>
 
-  <%!-- Current Work --%>
-  <div class="card bg-base-200 border border-base-300">
-    <div class="card-body p-4 space-y-2">
-      <div class="flex items-center justify-between">
-        <h3 class="font-semibold flex items-center gap-2">
-          <.icon name="hero-wrench-screwdriver" class="size-5 text-base-content/50" />
-          Current Work
-        </h3>
-        <span class="badge badge-ghost badge-sm">Coming soon</span>
-      </div>
-      <p class="text-sm text-base-content/50">Active agent work will appear here</p>
+      <p :if={@workspaces == []} class="text-sm text-base-content/40 text-center py-4">
+        No workspaces yet — create one to get started
+      </p>
     </div>
   </div>
 </div>

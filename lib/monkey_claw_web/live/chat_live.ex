@@ -9,14 +9,21 @@ defmodule MonkeyClawWeb.ChatLive do
   Conversations are held in-memory for the duration of the LiveView
   session — no persistence layer yet.
 
+  ## Routes
+
+    * `/chat` — Default workspace, default model
+    * `/chat/:workspace_id` — Specific workspace
+    * `/chat?backend=claude` — Pre-selects a model matching the backend
+
   ## Flow
 
-  1. On mount, finds or creates a default workspace
-  2. User submits a message via the chat form
-  3. Message is dispatched asynchronously through
+  1. On mount, resolves workspace from URL params (or finds/creates default)
+  2. If a `backend` query param is present, pre-selects a matching model
+  3. User submits a message via the chat form
+  4. Message is dispatched asynchronously through
      `Conversation.send_message/4`
-  4. Response is appended to the message list when it arrives
-  5. First user message auto-titles the conversation in the sidebar
+  5. Response is appended to the message list when it arrives
+  6. First user message auto-titles the conversation in the sidebar
   """
 
   use MonkeyClawWeb, :live_view
@@ -29,7 +36,7 @@ defmodule MonkeyClawWeb.ChatLive do
   alias MonkeyClaw.Workspaces
 
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(params, _session, socket) do
     initial_convo = new_conversation()
 
     socket =
@@ -45,7 +52,8 @@ defmodule MonkeyClawWeb.ChatLive do
       |> assign(:session_stats, initial_stats())
       |> assign(:available_models, available_models())
       |> assign(:sidebar_open, true)
-      |> assign_workspace()
+      |> assign_workspace(params["workspace_id"])
+      |> maybe_select_backend(params["backend"])
 
     {:ok, socket, layout: {MonkeyClawWeb.Layouts, :chat}}
   end
@@ -224,6 +232,23 @@ defmodule MonkeyClawWeb.ChatLive do
   end
 
   # --- Private ---
+
+  defp assign_workspace(socket, nil), do: assign_workspace(socket)
+
+  defp assign_workspace(socket, workspace_id) do
+    case Workspaces.get_workspace(workspace_id) do
+      {:ok, workspace} ->
+        model = resolve_assistant_model(workspace)
+
+        socket
+        |> assign(:workspace, workspace)
+        |> assign(:channel_name, "general")
+        |> assign(:selected_model, model || default_model())
+
+      {:error, :not_found} ->
+        assign_workspace(socket)
+    end
+  end
 
   defp assign_workspace(socket) do
     case find_or_create_default_workspace() do
@@ -465,6 +490,15 @@ defmodule MonkeyClawWeb.ChatLive do
     case Assistants.get_assistant(id) do
       {:ok, %{model: model}} when is_binary(model) and byte_size(model) > 0 -> model
       _ -> nil
+    end
+  end
+
+  defp maybe_select_backend(socket, nil), do: socket
+
+  defp maybe_select_backend(socket, backend) when is_binary(backend) do
+    case Enum.find(available_models(), fn m -> String.starts_with?(m.id, backend) end) do
+      %{id: model_id} -> assign(socket, :selected_model, model_id)
+      nil -> socket
     end
   end
 
