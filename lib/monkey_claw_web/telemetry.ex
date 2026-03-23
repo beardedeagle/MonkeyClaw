@@ -1,4 +1,13 @@
 defmodule MonkeyClawWeb.Telemetry do
+  @moduledoc """
+  Telemetry supervisor and metric definitions.
+
+  Starts a `:telemetry_poller` for periodic VM measurements and
+  exposes metric definitions consumed by reporters (console, StatsD,
+  Prometheus, etc.). Metrics cover Phoenix endpoints, Ecto queries,
+  mTLS connection counts, AgentBridge PubSub subscriptions, and
+  BEAM VM health.
+  """
   use Supervisor
   import Telemetry.Metrics
 

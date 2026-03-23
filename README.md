@@ -153,6 +153,18 @@ mix phx.server
 iex -S mix phx.server
 ```
 
+### mTLS Certificates
+
+```bash
+mix monkey_claw.gen.certs                         # Generate CA + server + client certs
+mix monkey_claw.gen.certs --san my.domain          # Add custom SANs
+mix monkey_claw.gen.certs --output-dir /path/to    # Custom output directory
+```
+
+Generates a self-signed CA, server certificate with SANs, client
+certificate, and a PKCS#12 bundle for browser import — all pure
+Elixir, no external dependencies.
+
 ### Quality Gates
 
 ```bash
@@ -163,8 +175,9 @@ mix credo --strict                # Static analysis
 mix dialyzer                      # Type checking
 ```
 
-All five gates run in CI. The `mix precommit` alias runs compile, format,
-and test in sequence for quick local checks.
+All five gates run in CI. The `mix precommit` alias runs compile
+(warnings-as-errors), `deps.unlock --unused`, format, and test in
+sequence for quick local checks.
 
 ## License
 

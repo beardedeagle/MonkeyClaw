@@ -431,15 +431,23 @@ defmodule MonkeyClawWeb.ChatLive do
 
   defp format_error({:workspace_not_found, _id}), do: "Workspace not found."
 
-  defp format_error({:session_start_failed, reason}),
-    do: "Session failed to start: #{inspect(reason)}"
+  defp format_error({:session_start_failed, reason}) do
+    Logger.warning("Session failed to start: #{inspect(reason)}")
+    "Session failed to start. Check server logs for details."
+  end
 
-  defp format_error({:thread_start_failed, reason}),
-    do: "Thread failed to start: #{inspect(reason)}"
+  defp format_error({:thread_start_failed, reason}) do
+    Logger.warning("Thread failed to start: #{inspect(reason)}")
+    "Thread failed to start. Check server logs for details."
+  end
 
   defp format_error({:halted, _ctx}), do: "Request blocked by an extension hook."
   defp format_error(:rate_limited), do: "Rate limited — please wait a moment."
-  defp format_error(reason), do: "Something went wrong: #{inspect(reason)}"
+
+  defp format_error(reason) do
+    Logger.warning("Unexpected chat error: #{inspect(reason)}")
+    "Something went wrong. Check server logs for details."
+  end
 
   # --- Formatting helpers (used by template) ---
 

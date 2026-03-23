@@ -502,8 +502,10 @@ defmodule MonkeyClaw.AgentBridge.SessionTest do
       %{session_pid: backend_pid} = :sys.get_state(pid)
       Process.exit(backend_pid, :kill)
 
-      assert_receive {:session_terminated, ^session_id, :killed}
-      assert_receive {:DOWN, ^session_ref, :process, ^pid, {:beam_agent_terminated, :killed}}
+      assert_receive {:session_terminated, ^session_id, :killed}, 1_000
+
+      assert_receive {:DOWN, ^session_ref, :process, ^pid, {:beam_agent_terminated, :killed}},
+                     1_000
     end
   end
 

@@ -1,4 +1,13 @@
 defmodule MonkeyClawWeb.Router do
+  @moduledoc """
+  Request routing for MonkeyClawWeb.
+
+  Defines two pipelines — `:browser` for HTML/LiveView requests
+  and `:api` for JSON endpoints. Both pipelines include
+  `MTLSAudit` for client-certificate telemetry. Development-only
+  routes expose Phoenix LiveDashboard and the Swoosh mailbox
+  preview under `/dev`.
+  """
   use MonkeyClawWeb, :router
 
   pipeline :browser do
