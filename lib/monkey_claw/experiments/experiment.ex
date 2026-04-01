@@ -59,6 +59,8 @@ defmodule MonkeyClaw.Experiments.Experiment do
     * `"iteration_prep_failed"` — Iteration preparation failed
       (strategy.prepare_iteration or strategy.build_prompt errored)
     * `"query_failed"` — Agent query returned an error
+    * `"mutation_scope_violation"` — Agent modified files outside allowed scope
+    * `"strategy_crashed"` — Strategy callback crashed during evaluate/decide
     * `nil` — Normal completion (accepted/rejected by strategy)
 
   ## Design
@@ -137,7 +139,9 @@ defmodule MonkeyClaw.Experiments.Experiment do
     "max_iterations_reached",
     "init_failed",
     "iteration_prep_failed",
-    "query_failed"
+    "query_failed",
+    "mutation_scope_violation",
+    "strategy_crashed"
   ]
 
   @create_fields [:title, :type, :config, :max_iterations, :time_budget_ms]

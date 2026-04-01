@@ -85,6 +85,7 @@ defmodule MonkeyClaw.Experiments.Runner do
           | :running
           | :evaluating
           | :awaiting_human
+          | :stopping
           | :accepted
           | :rejected
           | :cancelled
@@ -115,7 +116,7 @@ defmodule MonkeyClaw.Experiments.Runner do
           iteration: non_neg_integer(),
           max_iterations: pos_integer(),
           human_gate: boolean(),
-          pending_decision: {atom(), term()} | nil,
+          pending_decision: atom() | nil,
           pending_eval_result: map() | nil,
           iteration_start_time: integer() | nil,
           mutation_scope: [String.t()]
@@ -414,9 +415,9 @@ defmodule MonkeyClaw.Experiments.Runner do
     )
 
     state = %{state | task_ref: nil, task_pid: nil}
-    do_rollback(state)
     duration_ms = iteration_duration(state)
     record_iteration(state, :failed, %{error: sanitize_error(reason)}, duration_ms)
+    # cancel_and_rollback handles rollback + telemetry + completion
     cancel_and_rollback(state, "crash")
   end
 
@@ -434,7 +435,7 @@ defmodule MonkeyClaw.Experiments.Runner do
 
     state = %{state | task_ref: nil, task_pid: nil}
 
-    best_effort_rollback(state)
+    state = do_rollback(state)
     complete_experiment(state, :cancelled, "crash")
   end
 
@@ -637,7 +638,7 @@ defmodule MonkeyClaw.Experiments.Runner do
           duration_ms
         )
 
-        cancel_and_rollback(state, "strategy_#{callback}_crashed")
+        cancel_and_rollback(state, "strategy_crashed")
     end
   end
 
@@ -656,7 +657,7 @@ defmodule MonkeyClaw.Experiments.Runner do
   # H1: Wraps strategy.evaluate/3 in try/rescue to prevent strategy
   # bugs from crashing the Runner GenServer.
   defp safe_evaluate(state, run_result) do
-    case state.strategy.evaluate(state.strategy_state, run_result, %{}) do
+    case state.strategy.evaluate(state.strategy_state, run_result, strategy_opts(state)) do
       {:ok, eval_result, strategy_state} ->
         {:ok, eval_result, strategy_state}
 
@@ -671,7 +672,12 @@ defmodule MonkeyClaw.Experiments.Runner do
   # H1: Wraps strategy.decide/4 in try/rescue to prevent strategy
   # bugs from crashing the Runner GenServer.
   defp safe_decide(state, eval_result) do
-    case state.strategy.decide(state.strategy_state, eval_result, state.iteration, %{}) do
+    case state.strategy.decide(
+           state.strategy_state,
+           eval_result,
+           state.iteration,
+           strategy_opts(state)
+         ) do
       {decision, strategy_state} when decision in [:continue, :accept, :reject, :halt] ->
         {:ok, decision, strategy_state}
 
@@ -714,7 +720,7 @@ defmodule MonkeyClaw.Experiments.Runner do
   end
 
   defp execute_decision(:reject, state) do
-    do_rollback(state)
+    state = do_rollback(state)
     complete_experiment(state, :rejected, nil)
   end
 
@@ -730,20 +736,30 @@ defmodule MonkeyClaw.Experiments.Runner do
   end
 
   defp best_effort_rollback(%{strategy: strategy, strategy_state: strategy_state} = state) do
-    # Strategy-internal cleanup — result intentionally discarded (best-effort)
-    _ =
+    # Capture checkpoint_id before rollback — strategy.rollback may clear it
+    checkpoint_id = Map.get(strategy_state || %{}, :checkpoint_id)
+
+    # Strategy-internal cleanup — capture updated state
+    state =
       try do
-        {:ok, _new_state} = strategy.rollback(strategy_state, %{})
+        case strategy.rollback(strategy_state, strategy_opts(state)) do
+          {:ok, new_strategy_state} ->
+            %{state | strategy_state: new_strategy_state}
+
+          _other ->
+            state
+        end
       rescue
         error ->
           Logger.warning(
             "Experiment #{state.experiment_id} strategy rollback failed: #{inspect(error)}"
           )
+
+          state
       end
 
     # Checkpoint rewind (Runner responsibility, strategy-agnostic)
-    checkpoint_id = Map.get(strategy_state || %{}, :checkpoint_id)
-
+    # Uses pre-rollback checkpoint_id in case strategy cleared it
     if checkpoint_id && state.session_pid do
       case state.backend.checkpoint_rewind(state.session_pid, checkpoint_id) do
         :ok ->
@@ -756,7 +772,7 @@ defmodule MonkeyClaw.Experiments.Runner do
       end
     end
 
-    :ok
+    state
   end
 
   # ── Private: Cancel ──────────────────────────────────────────
@@ -769,7 +785,7 @@ defmodule MonkeyClaw.Experiments.Runner do
       end
 
     state = %{state | task_ref: nil, task_pid: nil}
-    best_effort_rollback(state)
+    state = do_rollback(state)
     complete_experiment(state, :cancelled, reason)
   end
 
@@ -905,6 +921,9 @@ defmodule MonkeyClaw.Experiments.Runner do
 
   # ── Private: Helpers ─────────────────────────────────────────
 
+  defp strategy_opts(state), do: Map.get(state.config, :opts, %{})
+  defp strategy_opts(state, extra), do: Map.merge(strategy_opts(state), extra)
+
   defp prepare_opts(state) do
     # Save checkpoint before iteration
     checkpoint_id =
@@ -915,11 +934,11 @@ defmodule MonkeyClaw.Experiments.Runner do
         end
       end
 
-    %{checkpoint_id: checkpoint_id}
+    strategy_opts(state, %{checkpoint_id: checkpoint_id})
   end
 
   defp build_prompt_opts(state) do
-    %{max_iterations: state.max_iterations}
+    strategy_opts(state, %{max_iterations: state.max_iterations})
   end
 
   defp iteration_duration(%{iteration_start_time: start}) when not is_nil(start) do

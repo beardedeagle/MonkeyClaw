@@ -247,10 +247,12 @@ defmodule MonkeyClaw.Experiments.RunnerTest do
       {pid, ref} = start_runner(config)
       wait_for_exit(ref, pid)
 
-      # The fact that the Runner completed without error proves the
-      # rollback path (including checkpoint_rewind via Backend.Test)
-      # executed successfully. Backend.Test raises on invalid checkpoint
-      # IDs, so a crash here would indicate a broken rollback flow.
+      # The Runner completed without error, proving the rollback path
+      # (including checkpoint_rewind via Backend.Test) ran without
+      # crashing. Backend.Test returns {:error, :checkpoint_not_found}
+      # for invalid checkpoint IDs — this test verifies the Runner
+      # handles the rollback flow gracefully, not that a rewind
+      # actually occurred.
       {:ok, updated} = Experiments.get_experiment(experiment.id)
       assert updated.status == :rejected
     end
