@@ -388,7 +388,9 @@ defmodule MonkeyClaw.Experiments.Runner do
   # Task completed successfully
   def handle_info({ref, result}, %{task_ref: ref} = state) do
     Process.demonitor(ref, [:flush])
-    handle_task_result(result, %{state | task_ref: nil, task_pid: nil})
+    # Capture run_ref before clearing task_ref — record_iteration needs it
+    run_ref = inspect(ref)
+    handle_task_result(result, %{state | task_ref: nil, task_pid: nil}, run_ref)
   end
 
   # Task crashed (no result received)
@@ -397,9 +399,10 @@ defmodule MonkeyClaw.Experiments.Runner do
       "Experiment #{state.experiment_id} task crashed at iteration #{state.iteration}: #{inspect(reason)}"
     )
 
+    run_ref = inspect(ref)
     state = %{state | task_ref: nil, task_pid: nil}
     duration_ms = iteration_duration(state)
-    record_iteration(state, :failed, %{error: sanitize_error(reason)}, duration_ms)
+    record_iteration(state, :failed, %{error: sanitize_error(reason)}, duration_ms, run_ref)
     # cancel_and_rollback handles rollback + telemetry + completion
     cancel_and_rollback(state, "crash")
   end
@@ -565,7 +568,7 @@ defmodule MonkeyClaw.Experiments.Runner do
 
   # ── Private: Task Result Processing ──────────────────────────
 
-  defp handle_task_result({:ok, raw_messages}, state) do
+  defp handle_task_result({:ok, raw_messages}, state, run_ref) do
     duration_ms = iteration_duration(state)
 
     # Normalize — strategies NEVER see raw BeamAgent output
@@ -622,7 +625,14 @@ defmodule MonkeyClaw.Experiments.Runner do
           score
         )
 
-        record_iteration(state, iteration_status(auto_decision), eval_result, duration_ms)
+        record_iteration(
+          state,
+          iteration_status(auto_decision),
+          eval_result,
+          duration_ms,
+          run_ref
+        )
+
         execute_decision(auto_decision, state)
       end
     else
@@ -636,7 +646,8 @@ defmodule MonkeyClaw.Experiments.Runner do
           state,
           :failed,
           %{error: "mutation_scope_violation", out_of_scope_files: out_of_scope},
-          duration_ms
+          duration_ms,
+          run_ref
         )
 
         cancel_and_rollback(state, "mutation_scope_violation")
@@ -650,20 +661,21 @@ defmodule MonkeyClaw.Experiments.Runner do
           state,
           :failed,
           %{error: sanitize_error("strategy.#{callback} crashed: #{inspect(reason)}")},
-          duration_ms
+          duration_ms,
+          run_ref
         )
 
         cancel_and_rollback(state, "strategy_crashed")
     end
   end
 
-  defp handle_task_result({:error, reason}, state) do
+  defp handle_task_result({:error, reason}, state, run_ref) do
     Logger.warning(
       "Experiment #{state.experiment_id} query failed at iteration #{state.iteration}: #{inspect(reason)}"
     )
 
     duration_ms = iteration_duration(state)
-    record_iteration(state, :failed, %{error: sanitize_error(reason)}, duration_ms)
+    record_iteration(state, :failed, %{error: sanitize_error(reason)}, duration_ms, run_ref)
     cancel_and_rollback(state, "query_failed")
   end
 
@@ -910,13 +922,13 @@ defmodule MonkeyClaw.Experiments.Runner do
     end
   end
 
-  defp record_iteration(state, status_val, eval_result, duration_ms) do
+  defp record_iteration(state, status_val, eval_result, duration_ms, run_ref \\ nil) do
     experiment = Experiments.get_experiment!(state.experiment_id)
 
     attrs = %{
       sequence: state.iteration,
       status: status_val,
-      run_ref: if(state.task_ref, do: inspect(state.task_ref), else: nil),
+      run_ref: run_ref,
       eval_result: eval_result,
       state_snapshot: state.strategy_state || %{},
       duration_ms: duration_ms,
@@ -964,8 +976,8 @@ defmodule MonkeyClaw.Experiments.Runner do
 
   defp iteration_status(:accept), do: :accepted
   defp iteration_status(:reject), do: :rejected
-  defp iteration_status(:continue), do: :accepted
-  defp iteration_status(:halt), do: :accepted
+  defp iteration_status(:continue), do: :continued
+  defp iteration_status(:halt), do: :halted
 
   # M2: Truncates error reasons before DB persistence to prevent
   # unbounded data from being stored in SQLite.

@@ -21,8 +21,10 @@ defmodule MonkeyClaw.Experiments.Iteration do
 
     * `:running` — Iteration is in progress (async task executing)
     * `:evaluating` — Agent completed, evaluation in progress
-    * `:accepted` — Strategy accepted this iteration's result
-    * `:rejected` — Strategy rejected this iteration's result
+    * `:accepted` — Strategy accepted this iteration's result (terminal)
+    * `:rejected` — Strategy rejected this iteration's result (triggers rollback)
+    * `:continued` — Strategy decided to continue iterating
+    * `:halted` — Strategy halted the experiment at this iteration
     * `:failed` — Iteration failed (task crash, timeout, etc.)
 
   ## Ordering
@@ -56,9 +58,9 @@ defmodule MonkeyClaw.Experiments.Iteration do
           inserted_at: DateTime.t() | nil
         }
 
-  @type status :: :running | :evaluating | :accepted | :rejected | :failed
+  @type status :: :running | :evaluating | :accepted | :rejected | :continued | :halted | :failed
 
-  @statuses [:running, :evaluating, :accepted, :rejected, :failed]
+  @statuses [:running, :evaluating, :accepted, :rejected, :continued, :halted, :failed]
 
   @create_fields [
     :sequence,
