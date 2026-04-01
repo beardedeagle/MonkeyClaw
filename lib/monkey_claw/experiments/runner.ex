@@ -1065,7 +1065,7 @@ defmodule MonkeyClaw.Experiments.Runner do
 
   defp do_scrub_secrets(map, violations) when is_map(map) do
     Enum.reduce(map, {%{}, violations}, fn {key, value}, {acc, viols} ->
-      key_str = to_string(key) |> String.downcase()
+      key_str = safe_key_to_string(key)
 
       if secret_key?(key_str) do
         {Map.put(acc, key, "[REDACTED]"), [key | viols]}
@@ -1083,6 +1083,15 @@ defmodule MonkeyClaw.Experiments.Runner do
   end
 
   defp do_scrub_secrets(value, violations), do: {value, violations}
+
+  # Only match atom and binary keys for secret detection.
+  # Non-stringable keys (tuples, pids, refs) are skipped — defense-in-depth
+  # code must never crash the Runner during persistence.
+  defp safe_key_to_string(key) when is_atom(key), do: Atom.to_string(key) |> String.downcase()
+  defp safe_key_to_string(key) when is_binary(key), do: String.downcase(key)
+  defp safe_key_to_string(_key), do: ""
+
+  defp secret_key?(""), do: false
 
   defp secret_key?(key_str) do
     Enum.any?(@secret_patterns, &String.contains?(key_str, &1))
