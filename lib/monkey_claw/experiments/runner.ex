@@ -118,6 +118,8 @@ defmodule MonkeyClaw.Experiments.Runner do
           human_gate: boolean(),
           pending_decision: atom() | nil,
           pending_eval_result: map() | nil,
+          pending_run_ref: String.t() | nil,
+          pending_duration_ms: non_neg_integer() | nil,
           iteration_start_time: integer() | nil,
           mutation_scope: [String.t()]
         }
@@ -137,6 +139,8 @@ defmodule MonkeyClaw.Experiments.Runner do
     :config,
     :pending_decision,
     :pending_eval_result,
+    :pending_run_ref,
+    :pending_duration_ms,
     :iteration_start_time,
     status: :initializing,
     iteration: 0,
@@ -295,7 +299,11 @@ defmodule MonkeyClaw.Experiments.Runner do
   def handle_call({:human_decision, decision}, _from, %{status: :awaiting_human} = state) do
     eval_result = state.pending_eval_result || %{}
     score = Map.get(eval_result, :score)
-    duration_ms = iteration_duration(state)
+
+    # Use agent-only duration captured at task completion, not wall-clock
+    # time which would include human wait time.
+    duration_ms = state.pending_duration_ms
+    run_ref = state.pending_run_ref
 
     Telemetry.decision_final(
       state.experiment_id,
@@ -305,9 +313,15 @@ defmodule MonkeyClaw.Experiments.Runner do
       score
     )
 
-    record_iteration(state, iteration_status(decision), eval_result, duration_ms)
+    record_iteration(state, iteration_status(decision), eval_result, duration_ms, run_ref)
 
-    state = %{state | pending_decision: nil, pending_eval_result: nil}
+    state = %{
+      state
+      | pending_decision: nil,
+        pending_eval_result: nil,
+        pending_run_ref: nil,
+        pending_duration_ms: nil
+    }
 
     # execute_decision returns GenServer tuples — bridge to handle_call format
     case execute_decision(decision, state) do
@@ -609,12 +623,16 @@ defmodule MonkeyClaw.Experiments.Runner do
         # Block the experiment, NOT the process
         persist_status(state.experiment_id, :awaiting_human)
 
+        # Park iteration metadata so handle_call({:human_decision, ...})
+        # can persist accurate run_ref and agent-only duration_ms.
         {:noreply,
          %{
            state
            | status: :awaiting_human,
              pending_decision: auto_decision,
-             pending_eval_result: eval_result
+             pending_eval_result: eval_result,
+             pending_run_ref: run_ref,
+             pending_duration_ms: duration_ms
          }}
       else
         Telemetry.decision_final(
@@ -743,17 +761,22 @@ defmodule MonkeyClaw.Experiments.Runner do
   end
 
   defp execute_decision(:accept, state) do
-    complete_experiment(state, :accepted, nil)
+    complete_experiment(state, :accepted, termination_reason_for(state))
   end
 
   defp execute_decision(:reject, state) do
     state = do_rollback(state)
-    complete_experiment(state, :rejected, nil)
+    complete_experiment(state, :rejected, termination_reason_for(state))
   end
 
   defp execute_decision(:halt, state) do
-    complete_experiment(state, :halted, nil)
+    complete_experiment(state, :halted, termination_reason_for(state))
   end
+
+  # Derive termination reason from state — preserves "graceful_stop"
+  # through the decision pipeline when status is :stopping.
+  defp termination_reason_for(%{status: :stopping}), do: "graceful_stop"
+  defp termination_reason_for(_state), do: nil
 
   # ── Private: Rollback ────────────────────────────────────────
 
@@ -922,7 +945,7 @@ defmodule MonkeyClaw.Experiments.Runner do
     end
   end
 
-  defp record_iteration(state, status_val, eval_result, duration_ms, run_ref \\ nil) do
+  defp record_iteration(state, status_val, eval_result, duration_ms, run_ref) do
     experiment = Experiments.get_experiment!(state.experiment_id)
 
     attrs = %{
