@@ -208,7 +208,7 @@ defmodule MonkeyClaw.Experiments do
       when is_binary(experiment_id) and byte_size(experiment_id) > 0 do
     Iteration
     |> where([i], i.experiment_id == ^experiment_id)
-    |> Repo.aggregate(:count)
+    |> Repo.aggregate(:count, :id)
   end
 
   # ──────────────────────────────────────────────

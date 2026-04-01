@@ -367,30 +367,13 @@ defmodule MonkeyClaw.Experiments.Runner do
 
     Telemetry.iteration_start(state.experiment_id, iteration, state.strategy_name)
 
-    with {:ok, strategy_state} <-
-           state.strategy.prepare_iteration(state.strategy_state, iteration, prepare_opts(state)),
-         {:ok, prompt} <-
-           state.strategy.build_prompt(strategy_state, iteration, build_prompt_opts(state)) do
-      # Launch async agent query — NEVER block the GenServer
-      task =
-        Task.Supervisor.async_nolink(
-          MonkeyClaw.Experiments.TaskSupervisor,
-          fn -> state.backend.query(state.session_pid, prompt, %{}) end
-        )
+    case state.strategy.prepare_iteration(state.strategy_state, iteration, prepare_opts(state)) do
+      {:ok, strategy_state} ->
+        # Update state with prepared strategy_state so rollback has access
+        # to any checkpoint_id stored during preparation.
+        state = %{state | strategy_state: strategy_state, iteration: iteration}
+        build_prompt_and_launch(state, iteration, now)
 
-      persist_status(state.experiment_id, :running, %{iteration_count: iteration})
-
-      {:noreply,
-       %{
-         state
-         | strategy_state: strategy_state,
-           iteration: iteration,
-           task_ref: task.ref,
-           task_pid: task.pid,
-           status: :running,
-           iteration_start_time: now
-       }}
-    else
       {:error, reason} ->
         Logger.error(
           "Experiment #{state.experiment_id} iteration #{iteration} prep failed: #{inspect(reason)}"
@@ -548,6 +531,38 @@ defmodule MonkeyClaw.Experiments.Runner do
     backend.start_session(session_opts)
   end
 
+  # ── Private: Iteration Launch ────────────────────────────────
+
+  defp build_prompt_and_launch(state, iteration, now) do
+    case state.strategy.build_prompt(state.strategy_state, iteration, build_prompt_opts(state)) do
+      {:ok, prompt} ->
+        # Launch async agent query — NEVER block the GenServer
+        task =
+          Task.Supervisor.async_nolink(
+            MonkeyClaw.Experiments.TaskSupervisor,
+            fn -> state.backend.query(state.session_pid, prompt, %{}) end
+          )
+
+        persist_status(state.experiment_id, :running, %{iteration_count: iteration})
+
+        {:noreply,
+         %{
+           state
+           | task_ref: task.ref,
+             task_pid: task.pid,
+             status: :running,
+             iteration_start_time: now
+         }}
+
+      {:error, reason} ->
+        Logger.error(
+          "Experiment #{state.experiment_id} iteration #{iteration} build_prompt failed: #{inspect(reason)}"
+        )
+
+        cancel_and_rollback(state, "iteration_prep_failed")
+    end
+  end
+
   # ── Private: Task Result Processing ──────────────────────────
 
   defp handle_task_result({:ok, raw_messages}, state) do
@@ -654,8 +669,8 @@ defmodule MonkeyClaw.Experiments.Runner do
 
   # ── Private: Strategy Safety Wrappers ─────────────────────────
 
-  # H1: Wraps strategy.evaluate/3 in try/rescue to prevent strategy
-  # bugs from crashing the Runner GenServer.
+  # H1: Wraps strategy.evaluate/3 in try/catch to prevent strategy
+  # bugs from crashing the Runner GenServer. Catches raise, exit, and throw.
   defp safe_evaluate(state, run_result) do
     case state.strategy.evaluate(state.strategy_state, run_result, strategy_opts(state)) do
       {:ok, eval_result, strategy_state} ->
@@ -664,13 +679,13 @@ defmodule MonkeyClaw.Experiments.Runner do
       other ->
         {:error, :strategy_crashed, :evaluate, {:unexpected_return, other}}
     end
-  rescue
-    error ->
-      {:error, :strategy_crashed, :evaluate, error}
+  catch
+    kind, reason ->
+      {:error, :strategy_crashed, :evaluate, {kind, reason}}
   end
 
-  # H1: Wraps strategy.decide/4 in try/rescue to prevent strategy
-  # bugs from crashing the Runner GenServer.
+  # H1: Wraps strategy.decide/4 in try/catch to prevent strategy
+  # bugs from crashing the Runner GenServer. Catches raise, exit, and throw.
   defp safe_decide(state, eval_result) do
     case state.strategy.decide(
            state.strategy_state,
@@ -684,9 +699,9 @@ defmodule MonkeyClaw.Experiments.Runner do
       other ->
         {:error, :strategy_crashed, :decide, {:unexpected_return, other}}
     end
-  rescue
-    error ->
-      {:error, :strategy_crashed, :decide, error}
+  catch
+    kind, reason ->
+      {:error, :strategy_crashed, :decide, {kind, reason}}
   end
 
   # H2: Validates that all files changed by the agent are within the

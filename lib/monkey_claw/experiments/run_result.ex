@@ -77,12 +77,47 @@ defmodule MonkeyClaw.Experiments.RunResult do
 
   # ── Private ──────────────────────────────────────────────────
 
-  # Concatenate text content from all text-type messages.
+  # Concatenate text content from messages.
+  #
+  # Supports:
+  #   * `:text` / "text" messages with binary `content`
+  #   * `:assistant` / "assistant" messages with `content_blocks`
+  #     (matches BeamAgent query response format)
   defp extract_output(messages) do
     messages
-    |> Enum.filter(&text_message?/1)
-    |> Enum.map_join("\n", fn msg ->
-      to_string(Map.get(msg, :content, Map.get(msg, "content", "")))
+    |> Enum.flat_map(&extract_message_text/1)
+    |> Enum.join("\n")
+  end
+
+  defp extract_message_text(msg) when is_map(msg) do
+    type = Map.get(msg, :type, Map.get(msg, "type"))
+
+    case type do
+      t when t in [:text, "text"] ->
+        content = Map.get(msg, :content, Map.get(msg, "content"))
+        if is_binary(content), do: [content], else: []
+
+      t when t in [:assistant, "assistant"] ->
+        blocks = Map.get(msg, :content_blocks, Map.get(msg, "content_blocks", []))
+        if is_list(blocks), do: extract_text_from_blocks(blocks), else: []
+
+      _ ->
+        []
+    end
+  end
+
+  defp extract_message_text(_), do: []
+
+  defp extract_text_from_blocks(blocks) do
+    Enum.flat_map(blocks, fn block ->
+      text =
+        Map.get(
+          block,
+          :text,
+          Map.get(block, "text", Map.get(block, :content, Map.get(block, "content")))
+        )
+
+      if is_binary(text) and byte_size(text) > 0, do: [text], else: []
     end)
   end
 
@@ -113,11 +148,6 @@ defmodule MonkeyClaw.Experiments.RunResult do
     |> Enum.flat_map(&extract_file_paths/1)
     |> Enum.uniq()
   end
-
-  defp text_message?(%{type: :text}), do: true
-  defp text_message?(%{type: "text"}), do: true
-  defp text_message?(%{"type" => "text"}), do: true
-  defp text_message?(_), do: false
 
   defp tool_use_message?(%{type: :tool_use}), do: true
   defp tool_use_message?(%{type: "tool_use"}), do: true
