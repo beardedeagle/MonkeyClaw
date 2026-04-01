@@ -151,4 +151,28 @@ defmodule MonkeyClaw.AgentBridge.Backend do
   List all threads within the session.
   """
   @callback thread_list(session_pid()) :: {:ok, [thread_info()]} | {:error, term()}
+
+  # ── Checkpoint Operations (Experiment Support) ───────────────
+
+  @doc """
+  Save a checkpoint of the current session state.
+
+  Returns a checkpoint identifier that can be used with
+  `checkpoint_rewind/2` to restore the session to this point.
+
+  Used by the experiment Runner to snapshot state before each
+  iteration, enabling rollback on rejection.
+  """
+  @callback checkpoint_save(session_pid(), label :: String.t()) ::
+              {:ok, checkpoint_id :: String.t()} | {:error, term()}
+
+  @doc """
+  Rewind the session to a previously saved checkpoint.
+
+  Restores the session state to the point captured by
+  `checkpoint_save/2`. Used by the experiment Runner to
+  rollback rejected iterations.
+  """
+  @callback checkpoint_rewind(session_pid(), checkpoint_id :: String.t()) ::
+              :ok | {:error, term()}
 end

@@ -24,6 +24,13 @@ defmodule MonkeyClaw.Application do
       # AgentBridge: session registry and supervisor
       {Registry, keys: :unique, name: MonkeyClaw.AgentBridge.SessionRegistry},
       MonkeyClaw.AgentBridge.SessionSupervisor,
+      # Experiments: registry, task supervisor, and runner supervisor.
+      # Order matters — RunnerRegistry and TaskSupervisor must start
+      # before the Supervisor, since Runner processes register themselves
+      # and use TaskSupervisor for async agent queries.
+      {Registry, keys: :unique, name: MonkeyClaw.Experiments.RunnerRegistry},
+      {Task.Supervisor, name: MonkeyClaw.Experiments.TaskSupervisor},
+      MonkeyClaw.Experiments.Supervisor,
       # Start to serve requests, typically the last entry
       MonkeyClawWeb.Endpoint
     ]

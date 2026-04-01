@@ -36,7 +36,7 @@ capabilities with security built into the platform, not patched on top.
 │  MonkeyClaw.Workflows — conversation recipes         │
 ├─────────────────────────────────────────────────────┤
 │  Product Layer                                      │
-│  MonkeyClaw — assistants · workspaces · channels    │
+│  MonkeyClaw — assistants · workspaces · experiments │
 ├─────────────────────────────────────────────────────┤
 │  Extension Layer                                    │
 │  Plug pipelines — hooks · contexts · pipelines      │
@@ -70,6 +70,7 @@ Clean separation of concerns, connected through a public Elixir API.
 | **Context**   | `MonkeyClaw.Extensions.Context`   | Data struct flowing through extension pipelines   |
 | **Pipeline**  | `MonkeyClaw.Extensions.Pipeline`  | Compiled, ordered chain of plugs for a hook point |
 | **Workflow**  | `MonkeyClaw.Workflows.Conversation` | Product-level orchestration recipe              |
+| **Experiment**| `MonkeyClaw.Experiments.Experiment`  | Bounded optimization loop with strategy-driven iteration |
 
 Contexts (`MonkeyClaw.Assistants`, `MonkeyClaw.Workspaces`) provide the
 public CRUD API. `MonkeyClaw.AgentBridge` translates domain objects into
@@ -115,6 +116,32 @@ response chunks progressively to the caller:
 - `{:stream_error, session_id, reason}` — Stream failed
 
 Post-hooks run after the caller has accumulated the full response.
+
+### Experiment Engine
+
+Autonomous, bounded iteration loops for code optimization and other
+strategy-driven tasks. The engine runs evaluate-decide cycles over a
+BeamAgent session, with full rollback safety and human override gates.
+
+Three-layer architecture:
+
+| Layer | Module | Owns |
+|-------|--------|------|
+| **Strategy** | `MonkeyClaw.Experiments.Strategy` | Domain logic — state, prompts, evaluation, decisions |
+| **Runner** | `MonkeyClaw.Experiments.Runner` | Control flow — iteration loop, time budget, persistence |
+| **BeamAgent** | `MonkeyClaw.AgentBridge.Backend` | Execution — runs, tools, checkpoints |
+
+Each experiment is a state machine (`created → running → evaluating →
+accepted/rejected/halted/cancelled`) driven by a strategy behaviour.
+Strategies define how to prepare iterations, build prompts, evaluate
+results, and decide whether to continue, accept, reject, or halt.
+
+Features include async execution via `Task.Supervisor.async_nolink`
+(GenServer stays responsive for timeouts and cancellation), mutation
+scope enforcement (strategy declares allowed files, Runner rejects
+out-of-scope changes), optional human decision gates (non-blocking),
+automatic BeamAgent checkpoint save/rewind on rollback, configurable
+per-experiment time budgets, and full telemetry instrumentation.
 
 ### Dashboard
 

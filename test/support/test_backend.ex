@@ -85,6 +85,16 @@ defmodule MonkeyClaw.AgentBridge.Backend.Test do
     GenServer.call(pid, :thread_list)
   end
 
+  @impl MonkeyClaw.AgentBridge.Backend
+  def checkpoint_save(pid, label) do
+    GenServer.call(pid, {:checkpoint_save, label})
+  end
+
+  @impl MonkeyClaw.AgentBridge.Backend
+  def checkpoint_rewind(pid, checkpoint_id) do
+    GenServer.call(pid, {:checkpoint_rewind, checkpoint_id})
+  end
+
   # ── GenServer State ───────────────────────────────────────────────
 
   defstruct [
@@ -95,7 +105,8 @@ defmodule MonkeyClaw.AgentBridge.Backend.Test do
     query_count: 0,
     stream_count: 0,
     threads: %{},
-    events: []
+    events: [],
+    checkpoints: %{}
   ]
 
   # ── GenServer Callbacks ───────────────────────────────────────────
@@ -185,6 +196,21 @@ defmodule MonkeyClaw.AgentBridge.Backend.Test do
 
   def handle_call(:thread_list, _from, state) do
     {:reply, {:ok, Map.values(state.threads)}, state}
+  end
+
+  # ── Checkpoint Operations ────────────────────────────────────────
+
+  def handle_call({:checkpoint_save, label}, _from, state) do
+    id = "chk-#{label}-#{:erlang.unique_integer([:positive])}"
+    checkpoints = Map.put(state.checkpoints, id, label)
+    {:reply, {:ok, id}, %{state | checkpoints: checkpoints}}
+  end
+
+  def handle_call({:checkpoint_rewind, checkpoint_id}, _from, state) do
+    case Map.fetch(state.checkpoints, checkpoint_id) do
+      {:ok, _label} -> {:reply, :ok, state}
+      :error -> {:reply, {:error, :checkpoint_not_found}, state}
+    end
   end
 
   # ── Private ───────────────────────────────────────────────────────

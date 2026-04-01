@@ -79,4 +79,30 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
 
   @impl true
   def thread_list(pid), do: BeamAgent.Threads.thread_list(pid)
+
+  # ── Checkpoint Operations ────────────────────────────────────
+
+  # BeamAgent.Checkpoint may not yet export these functions.
+  # Suppress Dialyzer warnings; function_exported?/3 guard
+  # ensures runtime safety until the API is available.
+
+  @impl true
+  def checkpoint_save(pid, label) do
+    if function_exported?(BeamAgent.Checkpoint, :save, 2) do
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      apply(BeamAgent.Checkpoint, :save, [pid, label])
+    else
+      {:error, :not_supported}
+    end
+  end
+
+  @impl true
+  def checkpoint_rewind(pid, checkpoint_id) do
+    if function_exported?(BeamAgent.Checkpoint, :rewind, 2) do
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      apply(BeamAgent.Checkpoint, :rewind, [pid, checkpoint_id])
+    else
+      {:error, :not_supported}
+    end
+  end
 end

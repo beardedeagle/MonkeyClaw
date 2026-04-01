@@ -25,6 +25,7 @@ defmodule MonkeyClaw.Factory do
   """
 
   alias MonkeyClaw.Assistants
+  alias MonkeyClaw.Experiments
   alias MonkeyClaw.Sessions
   alias MonkeyClaw.Workspaces
 
@@ -175,5 +176,44 @@ defmodule MonkeyClaw.Factory do
   def insert_message!(session, overrides \\ %{}) do
     {:ok, message} = Sessions.record_message(session, message_attrs(overrides))
     message
+  end
+
+  # ──────────────────────────────────────────────
+  # Experiment Builders
+  # ──────────────────────────────────────────────
+
+  @doc """
+  Build a map of valid experiment attributes.
+
+  Defaults to `:code` type with 5 max iterations and a basic
+  scoped_files configuration.
+  """
+  @spec experiment_attrs(Enumerable.t()) :: map()
+  def experiment_attrs(overrides \\ %{}) do
+    Map.merge(
+      %{
+        title: "experiment-#{System.unique_integer([:positive])}",
+        type: :code,
+        max_iterations: 5,
+        config: %{
+          "scoped_files" => ["lib/example.ex"],
+          "optimization_goal" => "Improve performance"
+        }
+      },
+      Map.new(overrides)
+    )
+  end
+
+  @doc """
+  Insert an experiment into the database within a workspace.
+
+  Delegates to `MonkeyClaw.Experiments.create_experiment/2`.
+  Raises on validation failure.
+  """
+  @spec insert_experiment!(MonkeyClaw.Workspaces.Workspace.t(), Enumerable.t()) ::
+          MonkeyClaw.Experiments.Experiment.t()
+  def insert_experiment!(workspace, overrides \\ %{}) do
+    {:ok, experiment} = Experiments.create_experiment(workspace, experiment_attrs(overrides))
+    experiment
   end
 end

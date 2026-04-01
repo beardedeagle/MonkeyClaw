@@ -36,6 +36,7 @@ defmodule MonkeyClaw.Workspaces.Workspace do
   import Ecto.Changeset
 
   alias MonkeyClaw.Assistants.Assistant
+  alias MonkeyClaw.Experiments.Experiment
   alias MonkeyClaw.Sessions.Session
   alias MonkeyClaw.Workspaces.Channel
 
@@ -65,6 +66,7 @@ defmodule MonkeyClaw.Workspaces.Workspace do
 
     belongs_to :assistant, Assistant
     has_many :channels, Channel
+    has_many :experiments, Experiment
     has_many :sessions, Session
 
     timestamps(type: :utc_datetime_usec)
