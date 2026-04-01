@@ -52,7 +52,7 @@ defmodule MonkeyClaw.Experiments.Telemetry do
 
   Called at the beginning of each iteration before the agent runs.
   """
-  @spec iteration_start(String.t(), pos_integer(), String.t()) :: :ok
+  @spec iteration_start(String.t(), non_neg_integer(), String.t()) :: :ok
   def iteration_start(experiment_id, iteration, strategy) do
     execute(
       [:monkey_claw, :experiment, :iteration, :start],
@@ -68,7 +68,7 @@ defmodule MonkeyClaw.Experiments.Telemetry do
   """
   @spec iteration_evaluate(
           String.t(),
-          pos_integer(),
+          non_neg_integer(),
           String.t(),
           float() | nil,
           non_neg_integer() | nil
@@ -88,7 +88,7 @@ defmodule MonkeyClaw.Experiments.Telemetry do
 
   Called when the strategy makes its automated decision.
   """
-  @spec decision_auto(String.t(), pos_integer(), String.t(), String.t(), float() | nil) :: :ok
+  @spec decision_auto(String.t(), non_neg_integer(), String.t(), String.t(), float() | nil) :: :ok
   def decision_auto(experiment_id, iteration, strategy, decision, score) do
     execute(
       [:monkey_claw, :experiment, :decision, :auto],
@@ -104,7 +104,8 @@ defmodule MonkeyClaw.Experiments.Telemetry do
   Called after human override (if any). This is the decision
   that actually gets executed.
   """
-  @spec decision_final(String.t(), pos_integer(), String.t(), String.t(), float() | nil) :: :ok
+  @spec decision_final(String.t(), non_neg_integer(), String.t(), String.t(), float() | nil) ::
+          :ok
   def decision_final(experiment_id, iteration, strategy, decision, score) do
     execute(
       [:monkey_claw, :experiment, :decision, :final],
@@ -119,7 +120,7 @@ defmodule MonkeyClaw.Experiments.Telemetry do
 
   Called when a rollback is triggered (reject, timeout, crash).
   """
-  @spec rollback(String.t(), pos_integer(), String.t()) :: :ok
+  @spec rollback(String.t(), non_neg_integer(), String.t()) :: :ok
   def rollback(experiment_id, iteration, strategy) do
     execute(
       [:monkey_claw, :experiment, :rollback],
@@ -133,7 +134,7 @@ defmodule MonkeyClaw.Experiments.Telemetry do
 
   Called when the experiment reaches a terminal state.
   """
-  @spec completed(String.t(), pos_integer(), String.t(), String.t(), non_neg_integer() | nil) ::
+  @spec completed(String.t(), non_neg_integer(), String.t(), String.t(), non_neg_integer() | nil) ::
           :ok
   def completed(experiment_id, iteration, strategy, decision, duration_ms) do
     execute(

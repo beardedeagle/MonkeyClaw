@@ -120,6 +120,7 @@ defmodule MonkeyClaw.Experiments.Runner do
           pending_eval_result: map() | nil,
           pending_run_ref: String.t() | nil,
           pending_duration_ms: non_neg_integer() | nil,
+          experiment_start_time: integer() | nil,
           iteration_start_time: integer() | nil,
           mutation_scope: [String.t()]
         }
@@ -141,6 +142,7 @@ defmodule MonkeyClaw.Experiments.Runner do
     :pending_eval_result,
     :pending_run_ref,
     :pending_duration_ms,
+    :experiment_start_time,
     :iteration_start_time,
     status: :initializing,
     iteration: 0,
@@ -428,9 +430,9 @@ defmodule MonkeyClaw.Experiments.Runner do
     Logger.warning("Experiment #{state.experiment_id} session crashed: #{inspect(reason)}")
     state = %{state | session_pid: nil, session_monitor_ref: nil}
 
-    # Cancel in-flight task if any
+    # Cancel in-flight task if any — guard on task_pid (the value we pass)
     _ =
-      if state.task_ref,
+      if state.task_pid,
         do: Task.Supervisor.terminate_child(MonkeyClaw.Experiments.TaskSupervisor, state.task_pid)
 
     state = %{state | task_ref: nil, task_pid: nil}
@@ -493,7 +495,8 @@ defmodule MonkeyClaw.Experiments.Runner do
         status: :running,
         max_iterations: experiment.max_iterations,
         human_gate: Map.get(config, :human_gate, false),
-        mutation_scope: mutation_files
+        mutation_scope: mutation_files,
+        experiment_start_time: System.monotonic_time(:millisecond)
       }
 
       # Schedule time budget if configured
@@ -790,44 +793,50 @@ defmodule MonkeyClaw.Experiments.Runner do
     best_effort_rollback(state)
   end
 
-  defp best_effort_rollback(%{strategy: strategy, strategy_state: strategy_state} = state) do
+  defp best_effort_rollback(%{strategy_state: strategy_state} = state) do
     # Capture checkpoint_id before rollback — strategy.rollback may clear it
-    checkpoint_id = Map.get(strategy_state || %{}, :checkpoint_id)
-
-    # Strategy-internal cleanup — capture updated state
-    state =
-      try do
-        case strategy.rollback(strategy_state, strategy_opts(state)) do
-          {:ok, new_strategy_state} ->
-            %{state | strategy_state: new_strategy_state}
-
-          _other ->
-            state
-        end
-      catch
-        kind, reason ->
-          Logger.warning(
-            "Experiment #{state.experiment_id} strategy rollback failed: #{inspect({kind, reason})}"
-          )
-
-          state
+    checkpoint_id =
+      case strategy_state do
+        %{checkpoint_id: id} -> id
+        _ -> nil
       end
 
-    # Checkpoint rewind (Runner responsibility, strategy-agnostic)
-    # Uses pre-rollback checkpoint_id in case strategy cleared it
-    if checkpoint_id && state.session_pid do
-      case state.backend.checkpoint_rewind(state.session_pid, checkpoint_id) do
-        :ok ->
-          :ok
-
-        {:error, reason} ->
-          Logger.warning(
-            "Experiment #{state.experiment_id} checkpoint rewind failed: #{inspect(reason)}"
-          )
-      end
-    end
-
+    state = try_strategy_rollback(state)
+    try_checkpoint_rewind(state, checkpoint_id)
     state
+  end
+
+  # Strategy-internal cleanup — capture updated state on success,
+  # absorb any crash to keep the Runner alive.
+  defp try_strategy_rollback(%{strategy: strategy, strategy_state: strategy_state} = state) do
+    case strategy.rollback(strategy_state, strategy_opts(state)) do
+      {:ok, new_strategy_state} -> %{state | strategy_state: new_strategy_state}
+      _other -> state
+    end
+  catch
+    kind, reason ->
+      Logger.warning(
+        "Experiment #{state.experiment_id} strategy rollback failed: #{inspect({kind, reason})}"
+      )
+
+      state
+  end
+
+  # Checkpoint rewind (Runner responsibility, strategy-agnostic).
+  # Uses pre-rollback checkpoint_id in case strategy cleared it.
+  defp try_checkpoint_rewind(_state, nil), do: :ok
+  defp try_checkpoint_rewind(%{session_pid: nil}, _checkpoint_id), do: :ok
+
+  defp try_checkpoint_rewind(state, checkpoint_id) do
+    case state.backend.checkpoint_rewind(state.session_pid, checkpoint_id) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Experiment #{state.experiment_id} checkpoint rewind failed: #{inspect(reason)}"
+        )
+    end
   end
 
   # ── Private: Cancel ──────────────────────────────────────────
@@ -851,7 +860,7 @@ defmodule MonkeyClaw.Experiments.Runner do
 
     duration_ms =
       case state do
-        %{iteration_start_time: start} when not is_nil(start) ->
+        %{experiment_start_time: start} when not is_nil(start) ->
           System.monotonic_time(:millisecond) - start
 
         _ ->
@@ -870,7 +879,7 @@ defmodule MonkeyClaw.Experiments.Runner do
     attrs = %{
       status: terminal_status,
       completed_at: now,
-      state: state.strategy_state,
+      state: scrub_secrets(state.strategy_state),
       iteration_count: state.iteration
     }
 
@@ -958,7 +967,7 @@ defmodule MonkeyClaw.Experiments.Runner do
       status: status_val,
       run_ref: run_ref,
       eval_result: eval_result,
-      state_snapshot: state.strategy_state || %{},
+      state_snapshot: scrub_secrets(state.strategy_state),
       duration_ms: duration_ms,
       metadata: %{strategy: state.strategy_name, human_gate: state.human_gate}
     }
@@ -1021,6 +1030,62 @@ defmodule MonkeyClaw.Experiments.Runner do
     reason
     |> inspect(limit: 50, printable_limit: @max_error_length)
     |> sanitize_error()
+  end
+
+  # S1: Scrubs secret-like values from strategy state before DB persistence.
+  # Defense-in-depth: even if a strategy violates the "no secrets" contract,
+  # sensitive values are redacted before reaching SQLite.
+  #
+  # Scans map keys (atoms and strings) for patterns matching common credential
+  # naming conventions. Matched values are replaced with "[REDACTED]".
+  # Logs a warning on first detection so strategy authors can fix the violation.
+  @secret_patterns ~w(
+    secret password passwd token api_key apikey access_key
+    private_key credential auth_token bearer signing_key
+    client_secret encryption_key
+  )
+
+  defp scrub_secrets(nil), do: %{}
+
+  defp scrub_secrets(state) when is_map(state) do
+    {scrubbed, violations} = do_scrub_secrets(state, [])
+
+    if violations != [] do
+      Logger.warning(
+        "Strategy state contains secret-like keys #{inspect(violations)}. " <>
+          "Values redacted before persistence. " <>
+          "Strategies MUST NOT store secrets in state — use vault references instead."
+      )
+    end
+
+    scrubbed
+  end
+
+  defp scrub_secrets(other), do: other
+
+  defp do_scrub_secrets(map, violations) when is_map(map) do
+    Enum.reduce(map, {%{}, violations}, fn {key, value}, {acc, viols} ->
+      key_str = to_string(key) |> String.downcase()
+
+      if secret_key?(key_str) do
+        {Map.put(acc, key, "[REDACTED]"), [key | viols]}
+      else
+        {scrubbed_value, viols} = do_scrub_secrets(value, viols)
+        {Map.put(acc, key, scrubbed_value), viols}
+      end
+    end)
+  end
+
+  defp do_scrub_secrets(list, violations) when is_list(list) do
+    Enum.map_reduce(list, violations, fn item, viols ->
+      do_scrub_secrets(item, viols)
+    end)
+  end
+
+  defp do_scrub_secrets(value, violations), do: {value, violations}
+
+  defp secret_key?(key_str) do
+    Enum.any?(@secret_patterns, &String.contains?(key_str, &1))
   end
 
   defp strategy_to_name(module) when is_atom(module) do

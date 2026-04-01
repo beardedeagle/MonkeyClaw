@@ -88,6 +88,86 @@ defmodule MonkeyClaw.Experiments.RunnerTest do
     end
   end
 
+  # ── Crashing Strategy ─────────────────────────────────────────
+  #
+  # Strategy that raises in evaluate or decide based on config.
+  # Used to verify safe_evaluate/safe_decide catch paths.
+  #
+  # Config keys:
+  #   "crash_in" — "evaluate" or "decide" (required)
+
+  defmodule CrashingStrategy do
+    @behaviour MonkeyClaw.Experiments.Strategy
+
+    @impl true
+    def init(experiment, _opts) do
+      config = experiment.config || %{}
+      {:ok, %{__v__: 1, crash_in: Map.get(config, "crash_in", "evaluate")}}
+    end
+
+    @impl true
+    def prepare_iteration(state, _iteration, _opts), do: {:ok, state}
+
+    @impl true
+    def build_prompt(_state, iteration, _opts), do: {:ok, "Crash test iteration #{iteration}"}
+
+    @impl true
+    def evaluate(state, _run_result, _opts) do
+      if state.crash_in == "evaluate", do: raise("boom in evaluate")
+      {:ok, %{score: 0.5}, state}
+    end
+
+    @impl true
+    def decide(state, _eval_result, _iteration, _opts) do
+      if state.crash_in == "decide", do: raise("boom in decide")
+      {:accept, state}
+    end
+
+    @impl true
+    def rollback(state, _opts), do: {:ok, state}
+
+    @impl true
+    def mutation_scope(_experiment), do: %{files: []}
+  end
+
+  # ── Leaky Strategy ────────────────────────────────────────────
+  #
+  # Strategy that stores secret-like keys in state.
+  # Used to verify scrub_secrets redaction before DB persistence.
+
+  defmodule LeakyStrategy do
+    @behaviour MonkeyClaw.Experiments.Strategy
+
+    @impl true
+    def init(_experiment, _opts) do
+      {:ok,
+       %{
+         __v__: 1,
+         api_key: "sk-secret-1234",
+         nested: %{password: "hunter2", safe_data: "visible"},
+         safe_field: "this stays"
+       }}
+    end
+
+    @impl true
+    def prepare_iteration(state, _iteration, _opts), do: {:ok, state}
+
+    @impl true
+    def build_prompt(_state, iteration, _opts), do: {:ok, "Leaky test #{iteration}"}
+
+    @impl true
+    def evaluate(state, _run_result, _opts), do: {:ok, %{score: 0.9}, state}
+
+    @impl true
+    def decide(state, _eval_result, _iteration, _opts), do: {:accept, state}
+
+    @impl true
+    def rollback(state, _opts), do: {:ok, state}
+
+    @impl true
+    def mutation_scope(_experiment), do: %{files: []}
+  end
+
   # ── Helpers ─────────────────────────────────────────────────
 
   defp make_experiment(workspace, config_overrides \\ %{}, experiment_overrides \\ %{}) do
@@ -609,6 +689,93 @@ defmodule MonkeyClaw.Experiments.RunnerTest do
 
     test "returns :not_found for unknown experiment" do
       assert {:error, :not_found} = Runner.lookup(Ecto.UUID.generate())
+    end
+  end
+
+  describe "strategy crash safety" do
+    test "handles strategy.evaluate crash with rollback and failed iteration" do
+      workspace = insert_workspace!()
+
+      experiment =
+        make_experiment(
+          workspace,
+          %{"crash_in" => "evaluate"},
+          %{}
+        )
+
+      config =
+        runner_config(experiment)
+        |> Map.put(:strategy, CrashingStrategy)
+
+      {pid, ref} = start_runner(config)
+      wait_for_exit(ref, pid, 10_000)
+
+      {:ok, updated} = Experiments.get_experiment(experiment.id)
+      assert updated.status == :cancelled
+      assert updated.termination_reason == "strategy_crashed"
+
+      iterations = Experiments.get_iterations(experiment.id)
+      assert [iter] = iterations
+      assert iter.status == :failed
+      assert iter.eval_result["error"] =~ "strategy.evaluate crashed"
+    end
+
+    test "handles strategy.decide crash with rollback and failed iteration" do
+      workspace = insert_workspace!()
+
+      experiment =
+        make_experiment(
+          workspace,
+          %{"crash_in" => "decide"},
+          %{}
+        )
+
+      config =
+        runner_config(experiment)
+        |> Map.put(:strategy, CrashingStrategy)
+
+      {pid, ref} = start_runner(config)
+      wait_for_exit(ref, pid, 10_000)
+
+      {:ok, updated} = Experiments.get_experiment(experiment.id)
+      assert updated.status == :cancelled
+      assert updated.termination_reason == "strategy_crashed"
+
+      iterations = Experiments.get_iterations(experiment.id)
+      assert [iter] = iterations
+      assert iter.status == :failed
+      assert iter.eval_result["error"] =~ "strategy.decide crashed"
+    end
+  end
+
+  describe "secret scrubbing" do
+    test "redacts secret-like keys from persisted strategy state" do
+      workspace = insert_workspace!()
+      experiment = make_experiment(workspace)
+
+      config =
+        runner_config(experiment)
+        |> Map.put(:strategy, LeakyStrategy)
+
+      {pid, ref} = start_runner(config)
+      wait_for_exit(ref, pid, 10_000)
+
+      {:ok, updated} = Experiments.get_experiment(experiment.id)
+      assert updated.status == :accepted
+
+      # Final strategy state should have secrets redacted
+      persisted_state = updated.state
+      assert persisted_state["api_key"] == "[REDACTED]"
+      assert persisted_state["safe_field"] == "this stays"
+      assert persisted_state["nested"]["password"] == "[REDACTED]"
+      assert persisted_state["nested"]["safe_data"] == "visible"
+
+      # Iteration state_snapshot should also be scrubbed
+      iterations = Experiments.get_iterations(experiment.id)
+      assert [iter] = iterations
+      assert iter.state_snapshot["api_key"] == "[REDACTED]"
+      assert iter.state_snapshot["nested"]["password"] == "[REDACTED]"
+      assert iter.state_snapshot["nested"]["safe_data"] == "visible"
     end
   end
 

@@ -442,7 +442,7 @@ Uniquely BEAM-native: hot code reload + supervision + distribution.
 Phase 1 is complete (S1-S4). S2 (Session History) is also complete with SQLite
 persistence. Phase 2 S1 (Experiment Runs) is implemented — the experiment engine
 provides the Strategy behaviour, Runner GenServer, iteration persistence, and
-security hardening (mutation scope enforcement, strategy validation, try/rescue
+security hardening (mutation scope enforcement, strategy validation, try/catch
 safety wrappers, error sanitization). Next: wire experiment loops into the
 experiment engine (Phase 2 S2), then tackle P2 (Context Management) and
 P1 (Extended Threads) for beam-agent feature parity.

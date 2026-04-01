@@ -19,7 +19,7 @@ defmodule MonkeyClaw.Repo.Migrations.CreateExperiments do
 
     * Experiment: created → running → evaluating → awaiting_human →
       accepted | rejected | cancelled | halted
-    * Iteration: running → evaluating → accepted | rejected | failed
+    * Iteration: running → evaluating → accepted | rejected | continued | halted | failed
 
   ## State Versioning
 
@@ -66,7 +66,9 @@ defmodule MonkeyClaw.Repo.Migrations.CreateExperiments do
       add :completed_at, :utc_datetime_usec
 
       # Why the experiment terminated — nil while running.
-      # Values: "timeout" | "user_cancel" | "crash" | "graceful_stop"
+      # Values: "timeout" | "user_cancel" | "crash" | "graceful_stop" |
+      #   "max_iterations_reached" | "init_failed" | "iteration_prep_failed" |
+      #   "query_failed" | "mutation_scope_violation" | "strategy_crashed"
       add :termination_reason, :string
 
       add :workspace_id, references(:workspaces, type: :binary_id, on_delete: :delete_all),

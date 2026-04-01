@@ -270,7 +270,7 @@ defmodule MonkeyClaw.Experiments.Strategy.Code do
   defp parse_threshold(config, key, default) do
     case Map.get(config, key) do
       val when is_float(val) and val >= 0.0 and val <= 1.0 -> val
-      val when is_integer(val) and val >= 0 and val <= 1 -> val / 1
+      val when is_integer(val) and val >= 0 and val <= 1 -> val * 1.0
       _ -> default
     end
   end

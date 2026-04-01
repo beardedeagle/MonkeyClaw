@@ -277,8 +277,18 @@ defmodule MonkeyClaw.Experiments.Experiment do
   end
 
   # Termination reason must be from the known set if present.
+  # Only validates when termination_reason is explicitly set to a non-nil value.
   defp validate_termination_reason(changeset) do
-    validate_inclusion(changeset, :termination_reason, @valid_termination_reasons ++ [nil])
+    case fetch_change(changeset, :termination_reason) do
+      {:ok, nil} ->
+        changeset
+
+      {:ok, _value} ->
+        validate_inclusion(changeset, :termination_reason, @valid_termination_reasons)
+
+      :error ->
+        changeset
+    end
   end
 
   # Status transition must follow the defined state machine.
