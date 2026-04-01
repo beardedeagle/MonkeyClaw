@@ -53,8 +53,10 @@
         Past sessions
       </div>
 
-      <button
+      <div
         :for={session <- @session_history}
+        role="button"
+        tabindex="0"
         class={[
           "group w-full text-left px-3 py-2 rounded-lg text-sm truncate block transition-colors cursor-pointer",
           session.id == @viewing_history_id && "bg-base-300 text-base-content",
@@ -84,7 +86,7 @@
             · {session.message_count} msgs
           </span>
         </div>
-      </button>
+      </div>
     </nav>
   </aside>
 

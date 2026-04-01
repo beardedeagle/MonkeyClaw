@@ -447,6 +447,8 @@ defmodule MonkeyClawWeb.ChatLive do
       |> assign(:stream_usage, nil)
       |> assign(:sent_at, nil)
       |> assign(:error, ErrorFormatter.format(reason))
+      |> persist_active_conversation()
+      |> load_and_assign_history()
 
     {:noreply, socket}
   end
