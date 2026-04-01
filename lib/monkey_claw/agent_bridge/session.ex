@@ -1027,6 +1027,11 @@ defmodule MonkeyClaw.AgentBridge.Session do
   # Append chunk text to the stream content buffer.
   # Only accumulates when a buffer exists (stream was initiated with persistence).
   # Stops accumulating once the buffer exceeds @max_history_buffer_bytes.
+  #
+  # Note: `buffer <> text` uses BEAM's binary append optimization — when the
+  # binary being appended to has no other references, the VM over-allocates
+  # and appends in-place (amortized O(1)). This is safe here because the
+  # GenServer state is the sole owner of the buffer binary.
   defp accumulate_chunk(%{stream_content_buffer: buffer} = state, chunk)
        when is_binary(buffer) do
     text = extract_chunk_text(chunk)

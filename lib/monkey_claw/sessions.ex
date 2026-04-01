@@ -189,19 +189,29 @@ defmodule MonkeyClaw.Sessions do
       end,
       []
     )
-    |> Multi.insert(:message, fn %{increment_count: {1, [count]}} ->
-      # count is post-increment; sequence is 0-based
-      sequence = count - 1
-      attrs = Map.put(attrs, :sequence, sequence)
+    |> Multi.run(:message, fn repo, %{increment_count: increment_result} ->
+      case increment_result do
+        {1, [count]} ->
+          # count is post-increment; sequence is 0-based
+          sequence = count - 1
+          attrs = Map.put(attrs, :sequence, sequence)
 
-      session
-      |> Ecto.build_assoc(:messages)
-      |> Message.create_changeset(attrs)
+          session
+          |> Ecto.build_assoc(:messages)
+          |> Message.create_changeset(attrs)
+          |> repo.insert()
+
+        {0, []} ->
+          {:error, :session_not_found}
+
+        other ->
+          {:error, {:unexpected_update_result, other}}
+      end
     end)
     |> Repo.transaction()
     |> case do
       {:ok, %{message: message}} -> {:ok, message}
-      {:error, :message, changeset, _} -> {:error, changeset}
+      {:error, :message, reason, _} -> {:error, reason}
       {:error, :increment_count, error, _} -> {:error, {:increment_count, error}}
     end
   end

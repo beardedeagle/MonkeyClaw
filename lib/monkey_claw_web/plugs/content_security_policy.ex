@@ -21,11 +21,12 @@ defmodule MonkeyClawWeb.Plugs.ContentSecurityPolicy do
 
   ## Dev Routes
 
-  Requests to `/dev` and `/dev/…` paths (LiveDashboard, Swoosh
-  mailbox) are skipped — those tools render their own inline scripts
-  that cannot be nonced. The bypass matches `/dev` exactly and
-  `/dev/` as a prefix to avoid disabling CSP on unrelated routes
-  like `/devices`. Dev routes are only enabled when `dev_routes: true`.
+  When `dev_routes: true` is configured, requests to `/dev` and
+  `/dev/…` paths (LiveDashboard, Swoosh mailbox) skip CSP — those
+  tools render their own inline scripts that cannot be nonced. The
+  bypass matches `/dev` exactly and `/dev/` as a prefix to avoid
+  disabling CSP on unrelated routes like `/devices`. In production
+  (where `dev_routes` is false), all paths get the full CSP header.
 
   ## Usage in Templates
 
@@ -47,16 +48,20 @@ defmodule MonkeyClawWeb.Plugs.ContentSecurityPolicy do
 
   @behaviour Plug
 
+  @dev_routes_enabled Application.compile_env(:monkey_claw, :dev_routes, false)
+
   @impl true
   def init(opts), do: opts
 
   @impl true
-  def call(%{request_path: "/dev"} = conn, _opts) do
-    assign(conn, :csp_nonce, nil)
-  end
+  if @dev_routes_enabled do
+    def call(%{request_path: "/dev"} = conn, _opts) do
+      assign(conn, :csp_nonce, nil)
+    end
 
-  def call(%{request_path: "/dev/" <> _} = conn, _opts) do
-    assign(conn, :csp_nonce, nil)
+    def call(%{request_path: "/dev/" <> _} = conn, _opts) do
+      assign(conn, :csp_nonce, nil)
+    end
   end
 
   def call(conn, _opts) do

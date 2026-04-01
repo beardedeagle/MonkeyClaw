@@ -51,33 +51,51 @@ defmodule MonkeyClawWeb.Plugs.ContentSecurityPolicyTest do
     end
   end
 
-  describe "call/2 — dev routes" do
-    test "skips CSP header for /dev paths" do
-      conn =
-        conn(:get, "/dev/dashboard")
-        |> ContentSecurityPolicy.call(ContentSecurityPolicy.init([]))
+  # Dev route bypass is only compiled when dev_routes: true.
+  # These tests mirror that compile-time gate.
+  if Application.compile_env(:monkey_claw, :dev_routes) do
+    describe "call/2 — dev routes" do
+      test "skips CSP header for /dev paths" do
+        conn =
+          conn(:get, "/dev/dashboard")
+          |> ContentSecurityPolicy.call(ContentSecurityPolicy.init([]))
 
-      assert get_resp_header(conn, "content-security-policy") == []
+        assert get_resp_header(conn, "content-security-policy") == []
+      end
+
+      test "assigns nil csp_nonce for /dev paths" do
+        conn =
+          conn(:get, "/dev/mailbox")
+          |> ContentSecurityPolicy.call(ContentSecurityPolicy.init([]))
+
+        assert conn.assigns.csp_nonce == nil
+      end
+
+      test "skips CSP header for bare /dev path" do
+        conn =
+          conn(:get, "/dev")
+          |> ContentSecurityPolicy.call(ContentSecurityPolicy.init([]))
+
+        assert get_resp_header(conn, "content-security-policy") == []
+        assert conn.assigns.csp_nonce == nil
+      end
+
+      test "does NOT skip CSP for /dev-prefixed non-dev paths" do
+        conn =
+          conn(:get, "/devices")
+          |> ContentSecurityPolicy.call(ContentSecurityPolicy.init([]))
+
+        [csp] = get_resp_header(conn, "content-security-policy")
+        assert csp =~ "default-src 'self'"
+        assert is_binary(conn.assigns.csp_nonce)
+      end
     end
+  end
 
-    test "assigns nil csp_nonce for /dev paths" do
-      conn =
-        conn(:get, "/dev/mailbox")
-        |> ContentSecurityPolicy.call(ContentSecurityPolicy.init([]))
-
-      assert conn.assigns.csp_nonce == nil
-    end
-
-    test "skips CSP header for bare /dev path" do
-      conn =
-        conn(:get, "/dev")
-        |> ContentSecurityPolicy.call(ContentSecurityPolicy.init([]))
-
-      assert get_resp_header(conn, "content-security-policy") == []
-      assert conn.assigns.csp_nonce == nil
-    end
-
-    test "does NOT skip CSP for /dev-prefixed non-dev paths" do
+  describe "call/2 — dev paths without dev_routes" do
+    # Regardless of dev_routes config, /dev-prefixed non-dev paths
+    # must always receive a full CSP header.
+    test "applies CSP to /dev-prefixed non-dev paths" do
       conn =
         conn(:get, "/devices")
         |> ContentSecurityPolicy.call(ContentSecurityPolicy.init([]))
