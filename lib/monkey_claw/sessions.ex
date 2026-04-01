@@ -177,16 +177,26 @@ defmodule MonkeyClaw.Sessions do
   @spec record_message(Session.t(), map()) ::
           {:ok, Message.t()} | {:error, Ecto.Changeset.t() | term()}
   def record_message(%Session{} = session, attrs) when is_map(attrs) do
-    sequence = next_sequence(session.id)
-    attrs = Map.put(attrs, :sequence, sequence)
+    Multi.new()
+    |> Multi.run(:sequence, fn repo, _changes ->
+      result =
+        Message
+        |> where([m], m.session_id == ^session.id)
+        |> select([m], max(m.sequence))
+        |> repo.one()
 
-    changeset =
+      case result do
+        nil -> {:ok, 0}
+        n when is_integer(n) -> {:ok, n + 1}
+      end
+    end)
+    |> Multi.insert(:message, fn %{sequence: sequence} ->
+      attrs = Map.put(attrs, :sequence, sequence)
+
       session
       |> Ecto.build_assoc(:messages)
       |> Message.create_changeset(attrs)
-
-    Multi.new()
-    |> Multi.insert(:message, changeset)
+    end)
     |> Multi.update_all(
       :increment_count,
       fn _changes ->
@@ -197,6 +207,7 @@ defmodule MonkeyClaw.Sessions do
     |> Repo.transaction()
     |> case do
       {:ok, %{message: message}} -> {:ok, message}
+      {:error, :sequence, error, _} -> {:error, {:sequence, error}}
       {:error, :message, changeset, _} -> {:error, changeset}
       {:error, :increment_count, error, _} -> {:error, {:increment_count, error}}
     end
@@ -275,7 +286,7 @@ defmodule MonkeyClaw.Sessions do
   def search_messages(workspace_id, query, opts)
       when is_binary(workspace_id) and byte_size(workspace_id) > 0 and
              is_binary(query) and byte_size(query) > 0 and is_map(opts) do
-    limit = Map.get(opts, :limit, 50)
+    limit = opts |> Map.get(:limit, 50) |> clamp_search_limit()
 
     # Use raw SQL for FTS5 MATCH + join back to source messages.
     # External content FTS5 joins via rowid. We join through sessions
@@ -406,6 +417,13 @@ defmodule MonkeyClaw.Sessions do
   end
 
   defp apply_offset(query, _opts), do: query
+
+  # Clamp search limit to a safe integer range.
+  # Rejects non-integer, zero, and negative values.
+  @max_search_limit 200
+  defp clamp_search_limit(n) when is_integer(n) and n > 0 and n <= @max_search_limit, do: n
+  defp clamp_search_limit(n) when is_integer(n) and n > @max_search_limit, do: @max_search_limit
+  defp clamp_search_limit(_), do: 50
 
   # Load a raw SQL row map into a Message struct.
   # Handles type coercion for enum and datetime fields.

@@ -101,7 +101,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
           stream_caller: pid() | nil,
           stream_telemetry_start: integer() | nil,
           history_session: Sessions.Session.t() | nil,
-          stream_content_buffer: String.t() | nil
+          stream_content_buffer: String.t() | :overflow | nil
         }
 
   @enforce_keys [:id, :config]
@@ -1012,6 +1012,11 @@ defmodule MonkeyClaw.AgentBridge.Session do
       state
   end
 
+  defp persist_stream_result(%{stream_content_buffer: :overflow} = state) do
+    Logger.warning("Skipping history persistence for session #{state.id}: stream buffer overflow")
+    state
+  end
+
   defp persist_stream_result(state), do: state
 
   # Maximum stream content buffer size for history persistence.
@@ -1032,7 +1037,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
           "for session #{state.id}, stopping accumulation"
       )
 
-      state
+      %{state | stream_content_buffer: :overflow}
     else
       %{state | stream_content_buffer: buffer <> text}
     end

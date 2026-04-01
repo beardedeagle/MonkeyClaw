@@ -263,6 +263,7 @@ defmodule MonkeyClawWeb.ChatLive do
       end
       |> assign(:loading, false)
       |> assign(:sent_at, nil)
+      |> load_and_assign_history()
 
     {:noreply, socket}
   end
@@ -344,6 +345,7 @@ defmodule MonkeyClawWeb.ChatLive do
       |> assign(:stream_content, "")
       |> assign(:stream_byte_size, 0)
       |> assign(:sent_at, nil)
+      |> load_and_assign_history()
 
     {:noreply, socket}
   end

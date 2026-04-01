@@ -14,7 +14,7 @@ defmodule MonkeyClawWeb.Plugs.ContentSecurityPolicy do
     * `style-src 'self' 'unsafe-inline'` — Tailwind/DaisyUI inline styles
     * `img-src 'self' data:` — self-hosted images + data URIs
     * `font-src 'self'` — self-hosted fonts only
-    * `connect-src 'self' ws: wss:` — LiveView WebSocket connections
+    * `connect-src 'self'` — LiveView WebSocket connects to same origin
     * `frame-src 'none'` — no iframes
     * `object-src 'none'` — no plugins
     * `base-uri 'self'` — prevent `<base>` hijacking
@@ -78,7 +78,7 @@ defmodule MonkeyClawWeb.Plugs.ContentSecurityPolicy do
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data:",
       "font-src 'self'",
-      "connect-src 'self' ws: wss:",
+      "connect-src 'self'",
       "frame-src 'none'",
       "object-src 'none'",
       "base-uri 'self'"

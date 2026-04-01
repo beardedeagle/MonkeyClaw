@@ -16,7 +16,7 @@ defmodule MonkeyClawWeb.Plugs.ContentSecurityPolicyTest do
       assert csp =~ "default-src 'self'"
       assert csp =~ ~r/script-src 'self' 'nonce-[A-Za-z0-9+\/=]+'/
       assert csp =~ "style-src 'self' 'unsafe-inline'"
-      assert csp =~ "connect-src 'self' ws: wss:"
+      assert csp =~ "connect-src 'self'"
       assert csp =~ "frame-src 'none'"
       assert csp =~ "object-src 'none'"
       assert csp =~ "base-uri 'self'"
@@ -100,7 +100,7 @@ defmodule MonkeyClawWeb.Plugs.ContentSecurityPolicyTest do
       assert policy =~ "style-src 'self' 'unsafe-inline'"
       assert policy =~ "img-src 'self' data:"
       assert policy =~ "font-src 'self'"
-      assert policy =~ "connect-src 'self' ws: wss:"
+      assert policy =~ "connect-src 'self'"
       assert policy =~ "frame-src 'none'"
       assert policy =~ "object-src 'none'"
       assert policy =~ "base-uri 'self'"
