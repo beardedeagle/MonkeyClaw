@@ -522,18 +522,20 @@ defmodule MonkeyClawWeb.ChatLive do
         msg.content
       end
 
+    meta = msg.metadata || %{}
+
     %{
       id: msg.id,
       role: msg.role,
       content: content,
-      thinking: nil,
+      thinking: meta["thinking"],
       timestamp: msg.inserted_at,
-      latency_ms: nil,
-      input_tokens: nil,
-      output_tokens: nil,
-      cached_tokens: nil,
-      thinking_tokens: nil,
-      model: nil
+      latency_ms: meta["duration_ms"],
+      input_tokens: meta["input_tokens"],
+      output_tokens: meta["output_tokens"],
+      cached_tokens: meta["cached_tokens"],
+      thinking_tokens: meta["thinking_tokens"],
+      model: meta["model"]
     }
   end
 
@@ -616,13 +618,7 @@ defmodule MonkeyClawWeb.ChatLive do
         |> Sessions.get_messages()
         |> Enum.map(&history_message_to_display/1)
 
-      assistant_count = Enum.count(messages, &(&1.role == :assistant))
-
-      stats = %{
-        initial_stats()
-        | message_count: assistant_count,
-          current_model: session.model
-      }
+      stats = aggregate_session_stats(messages, session.model)
 
       convo = %{
         id: Ecto.UUID.generate(),
@@ -673,6 +669,25 @@ defmodule MonkeyClawWeb.ChatLive do
       current_model: nil,
       working_dir: File.cwd!() |> Path.basename()
     }
+  end
+
+  # Rebuild aggregate session stats from restored messages so the
+  # stats footer shows correct totals after session restore.
+  defp aggregate_session_stats(messages, model) do
+    messages
+    |> Enum.filter(&(&1.role == :assistant))
+    |> Enum.reduce(initial_stats(), fn msg, acc ->
+      %{
+        acc
+        | total_input_tokens: acc.total_input_tokens + (msg.input_tokens || 0),
+          total_output_tokens: acc.total_output_tokens + (msg.output_tokens || 0),
+          total_cached_tokens: acc.total_cached_tokens + (msg.cached_tokens || 0),
+          total_thinking_tokens: acc.total_thinking_tokens + (msg.thinking_tokens || 0),
+          message_count: acc.message_count + 1,
+          current_model: msg.model || acc.current_model
+      }
+    end)
+    |> Map.put(:current_model, model || nil)
   end
 
   # No-op when viewing history — socket.assigns.messages contains

@@ -101,7 +101,8 @@ defmodule MonkeyClaw.AgentBridge.Session do
           stream_caller: pid() | nil,
           stream_telemetry_start: integer() | nil,
           history_session: Sessions.Session.t() | nil,
-          stream_content_buffer: String.t() | :overflow | nil
+          stream_content_buffer: String.t() | :overflow | nil,
+          stream_metadata: map() | nil
         }
 
   @enforce_keys [:id, :config]
@@ -121,6 +122,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
     :stream_telemetry_start,
     :history_session,
     :stream_content_buffer,
+    :stream_metadata,
     status: :starting
   ]
 
@@ -668,7 +670,13 @@ defmodule MonkeyClaw.AgentBridge.Session do
       when is_pid(caller) do
     send(caller, {:stream_chunk, state.id, chunk})
     _ = broadcast(state.id, {:stream_chunk, state.id, chunk})
-    {:noreply, accumulate_chunk(state, chunk)}
+
+    state =
+      state
+      |> accumulate_chunk(chunk)
+      |> capture_stream_metadata(chunk)
+
+    {:noreply, state}
   end
 
   # Stream completed successfully — demonitor with :flush to prevent
@@ -909,7 +917,8 @@ defmodule MonkeyClaw.AgentBridge.Session do
         stream_task_pid: nil,
         stream_caller: nil,
         stream_telemetry_start: nil,
-        stream_content_buffer: nil
+        stream_content_buffer: nil,
+        stream_metadata: nil
     }
   end
 
@@ -976,7 +985,8 @@ defmodule MonkeyClaw.AgentBridge.Session do
     Enum.each(messages, fn msg ->
       role = extract_message_role(msg)
       content = extract_message_content(msg)
-      _ = safe_record_message(session, %{role: role, content: content})
+      metadata = extract_message_metadata(msg)
+      _ = safe_record_message(session, %{role: role, content: content, metadata: metadata})
     end)
 
     maybe_derive_title(state)
@@ -1004,7 +1014,8 @@ defmodule MonkeyClaw.AgentBridge.Session do
 
   defp persist_stream_result(%{history_session: session, stream_content_buffer: buffer} = state)
        when is_binary(buffer) and byte_size(buffer) > 0 do
-    _ = safe_record_message(session, %{role: :assistant, content: buffer})
+    metadata = build_persist_metadata(state.stream_metadata)
+    _ = safe_record_message(session, %{role: :assistant, content: buffer, metadata: metadata})
     maybe_derive_title(state)
   rescue
     error ->
@@ -1156,6 +1167,62 @@ defmodule MonkeyClaw.AgentBridge.Session do
 
     if byte_size(text) > 0, do: text, else: nil
   end
+
+  # Capture usage metadata from :assistant / :result chunks during streaming.
+  # Later chunks overwrite earlier ones — :result arrives last and carries
+  # the most complete usage snapshot.
+  defp capture_stream_metadata(state, %{type: type, usage: usage} = chunk)
+       when type in [:result, :assistant] and is_map(usage) do
+    %{state | stream_metadata: %{
+      "usage" => usage,
+      "model" => Map.get(chunk, :model),
+      "duration_ms" => Map.get(chunk, :duration_ms)
+    }}
+  end
+
+  defp capture_stream_metadata(state, _chunk), do: state
+
+  # Build a flat metadata map for SQLite persistence from the captured
+  # stream metadata.  Keys are strings (JSON column).
+  defp build_persist_metadata(nil), do: %{}
+
+  defp build_persist_metadata(%{"usage" => usage} = meta) when is_map(usage) do
+    cache_read = Map.get(usage, "cache_read_input_tokens", 0) || 0
+    cache_create = Map.get(usage, "cache_creation_input_tokens", 0) || 0
+    cached = cache_read + cache_create
+
+    %{
+      "input_tokens" => Map.get(usage, "input_tokens"),
+      "output_tokens" => Map.get(usage, "output_tokens"),
+      "cached_tokens" => if(cached > 0, do: cached),
+      "thinking_tokens" => Map.get(usage, "thinking_tokens"),
+      "model" => meta["model"],
+      "duration_ms" => meta["duration_ms"]
+    }
+    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+    |> Map.new()
+  end
+
+  defp build_persist_metadata(_), do: %{}
+
+  # Extract metadata from a raw BeamAgent message (non-streaming path).
+  defp extract_message_metadata(%{usage: usage} = msg) when is_map(usage) do
+    build_persist_metadata(%{
+      "usage" => usage,
+      "model" => Map.get(msg, :model),
+      "duration_ms" => Map.get(msg, :duration_ms)
+    })
+  end
+
+  defp extract_message_metadata(%{"usage" => usage} = msg) when is_map(usage) do
+    build_persist_metadata(%{
+      "usage" => usage,
+      "model" => Map.get(msg, "model"),
+      "duration_ms" => Map.get(msg, "duration_ms")
+    })
+  end
+
+  defp extract_message_metadata(_), do: %{}
 
   defp extract_chunk_text(chunk) when is_binary(chunk), do: chunk
   defp extract_chunk_text(%{text: text}) when is_binary(text), do: text
