@@ -22,8 +22,10 @@
         phx-value-id={id}
         class={[
           "group w-full text-left px-3 py-2 rounded-lg text-sm truncate block transition-colors",
-          id == @active_conversation_id && "bg-base-300 text-base-content",
-          id != @active_conversation_id && "text-base-content/60 hover:bg-base-300/50"
+          id == @active_conversation_id && is_nil(@viewing_history_id) &&
+            "bg-base-300 text-base-content",
+          (id != @active_conversation_id || @viewing_history_id != nil) &&
+            "text-base-content/60 hover:bg-base-300/50"
         ]}
       >
         <div class="flex items-center justify-between gap-1">
@@ -42,11 +44,55 @@
           {conversation_time(@conversations, id)}
         </div>
       </button>
+
+      <%!-- Past sessions from SQLite --%>
+      <div
+        :if={@session_history != []}
+        class="px-1 pt-3 pb-1 text-xs text-base-content/30 font-medium border-t border-base-300 mt-2"
+      >
+        Past sessions
+      </div>
+
+      <button
+        :for={session <- @session_history}
+        phx-click="load_history"
+        phx-value-id={session.id}
+        class={[
+          "group w-full text-left px-3 py-2 rounded-lg text-sm truncate block transition-colors",
+          session.id == @viewing_history_id && "bg-base-300 text-base-content",
+          session.id != @viewing_history_id && "text-base-content/60 hover:bg-base-300/50"
+        ]}
+      >
+        <div class="flex items-center gap-1">
+          <.icon name="hero-clock" class="size-3 flex-none text-base-content/30" />
+          <span class="truncate">{session.title || "Untitled session"}</span>
+        </div>
+        <div class="text-xs text-base-content/30 mt-0.5">
+          {format_time(session.inserted_at)}
+          <span :if={session.message_count > 0}>
+            · {session.message_count} msgs
+          </span>
+        </div>
+      </button>
     </nav>
   </aside>
 
   <%!-- Main chat area --%>
   <div class="flex flex-col flex-1 min-w-0">
+    <%!-- History banner --%>
+    <div
+      :if={@viewing_history_id}
+      class="bg-info/10 text-info text-sm px-4 py-2 flex items-center justify-between flex-none"
+    >
+      <span>
+        <.icon name="hero-clock" class="size-4 inline-block mr-1 align-text-bottom" />
+        Viewing past session
+      </span>
+      <button phx-click="back_to_live" class="btn btn-ghost btn-xs">
+        Back to current
+      </button>
+    </div>
+
     <%!-- Messages --%>
     <div
       id="chat-messages"
@@ -193,13 +239,13 @@
             class="textarea textarea-bordered flex-1 min-h-[2.5rem] max-h-[200px] resize-none leading-normal py-2"
             rows="1"
             autocomplete="off"
-            disabled={@loading}
+            disabled={@loading || @viewing_history_id != nil}
             autofocus
           />
           <button
             type="submit"
             class="btn btn-primary"
-            disabled={@loading || is_nil(@workspace)}
+            disabled={@loading || is_nil(@workspace) || @viewing_history_id != nil}
           >
             <.icon name="hero-paper-airplane-solid" class="size-5" />
           </button>

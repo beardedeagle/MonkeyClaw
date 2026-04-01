@@ -77,8 +77,8 @@ defmodule MonkeyClaw.Extensions do
   plug modules, and caches the compiled pipelines in
   `:persistent_term`.
 
-  Called once at application startup from
-  `MonkeyClaw.Application.start/2`. Idempotent — calling it
+  Called once at application startup (from the Application
+  module's `start/2` callback). Idempotent — calling it
   multiple times overwrites the cached pipelines.
 
   ## Configuration Format
