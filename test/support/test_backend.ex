@@ -40,7 +40,15 @@ defmodule MonkeyClaw.AgentBridge.Backend.Test do
   end
 
   @impl MonkeyClaw.AgentBridge.Backend
+  def stream(pid, prompt, params) do
+    GenServer.call(pid, {:stream, prompt, params})
+  end
+
+  @impl MonkeyClaw.AgentBridge.Backend
   def set_model(_pid, _model), do: {:ok, :noop}
+
+  @impl MonkeyClaw.AgentBridge.Backend
+  def set_permission_mode(_pid, _mode), do: {:ok, :noop}
 
   @impl MonkeyClaw.AgentBridge.Backend
   def session_info(pid) do
@@ -55,6 +63,11 @@ defmodule MonkeyClaw.AgentBridge.Backend.Test do
   @impl MonkeyClaw.AgentBridge.Backend
   def receive_event(pid, ref, timeout) do
     GenServer.call(pid, {:receive_event, ref, timeout})
+  end
+
+  @impl MonkeyClaw.AgentBridge.Backend
+  def event_unsubscribe(pid, ref) do
+    GenServer.call(pid, {:event_unsubscribe, ref})
   end
 
   @impl MonkeyClaw.AgentBridge.Backend
@@ -78,7 +91,9 @@ defmodule MonkeyClaw.AgentBridge.Backend.Test do
     :session_id,
     :event_ref,
     query_responses: :default,
+    stream_responses: :default,
     query_count: 0,
+    stream_count: 0,
     threads: %{},
     events: []
   ]
@@ -90,6 +105,7 @@ defmodule MonkeyClaw.AgentBridge.Backend.Test do
     state = %__MODULE__{
       session_id: Map.get(opts, :session_id, "test-beam-#{:erlang.unique_integer([:positive])}"),
       query_responses: Map.get(opts, :query_responses, :default),
+      stream_responses: Map.get(opts, :stream_responses, :default),
       events: Map.get(opts, :events, [])
     }
 
@@ -100,6 +116,11 @@ defmodule MonkeyClaw.AgentBridge.Backend.Test do
   def handle_call({:query, prompt, _params}, _from, state) do
     {response, new_state} = produce_response(state, prompt)
     {:reply, response, new_state}
+  end
+
+  def handle_call({:stream, prompt, _params}, _from, state) do
+    {items, new_state} = produce_stream_chunks(state, prompt)
+    {:reply, {:ok, items}, new_state}
   end
 
   def handle_call(:session_info, _from, state) do
@@ -124,6 +145,15 @@ defmodule MonkeyClaw.AgentBridge.Backend.Test do
   end
 
   def handle_call({:receive_event, _ref, _timeout}, _from, state) do
+    {:reply, {:error, :invalid_ref}, state}
+  end
+
+  def handle_call({:event_unsubscribe, ref}, _from, %{event_ref: ref} = state)
+      when not is_nil(ref) do
+    {:reply, :ok, %{state | event_ref: nil, events: []}}
+  end
+
+  def handle_call({:event_unsubscribe, _ref}, _from, state) do
     {:reply, {:error, :invalid_ref}, state}
   end
 
@@ -177,5 +207,31 @@ defmodule MonkeyClaw.AgentBridge.Backend.Test do
       end
 
     {response, %{state | query_count: state.query_count + 1}}
+  end
+
+  # Returns a list of `{:ok, msg}` / `{:error, reason}` tagged tuples,
+  # matching the real BeamAgent.stream/3 contract. The Session's stream
+  # task enumerates these items directly.
+  defp produce_stream_chunks(state, prompt) do
+    items =
+      case state.stream_responses do
+        :default ->
+          [
+            {:ok, %{type: :text, content: "streaming: #{prompt}"}},
+            {:ok, %{type: :result, content: "done"}}
+          ]
+
+        responses when is_list(responses) ->
+          Enum.at(
+            responses,
+            state.stream_count,
+            [{:ok, %{type: :text, content: "default stream"}}]
+          )
+
+        fun when is_function(fun, 2) ->
+          fun.(prompt, state.stream_count)
+      end
+
+    {items, %{state | stream_count: state.stream_count + 1}}
   end
 end

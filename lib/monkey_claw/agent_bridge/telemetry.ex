@@ -32,6 +32,20 @@ defmodule MonkeyClaw.AgentBridge.Telemetry do
       * Measurements: `%{duration: integer()}`
       * Metadata: `%{session_id: String.t(), kind: atom(), reason: term()}`
 
+  ## Stream Events
+
+    * `[:monkey_claw, :agent_bridge, :stream, :start]` — Emitted when a stream begins.
+      * Measurements: `%{system_time: integer()}`
+      * Metadata: `%{session_id: String.t()}`
+
+    * `[:monkey_claw, :agent_bridge, :stream, :stop]` — Emitted when a stream completes.
+      * Measurements: `%{duration: integer()}`
+      * Metadata: `%{session_id: String.t()}`
+
+    * `[:monkey_claw, :agent_bridge, :stream, :exception]` — Emitted on stream failure.
+      * Measurements: `%{duration: integer()}`
+      * Metadata: `%{session_id: String.t(), kind: atom(), reason: term()}`
+
   ## Event Bridge Events
 
     * `[:monkey_claw, :agent_bridge, :event, :received]` — Emitted for each BeamAgent event.
@@ -132,6 +146,49 @@ defmodule MonkeyClaw.AgentBridge.Telemetry do
       when is_integer(start_time) and is_map(metadata) do
     :telemetry.execute(
       @prefix ++ [:query, :exception],
+      %{duration: System.monotonic_time() - start_time},
+      metadata
+    )
+  end
+
+  # --- Stream Events ---
+
+  @doc """
+  Emit a stream start event.
+
+  Returns the monotonic start time for subsequent duration tracking
+  via `stream_stop/2` or `stream_exception/2`.
+  """
+  @spec stream_start(map()) :: integer()
+  def stream_start(metadata) when is_map(metadata) do
+    start_time = System.monotonic_time()
+
+    :telemetry.execute(
+      @prefix ++ [:stream, :start],
+      %{system_time: System.system_time()},
+      metadata
+    )
+
+    start_time
+  end
+
+  @doc "Emit a stream stop event with duration since `start_time`."
+  @spec stream_stop(integer(), map()) :: :ok
+  def stream_stop(start_time, metadata)
+      when is_integer(start_time) and is_map(metadata) do
+    :telemetry.execute(
+      @prefix ++ [:stream, :stop],
+      %{duration: System.monotonic_time() - start_time},
+      metadata
+    )
+  end
+
+  @doc "Emit a stream exception event with duration since `start_time`."
+  @spec stream_exception(integer(), map()) :: :ok
+  def stream_exception(start_time, metadata)
+      when is_integer(start_time) and is_map(metadata) do
+    :telemetry.execute(
+      @prefix ++ [:stream, :exception],
       %{duration: System.monotonic_time() - start_time},
       metadata
     )

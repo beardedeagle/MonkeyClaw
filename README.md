@@ -23,6 +23,8 @@ capabilities with security built into the platform, not patched on top.
   machines with encrypted BEAM distribution.
 - **Extensible** — Plug-based extension model for application-level
   capabilities, plus agent-level MCP, skills, and plugins via BeamAgent.
+- **Streaming** — Real-time token-by-token response delivery through the
+  full stack, from BeamAgent through to LiveView progressive rendering.
 - **Multi-agent** — Five AI backend adapters (Claude, Codex, Gemini,
   OpenCode, Copilot) via BeamAgent, with unified session management.
 
@@ -104,6 +106,16 @@ sessions, and extension hooks into cohesive user-facing operations. The
 Workflows are pure function modules — no processes. They orchestrate
 existing APIs; generic mechanics stay in BeamAgent.
 
+The `Conversation` workflow also provides `stream_message/4`, which
+replaces step 5 with `AgentBridge.stream_query/3` and delivers
+response chunks progressively to the caller:
+
+- `{:stream_chunk, session_id, chunk}` — A response fragment
+- `{:stream_done, session_id}` — Stream completed successfully
+- `{:stream_error, session_id, reason}` — Stream failed
+
+Post-hooks run after the caller has accumulated the full response.
+
 ### Dashboard
 
 Landing page at `/` with real-time system visibility, refreshing
@@ -118,8 +130,10 @@ with that backend.
 Phoenix LiveView chat interface at `/chat` with real-time streaming,
 markdown rendering, and per-message token stats. Features include
 multi-conversation management (sidebar with create/switch/delete),
-collapsible thinking blocks, code copy buttons, and runtime model
-selection across all supported backends.
+collapsible thinking blocks, code copy buttons, runtime model
+selection across all supported backends, and runtime permission mode
+control (`:default`, `:accept_edits`, `:bypass_permissions`, `:plan`,
+`:dont_ask`).
 
 ### Persistence
 

@@ -777,6 +777,310 @@ defmodule MonkeyClaw.AgentBridge.SessionTest do
   end
 
   # ──────────────────────────────────────────────
+  # Streaming
+  # ──────────────────────────────────────────────
+
+  describe "stream_query/3 — active session" do
+    setup :start_test_session
+
+    test "returns {:ok, :streaming} and delivers chunks to caller", %{
+      session_pid: pid,
+      session_id: id
+    } do
+      assert {:ok, :streaming} = Session.stream_query(pid, "hello")
+
+      assert_receive {:stream_chunk, ^id, %{type: :text, content: "streaming: hello"}}
+      assert_receive {:stream_chunk, ^id, %{type: :result, content: "done"}}
+      assert_receive {:stream_done, ^id}
+    end
+
+    test "broadcasts stream events via PubSub", %{session_pid: pid, session_id: id} do
+      {:ok, :streaming} = Session.stream_query(pid, "hello")
+
+      # PubSub already subscribed in start_test_session setup
+      assert_receive {:stream_chunk, ^id, _chunk}
+      assert_receive {:stream_done, ^id}
+    end
+
+    test "returns configured stream_responses" do
+      id = unique_session_id()
+
+      config = %{
+        id: id,
+        backend: Backend.Test,
+        session_opts: %{
+          stream_responses: [
+            [{:ok, %{type: :text, content: "custom chunk"}}]
+          ]
+        }
+      }
+
+      pid = start_supervised!({Session, config})
+
+      {:ok, :streaming} = Session.stream_query(pid, "q1")
+
+      assert_receive {:stream_chunk, ^id, %{type: :text, content: "custom chunk"}}
+      assert_receive {:stream_done, ^id}
+    end
+
+    test "supports function-based stream_responses" do
+      id = unique_session_id()
+
+      handler = fn prompt, count ->
+        [{:ok, %{type: :text, content: "#{prompt}:#{count}"}}]
+      end
+
+      config = %{
+        id: id,
+        backend: Backend.Test,
+        session_opts: %{stream_responses: handler}
+      }
+
+      pid = start_supervised!({Session, config})
+
+      {:ok, :streaming} = Session.stream_query(pid, "hi")
+      assert_receive {:stream_chunk, ^id, %{content: "hi:0"}}
+      assert_receive {:stream_done, ^id}
+
+      # Wait for stream state cleanup before second query
+      Process.sleep(10)
+
+      {:ok, :streaming} = Session.stream_query(pid, "bye")
+      assert_receive {:stream_chunk, ^id, %{content: "bye:1"}}
+      assert_receive {:stream_done, ^id}
+    end
+
+    test "clears stream state after completion", %{session_pid: pid} do
+      {:ok, :streaming} = Session.stream_query(pid, "hello")
+      assert_receive {:stream_done, _}
+
+      # Give the GenServer time to process the task DOWN and clear state
+      Process.sleep(20)
+
+      state = :sys.get_state(pid)
+      assert is_nil(state.stream_task_ref)
+      assert is_nil(state.stream_task_pid)
+      assert is_nil(state.stream_caller)
+      assert is_nil(state.stream_telemetry_start)
+    end
+  end
+
+  describe "stream_query/3 — conflicts" do
+    setup :start_test_session
+
+    test "returns {:error, :stream_already_active} during active stream", %{session_pid: pid} do
+      :sys.replace_state(pid, fn state ->
+        %{state | stream_task_ref: make_ref()}
+      end)
+
+      assert {:error, :stream_already_active} = Session.stream_query(pid, "hello")
+    end
+
+    test "query returns {:error, :stream_in_progress} during active stream", %{session_pid: pid} do
+      :sys.replace_state(pid, fn state ->
+        %{state | stream_task_ref: make_ref()}
+      end)
+
+      assert {:error, :stream_in_progress} = Session.query(pid, "hello")
+    end
+  end
+
+  describe "stream_query/3 — non-active session" do
+    setup :start_test_session
+
+    test "returns {:error, :session_unavailable}", %{session_pid: pid} do
+      :sys.replace_state(pid, fn state -> %{state | status: :stopped} end)
+
+      assert {:error, :session_unavailable} = Session.stream_query(pid, "hello")
+    end
+  end
+
+  describe "stream_query/3 — error handling" do
+    test "delivers stream_error when stream contains errors" do
+      id = unique_session_id()
+
+      config = %{
+        id: id,
+        backend: Backend.Test,
+        session_opts: %{
+          stream_responses: [
+            [{:ok, %{type: :text, content: "partial"}}, {:error, :rate_limited}]
+          ]
+        }
+      }
+
+      pid = start_supervised!({Session, config})
+
+      {:ok, :streaming} = Session.stream_query(pid, "q1")
+
+      assert_receive {:stream_chunk, ^id, %{content: "partial"}}
+      assert_receive {:stream_error, ^id, :rate_limited}
+    end
+
+    test "stream task crash notifies caller" do
+      Process.flag(:trap_exit, true)
+
+      id = unique_session_id()
+
+      # Use a function that returns a Stream which raises during enumeration
+      handler = fn _prompt, _count ->
+        Stream.map([1], fn _ -> raise "boom" end)
+      end
+
+      config = %{
+        id: id,
+        backend: Backend.Test,
+        session_opts: %{stream_responses: handler}
+      }
+
+      pid = start_supervised!({Session, config})
+
+      {:ok, :streaming} = Session.stream_query(pid, "q1")
+
+      assert_receive {:stream_error, ^id, {RuntimeError, "boom"}}, 1_000
+    end
+  end
+
+  describe "stream_query/3 — session stop during stream" do
+    test "kills stream task and notifies caller" do
+      id = unique_session_id()
+
+      # Stream that blocks long enough for us to stop the session
+      handler = fn _prompt, _count ->
+        Stream.resource(
+          fn -> nil end,
+          fn _ ->
+            Process.sleep(2_000)
+            {[{:ok, %{type: :text, content: "late"}}], nil}
+          end,
+          fn _ -> :ok end
+        )
+      end
+
+      config = %{
+        id: id,
+        backend: Backend.Test,
+        session_opts: %{stream_responses: handler}
+      }
+
+      {:ok, pid} = Session.start_link(config)
+
+      {:ok, :streaming} = Session.stream_query(pid, "q1")
+
+      # Give the task time to start blocking
+      Process.sleep(20)
+
+      Session.stop(pid)
+
+      assert_receive {:stream_error, ^id, :session_stopped}, 1_000
+    end
+  end
+
+  # ──────────────────────────────────────────────
+  # Permission Mode
+  # ──────────────────────────────────────────────
+
+  describe "set_permission_mode/2 — active session" do
+    setup :start_test_session
+
+    test "returns {:ok, :noop} with test backend", %{session_pid: pid} do
+      assert {:ok, :noop} = Session.set_permission_mode(pid, :bypass_permissions)
+    end
+
+    test "accepts all valid permission modes", %{session_pid: pid} do
+      for mode <- [:default, :accept_edits, :bypass_permissions, :plan, :dont_ask] do
+        assert {:ok, :noop} = Session.set_permission_mode(pid, mode)
+      end
+    end
+
+    test "rejects invalid permission mode atoms", %{session_pid: pid} do
+      for mode <- [:bogus, :admin, :root, :sudo] do
+        assert_raise FunctionClauseError, fn ->
+          Session.set_permission_mode(pid, mode)
+        end
+      end
+    end
+  end
+
+  describe "set_permission_mode/2 — non-active session" do
+    setup :start_test_session
+
+    test "returns {:error, :session_unavailable}", %{session_pid: pid} do
+      :sys.replace_state(pid, fn state -> %{state | status: :stopped} end)
+
+      assert {:error, :session_unavailable} = Session.set_permission_mode(pid, :plan)
+    end
+  end
+
+  # ──────────────────────────────────────────────
+  # Stream Struct Fields
+  # ──────────────────────────────────────────────
+
+  describe "struct — stream fields" do
+    test "default stream fields to nil" do
+      session = struct!(Session, id: "test", config: %{})
+
+      assert is_nil(session.stream_task_ref)
+      assert is_nil(session.stream_task_pid)
+      assert is_nil(session.stream_caller)
+      assert is_nil(session.stream_telemetry_start)
+    end
+  end
+
+  # ──────────────────────────────────────────────
+  # Stream Telemetry
+  # ──────────────────────────────────────────────
+
+  describe "telemetry — stream lifecycle" do
+    test "emits start and stop on successful stream" do
+      session_id = unique_session_id()
+      config = test_session_config(session_id)
+      handler_id = attach_stream_telemetry()
+
+      pid = start_supervised!({Session, config})
+
+      {:ok, :streaming} = Session.stream_query(pid, "hello")
+
+      assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :stream, :start], _,
+                       %{session_id: ^session_id}}
+
+      assert_receive {:stream_done, ^session_id}, 1_000
+
+      assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :stream, :stop],
+                       %{duration: d}, %{session_id: ^session_id}}
+
+      assert is_integer(d) and d >= 0
+
+      :telemetry.detach(handler_id)
+    end
+
+    test "emits exception on stream error" do
+      session_id = unique_session_id()
+      handler_id = attach_stream_telemetry()
+
+      config = %{
+        id: session_id,
+        backend: Backend.Test,
+        session_opts: %{
+          stream_responses: [[{:error, :overloaded}]]
+        }
+      }
+
+      pid = start_supervised!({Session, config})
+
+      {:ok, :streaming} = Session.stream_query(pid, "q1")
+
+      assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :stream, :start], _, _}
+
+      assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :stream, :exception], _,
+                       %{session_id: ^session_id, kind: :stream_error}},
+                     1_000
+
+      :telemetry.detach(handler_id)
+    end
+  end
+
+  # ──────────────────────────────────────────────
   # Helpers
   # ──────────────────────────────────────────────
 
@@ -821,6 +1125,26 @@ defmodule MonkeyClaw.AgentBridge.SessionTest do
         [:monkey_claw, :agent_bridge, :session, :start],
         [:monkey_claw, :agent_bridge, :session, :stop],
         [:monkey_claw, :agent_bridge, :session, :exception]
+      ],
+      fn event, measurements, metadata, _config ->
+        send(test_pid, {:telemetry, event, measurements, metadata})
+      end,
+      nil
+    )
+
+    handler_id
+  end
+
+  defp attach_stream_telemetry do
+    test_pid = self()
+    handler_id = "stream-telemetry-#{System.unique_integer([:positive])}"
+
+    :telemetry.attach_many(
+      handler_id,
+      [
+        [:monkey_claw, :agent_bridge, :stream, :start],
+        [:monkey_claw, :agent_bridge, :stream, :stop],
+        [:monkey_claw, :agent_bridge, :stream, :exception]
       ],
       fn event, measurements, metadata, _config ->
         send(test_pid, {:telemetry, event, measurements, metadata})

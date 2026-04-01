@@ -30,7 +30,15 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
   end
 
   @impl true
-  def set_model(pid, model), do: :beam_agent_core.set_model(pid, model)
+  def stream(pid, prompt, params) do
+    {:ok, BeamAgent.stream(pid, prompt, params)}
+  end
+
+  @impl true
+  def set_model(pid, model), do: BeamAgent.set_model(pid, model)
+
+  @impl true
+  def set_permission_mode(pid, mode), do: BeamAgent.set_permission_mode(pid, mode)
 
   @impl true
   def session_info(pid), do: BeamAgent.session_info(pid)
@@ -40,6 +48,9 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
 
   @impl true
   def receive_event(pid, ref, timeout), do: BeamAgent.receive_event(pid, ref, timeout)
+
+  @impl true
+  def event_unsubscribe(pid, ref), do: BeamAgent.event_unsubscribe(pid, ref)
 
   @impl true
   def thread_start(pid, opts), do: BeamAgent.Threads.thread_start(pid, opts)

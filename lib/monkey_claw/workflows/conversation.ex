@@ -18,6 +18,13 @@ defmodule MonkeyClaw.Workflows.Conversation do
   8. Execute `:query_post` extension hooks
   9. Return the result
 
+  ## Streaming
+
+  `stream_message/4` follows the same orchestration but dispatches
+  via `AgentBridge.stream_query/3`, returning `{:ok, %{streaming: true, ...}}`
+  immediately. Chunks arrive as messages to the calling process.
+  Post-hooks are the caller's responsibility after stream completion.
+
   ## Extension Hook Integration
 
   The workflow fires two hook points:
@@ -28,7 +35,9 @@ defmodule MonkeyClaw.Workflows.Conversation do
       `:effective_prompt` in assigns, that prompt is used instead
       of the original.
     * `:query_post` — After receiving the response. Plugs can
-      observe or annotate the result via assigns.
+      observe or annotate the result via assigns. For streaming,
+      post-hooks are not called by the workflow — the caller runs
+      `run_query_post/3` after accumulating the full response.
 
   ## What This Module Owns
 
@@ -62,6 +71,10 @@ defmodule MonkeyClaw.Workflows.Conversation do
 
   @type message_result ::
           {:ok, %{messages: list(), context: Extensions.Context.t()}}
+          | {:error, term()}
+
+  @type stream_result ::
+          {:ok, %{streaming: true, context: Extensions.Context.t()}}
           | {:error, term()}
 
   @doc """
@@ -111,6 +124,59 @@ defmodule MonkeyClaw.Workflows.Conversation do
          {:ok, messages} <- AgentBridge.query(workspace.id, query_prompt, opts),
          {:ok, post_ctx} <- run_query_post(workspace.id, query_prompt, messages) do
       {:ok, %{messages: messages, context: post_ctx}}
+    end
+  end
+
+  @doc """
+  Start a streaming message to an AI agent through a workspace channel.
+
+  Performs the same orchestration as `send_message/4` (entity resolution,
+  session management, pre-hooks) but dispatches via `AgentBridge.stream_query/3`
+  instead of blocking on `AgentBridge.query/3`.
+
+  Chunks are delivered as messages to the calling process:
+
+    * `{:stream_chunk, session_id, chunk}` — A response fragment
+    * `{:stream_done, session_id}` — Stream completed successfully
+    * `{:stream_error, session_id, reason}` — Stream failed
+
+  Post-hooks are NOT executed by this function — the caller is responsible
+  for running `run_query_post/3` after the stream completes, since the
+  full response is not available until all chunks arrive.
+
+  ## Parameters
+
+    * `workspace_id` — The workspace to send the message in
+    * `channel_name` — The channel (conversation thread) name
+    * `prompt` — The user's message
+    * `opts` — Optional keyword list:
+      * `:stream_to` — PID to receive stream messages (default: `self()`)
+      * `:timeout` — Stream initiation timeout in milliseconds
+      * `:create_channel` — Auto-create missing channels (default: `true`)
+
+  ## Returns
+
+    * `{:ok, %{streaming: true, context: context}}` — Stream initiated
+    * `{:error, reason}` — Failure at any step
+  """
+  @spec stream_message(String.t(), String.t(), String.t(), keyword()) :: stream_result()
+  def stream_message(workspace_id, channel_name, prompt, opts \\ [])
+      when is_binary(workspace_id) and byte_size(workspace_id) > 0 and
+             is_binary(channel_name) and byte_size(channel_name) > 0 and
+             byte_size(channel_name) <= @max_channel_name_bytes and
+             is_binary(prompt) and byte_size(prompt) > 0 and
+             byte_size(prompt) <= @max_prompt_bytes do
+    with {:ok, workspace} <- resolve_workspace(workspace_id),
+         {:ok, session_config} <- build_session_config(workspace),
+         session_config = apply_model_override(session_config, opts),
+         :ok <- ensure_session(session_config),
+         {:ok, channel} <- resolve_channel(workspace, channel_name, opts),
+         {:ok, _thread} <- ensure_thread(workspace.id, channel),
+         {:ok, pre_ctx} <- run_query_pre(workspace.id, prompt),
+         query_prompt = effective_prompt(pre_ctx, prompt),
+         stream_opts = Keyword.take(opts, [:stream_to, :timeout]),
+         {:ok, :streaming} <- AgentBridge.stream_query(workspace.id, query_prompt, stream_opts) do
+      {:ok, %{streaming: true, context: pre_ctx}}
     end
   end
 

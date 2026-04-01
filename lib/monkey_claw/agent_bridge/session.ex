@@ -37,6 +37,9 @@ defmodule MonkeyClaw.AgentBridge.Session do
     * `{:session_stopped, id, reason}` — Session was stopped
     * `{:session_terminated, id, reason}` — Session crashed
     * `{:beam_agent_event, id, event}` — Event from BeamAgent
+    * `{:stream_chunk, id, chunk}` — Streaming response chunk
+    * `{:stream_done, id}` — Stream completed
+    * `{:stream_error, id, reason}` — Stream failed
   """
 
   use GenServer
@@ -54,6 +57,9 @@ defmodule MonkeyClaw.AgentBridge.Session do
 
   # Event polling interval in milliseconds
   @event_poll_interval_ms 100
+
+  # Timeout for initiating a stream (obtaining the Enumerable, not consuming it)
+  @default_stream_start_timeout 30_000
 
   @type session_id :: String.t()
 
@@ -75,7 +81,11 @@ defmodule MonkeyClaw.AgentBridge.Session do
           backend: module(),
           status: :starting | :active | :stopping | :stopped | :terminated,
           started_at: DateTime.t() | nil,
-          telemetry_start: integer() | nil
+          telemetry_start: integer() | nil,
+          stream_task_ref: reference() | nil,
+          stream_task_pid: pid() | nil,
+          stream_caller: pid() | nil,
+          stream_telemetry_start: integer() | nil
         }
 
   @enforce_keys [:id, :config]
@@ -89,6 +99,10 @@ defmodule MonkeyClaw.AgentBridge.Session do
     :started_at,
     :telemetry_start,
     :backend,
+    :stream_task_ref,
+    :stream_task_pid,
+    :stream_caller,
+    :stream_telemetry_start,
     status: :starting
   ]
 
@@ -151,6 +165,40 @@ defmodule MonkeyClaw.AgentBridge.Session do
   end
 
   @doc """
+  Start a streaming query on the session.
+
+  Spawns a monitored task that enumerates the backend stream.
+  Chunks are delivered to the calling process as messages:
+
+    * `{:stream_chunk, session_id, chunk}` — A response fragment
+    * `{:stream_done, session_id}` — Stream completed successfully
+    * `{:stream_error, session_id, reason}` — Stream failed
+
+  The same events are broadcast on PubSub for other observers.
+
+  Only one stream may be active per session. Returns
+  `{:error, :stream_already_active}` if a stream is in progress.
+
+  ## Options
+
+    * `:timeout` — Timeout for stream initiation (default: #{@default_stream_start_timeout}ms)
+    * `:stream_to` — PID to receive stream messages (default: `self()`)
+  """
+  @spec stream_query(GenServer.server(), String.t(), keyword()) ::
+          {:ok, :streaming} | {:error, term()}
+  def stream_query(session, prompt, opts \\ []) when is_binary(prompt) do
+    timeout = Keyword.get(opts, :timeout, @default_stream_start_timeout)
+    caller = Keyword.get(opts, :stream_to, self())
+
+    beam_params =
+      opts
+      |> Keyword.drop([:timeout, :stream_to])
+      |> Map.new()
+
+    GenServer.call(session, {:stream_query, prompt, beam_params, caller}, timeout)
+  end
+
+  @doc """
   Change the model used by the session at runtime.
 
   Sends a control message to the underlying agent session to switch
@@ -160,6 +208,19 @@ defmodule MonkeyClaw.AgentBridge.Session do
   @spec set_model(GenServer.server(), String.t()) :: {:ok, term()} | {:error, term()}
   def set_model(session, model) when is_binary(model) and byte_size(model) > 0 do
     GenServer.call(session, {:set_model, model}, 10_000)
+  end
+
+  @valid_permission_modes [:default, :accept_edits, :bypass_permissions, :plan, :dont_ask]
+
+  @doc """
+  Change the permission mode used by the session at runtime.
+
+  Controls how the agent handles tool execution approvals.
+  Valid modes: #{Enum.map_join(@valid_permission_modes, ", ", &"`#{inspect(&1)}`")}.
+  """
+  @spec set_permission_mode(GenServer.server(), atom()) :: {:ok, term()} | {:error, term()}
+  def set_permission_mode(session, mode) when mode in @valid_permission_modes do
+    GenServer.call(session, {:set_permission_mode, mode}, 10_000)
   end
 
   @doc """
@@ -342,6 +403,11 @@ defmodule MonkeyClaw.AgentBridge.Session do
   end
 
   @impl true
+  def handle_call({:query, _prompt, _params}, _from, %{stream_task_ref: ref} = state)
+      when not is_nil(ref) do
+    {:reply, {:error, :stream_in_progress}, state}
+  end
+
   def handle_call({:query, prompt, beam_params}, _from, %{status: :active} = state) do
     telemetry_start = BridgeTelemetry.query_start(%{session_id: state.id})
 
@@ -371,12 +437,74 @@ defmodule MonkeyClaw.AgentBridge.Session do
     {:reply, {:error, :session_unavailable}, state}
   end
 
+  def handle_call({:stream_query, _prompt, _params, _caller}, _from, %{stream_task_ref: ref} = state)
+      when not is_nil(ref) do
+    {:reply, {:error, :stream_already_active}, state}
+  end
+
+  def handle_call({:stream_query, prompt, beam_params, caller}, _from, %{status: :active} = state) do
+    telemetry_start = BridgeTelemetry.stream_start(%{session_id: state.id})
+
+    case state.backend.stream(state.session_pid, prompt, beam_params) do
+      {:ok, stream} ->
+        session_self = self()
+
+        {task_pid, task_ref} =
+          spawn_monitor(fn ->
+            try do
+              Enum.each(stream, fn
+                {:ok, chunk} -> send(session_self, {:stream_chunk, chunk})
+                {:error, reason} -> send(session_self, {:stream_error, reason})
+              end)
+
+              send(session_self, :stream_done)
+            rescue
+              error ->
+                detail = {error.__struct__, Exception.message(error)}
+                send(session_self, {:stream_error, detail})
+            end
+          end)
+
+        new_state = %{
+          state
+          | stream_task_ref: task_ref,
+            stream_task_pid: task_pid,
+            stream_caller: caller,
+            stream_telemetry_start: telemetry_start
+        }
+
+        {:reply, {:ok, :streaming}, new_state}
+
+      {:error, reason} ->
+        BridgeTelemetry.stream_exception(telemetry_start, %{
+          session_id: state.id,
+          kind: :stream_start_error,
+          reason: reason
+        })
+
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:stream_query, _prompt, _params, _caller}, _from, state) do
+    {:reply, {:error, :session_unavailable}, state}
+  end
+
   def handle_call({:set_model, model}, _from, %{status: :active} = state) do
     result = state.backend.set_model(state.session_pid, model)
     {:reply, result, state}
   end
 
   def handle_call({:set_model, _model}, _from, state) do
+    {:reply, {:error, :session_unavailable}, state}
+  end
+
+  def handle_call({:set_permission_mode, mode}, _from, %{status: :active} = state) do
+    result = state.backend.set_permission_mode(state.session_pid, mode)
+    {:reply, result, state}
+  end
+
+  def handle_call({:set_permission_mode, _mode}, _from, state) do
     {:reply, {:error, :session_unavailable}, state}
   end
 
@@ -450,6 +578,62 @@ defmodule MonkeyClaw.AgentBridge.Session do
     {:stop, {:beam_agent_terminated, reason}, %{state | status: :terminated}}
   end
 
+  # Stream task crashed — notify caller if the task didn't send a completion signal
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %{stream_task_ref: ref} = state) do
+    unless reason == :normal do
+      Logger.warning("Stream task for session #{state.id} crashed: #{inspect(reason)}")
+
+      if is_pid(state.stream_caller) do
+        send(state.stream_caller, {:stream_error, state.id, {:task_crashed, reason}})
+      end
+
+      _ = broadcast(state.id, {:stream_error, state.id, {:task_crashed, reason}})
+
+      emit_stream_exception(state, :stream_task_crash, reason)
+    end
+
+    {:noreply, clear_stream_state(state)}
+  end
+
+  # Streaming chunk from the enumeration task
+  def handle_info({:stream_chunk, chunk}, %{stream_caller: caller} = state)
+      when is_pid(caller) do
+    send(caller, {:stream_chunk, state.id, chunk})
+    _ = broadcast(state.id, {:stream_chunk, state.id, chunk})
+    {:noreply, state}
+  end
+
+  # Stream completed successfully — demonitor with :flush to prevent
+  # a subsequent :DOWN from triggering double-cleanup.
+  def handle_info(:stream_done, %{stream_caller: caller, stream_task_ref: ref} = state)
+      when is_pid(caller) do
+    if is_reference(ref), do: Process.demonitor(ref, [:flush])
+
+    send(caller, {:stream_done, state.id})
+    _ = broadcast(state.id, {:stream_done, state.id})
+
+    case state.stream_telemetry_start do
+      nil -> :ok
+      start_time -> BridgeTelemetry.stream_stop(start_time, %{session_id: state.id})
+    end
+
+    {:noreply, clear_stream_state(state)}
+  end
+
+  # Stream error from the enumeration task — demonitor with :flush to
+  # prevent a subsequent :DOWN from triggering double-cleanup.
+  def handle_info({:stream_error, reason}, %{stream_caller: caller, stream_task_ref: ref} = state)
+      when is_pid(caller) do
+    if is_reference(ref), do: Process.demonitor(ref, [:flush])
+
+    send(caller, {:stream_error, state.id, reason})
+    _ = broadcast(state.id, {:stream_error, state.id, reason})
+
+    emit_stream_exception(state, :stream_error, reason)
+
+    {:noreply, clear_stream_state(state)}
+  end
+
   def handle_info(:poll_events, %{status: :active, event_ref: ref} = state)
       when not is_nil(ref) do
     drain_events(state, @max_events_per_poll)
@@ -478,10 +662,18 @@ defmodule MonkeyClaw.AgentBridge.Session do
   # --- Private Helpers ---
 
   defp do_stop_session(state, reason) do
+    # Kill any active stream task first — it holds a reference to the
+    # BeamAgent session pid and would fail mid-enumeration otherwise.
+    state = kill_stream_task(state)
+
     # Demonitor before stopping to prevent {:DOWN} race during shutdown
     if is_reference(state.monitor_ref) do
       Process.demonitor(state.monitor_ref, [:flush])
     end
+
+    # Unsubscribe from events before stopping the session process.
+    # This flushes any pending events on the BeamAgent side.
+    unsubscribe_events(state)
 
     case state.session_pid do
       nil ->
@@ -512,7 +704,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
     _ = broadcast(state.id, {:session_stopped, state.id, reason})
     Logger.info("AgentBridge session #{state.id} stopped: #{inspect(reason)}")
 
-    %{state | status: :stopped, session_pid: nil, monitor_ref: nil}
+    %{state | status: :stopped, session_pid: nil, monitor_ref: nil, event_ref: nil}
   end
 
   # Poll session_info until the BeamAgent session engine reaches :ready.
@@ -601,6 +793,63 @@ defmodule MonkeyClaw.AgentBridge.Session do
 
   defp broadcast(session_id, message) do
     Phoenix.PubSub.broadcast(MonkeyClaw.PubSub, "agent_session:#{session_id}", message)
+  end
+
+  # Kill an active stream task and clean up its state.
+  # Safe to call when no stream is active (returns state unchanged).
+  defp kill_stream_task(%{stream_task_pid: pid, stream_task_ref: ref} = state)
+       when is_pid(pid) and is_reference(ref) do
+    Process.demonitor(ref, [:flush])
+    Process.exit(pid, :kill)
+
+    if is_pid(state.stream_caller) do
+      send(state.stream_caller, {:stream_error, state.id, :session_stopped})
+    end
+
+    emit_stream_exception(state, :stream_killed, :session_stopped)
+
+    clear_stream_state(state)
+  end
+
+  defp kill_stream_task(state), do: state
+
+  # Unsubscribe from BeamAgent events. Safe to call when not subscribed.
+  defp unsubscribe_events(%{event_ref: ref, session_pid: pid, backend: backend} = state)
+       when is_reference(ref) and is_pid(pid) do
+    try do
+      backend.event_unsubscribe(pid, ref)
+    catch
+      kind, error ->
+        Logger.warning(
+          "Failed to unsubscribe events for session #{state.id} (#{kind}): #{inspect(error)}"
+        )
+    end
+  end
+
+  defp unsubscribe_events(_state), do: :ok
+
+  # Reset all stream-related state fields.
+  # Callers are responsible for demonitoring before calling this function
+  # (either via kill_stream_task or handle_info({:DOWN, ...})).
+  defp clear_stream_state(state) do
+    %{
+      state
+      | stream_task_ref: nil,
+        stream_task_pid: nil,
+        stream_caller: nil,
+        stream_telemetry_start: nil
+    }
+  end
+
+  # Emit a stream exception telemetry event if a start time is available.
+  defp emit_stream_exception(%{stream_telemetry_start: nil}, _kind, _reason), do: :ok
+
+  defp emit_stream_exception(state, kind, reason) do
+    BridgeTelemetry.stream_exception(state.stream_telemetry_start, %{
+      session_id: state.id,
+      kind: kind,
+      reason: reason
+    })
   end
 
   # Allowlist: only expose known-safe config keys.
