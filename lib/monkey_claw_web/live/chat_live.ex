@@ -318,9 +318,23 @@ defmodule MonkeyClawWeb.ChatLive do
         # :assistant messages carry cumulative content_blocks — the latest
         # message has the full response so far. Replace the buffer to avoid
         # doubling from repeated cumulative text.
-        size = byte_size(content)
+        #
+        # Safety guard: if the new content is shorter than the current buffer,
+        # the backend is sending incremental deltas, not cumulative snapshots.
+        # Fall back to append to avoid losing prior content.
+        current_size = socket.assigns.stream_byte_size
+        new_content_size = byte_size(content)
 
-        if size > @max_stream_content_bytes do
+        {effective_content, effective_size} =
+          if new_content_size < current_size do
+            # Incremental delta — append
+            {socket.assigns.stream_content <> content, current_size + new_content_size}
+          else
+            # Cumulative snapshot — replace
+            {content, new_content_size}
+          end
+
+        if effective_size > @max_stream_content_bytes do
           cancel_active_stream(socket)
 
           {:noreply,
@@ -334,8 +348,8 @@ defmodule MonkeyClawWeb.ChatLive do
           {:noreply,
            socket
            |> assign(:streaming, true)
-           |> assign(:stream_content, content)
-           |> assign(:stream_byte_size, size)}
+           |> assign(:stream_content, effective_content)
+           |> assign(:stream_byte_size, effective_size)}
         end
 
       {:append, content} ->
