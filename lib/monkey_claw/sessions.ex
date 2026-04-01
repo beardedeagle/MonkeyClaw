@@ -121,7 +121,7 @@ defmodule MonkeyClaw.Sessions do
     Session
     |> where([s], s.workspace_id == ^workspace_id)
     |> apply_status_filter(opts)
-    |> order_by([s], desc: s.updated_at)
+    |> order_by([s], desc: s.inserted_at)
     |> apply_limit(opts)
     |> Repo.all()
   end
@@ -178,36 +178,29 @@ defmodule MonkeyClaw.Sessions do
           {:ok, Message.t()} | {:error, Ecto.Changeset.t() | term()}
   def record_message(%Session{} = session, attrs) when is_map(attrs) do
     Multi.new()
-    |> Multi.run(:sequence, fn repo, _changes ->
-      result =
-        Message
-        |> where([m], m.session_id == ^session.id)
-        |> select([m], max(m.sequence))
-        |> repo.one()
-
-      case result do
-        nil -> {:ok, 0}
-        n when is_integer(n) -> {:ok, n + 1}
-      end
-    end)
-    |> Multi.insert(:message, fn %{sequence: sequence} ->
+    |> Multi.update_all(
+      :increment_count,
+      fn _changes ->
+        from(s in Session,
+          where: s.id == ^session.id,
+          update: [inc: [message_count: 1]],
+          select: s.message_count
+        )
+      end,
+      []
+    )
+    |> Multi.insert(:message, fn %{increment_count: {1, [count]}} ->
+      # count is post-increment; sequence is 0-based
+      sequence = count - 1
       attrs = Map.put(attrs, :sequence, sequence)
 
       session
       |> Ecto.build_assoc(:messages)
       |> Message.create_changeset(attrs)
     end)
-    |> Multi.update_all(
-      :increment_count,
-      fn _changes ->
-        from(s in Session, where: s.id == ^session.id, update: [inc: [message_count: 1]])
-      end,
-      []
-    )
     |> Repo.transaction()
     |> case do
       {:ok, %{message: message}} -> {:ok, message}
-      {:error, :sequence, error, _} -> {:error, {:sequence, error}}
       {:error, :message, changeset, _} -> {:error, changeset}
       {:error, :increment_count, error, _} -> {:error, {:increment_count, error}}
     end

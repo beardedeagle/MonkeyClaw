@@ -1085,6 +1085,10 @@ defmodule MonkeyClaw.AgentBridge.Session do
       {:ok, message} ->
         {:ok, message}
 
+      {:error, %Ecto.Changeset{} = changeset} ->
+        Logger.warning("Failed to record message: #{inspect(changeset.errors)}")
+        :error
+
       {:error, reason} ->
         Logger.warning("Failed to record message: #{inspect(reason)}")
         :error
@@ -1129,7 +1133,24 @@ defmodule MonkeyClaw.AgentBridge.Session do
 
   defp extract_message_content(%{content: content}) when is_binary(content), do: content
   defp extract_message_content(%{"content" => content}) when is_binary(content), do: content
+
+  defp extract_message_content(%{content_blocks: blocks}) when is_list(blocks),
+    do: extract_text_from_blocks(blocks)
+
+  defp extract_message_content(%{"content_blocks" => blocks}) when is_list(blocks),
+    do: extract_text_from_blocks(blocks)
+
   defp extract_message_content(_), do: nil
+
+  defp extract_text_from_blocks(blocks) do
+    text =
+      blocks
+      |> Enum.map(&extract_chunk_text/1)
+      |> Enum.reject(&(&1 == "" or is_nil(&1)))
+      |> Enum.join("")
+
+    if byte_size(text) > 0, do: text, else: nil
+  end
 
   defp extract_chunk_text(chunk) when is_binary(chunk), do: chunk
   defp extract_chunk_text(%{text: text}) when is_binary(text), do: text

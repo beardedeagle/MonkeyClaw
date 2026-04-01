@@ -527,6 +527,13 @@ defmodule MonkeyClawWeb.ChatLive do
     }
   end
 
+  # No-op when viewing history — socket.assigns.messages contains
+  # the historical transcript, not the live conversation's messages.
+  defp persist_active_conversation(%{assigns: %{viewing_history_id: id}} = socket)
+       when not is_nil(id) do
+    socket
+  end
+
   defp persist_active_conversation(socket) do
     id = socket.assigns.active_conversation_id
 

@@ -21,9 +21,11 @@ defmodule MonkeyClawWeb.Plugs.ContentSecurityPolicy do
 
   ## Dev Routes
 
-  Requests to `/dev/*` paths (LiveDashboard, Swoosh mailbox) are
-  skipped — those tools render their own inline scripts that cannot
-  be nonced. Dev routes are only enabled when `dev_routes: true`.
+  Requests to `/dev` and `/dev/…` paths (LiveDashboard, Swoosh
+  mailbox) are skipped — those tools render their own inline scripts
+  that cannot be nonced. The bypass matches `/dev` exactly and
+  `/dev/` as a prefix to avoid disabling CSP on unrelated routes
+  like `/devices`. Dev routes are only enabled when `dev_routes: true`.
 
   ## Usage in Templates
 
@@ -49,7 +51,11 @@ defmodule MonkeyClawWeb.Plugs.ContentSecurityPolicy do
   def init(opts), do: opts
 
   @impl true
-  def call(%{request_path: "/dev" <> _} = conn, _opts) do
+  def call(%{request_path: "/dev"} = conn, _opts) do
+    assign(conn, :csp_nonce, nil)
+  end
+
+  def call(%{request_path: "/dev/" <> _} = conn, _opts) do
     assign(conn, :csp_nonce, nil)
   end
 

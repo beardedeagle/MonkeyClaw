@@ -67,6 +67,25 @@ defmodule MonkeyClawWeb.Plugs.ContentSecurityPolicyTest do
 
       assert conn.assigns.csp_nonce == nil
     end
+
+    test "skips CSP header for bare /dev path" do
+      conn =
+        conn(:get, "/dev")
+        |> ContentSecurityPolicy.call(ContentSecurityPolicy.init([]))
+
+      assert get_resp_header(conn, "content-security-policy") == []
+      assert conn.assigns.csp_nonce == nil
+    end
+
+    test "does NOT skip CSP for /dev-prefixed non-dev paths" do
+      conn =
+        conn(:get, "/devices")
+        |> ContentSecurityPolicy.call(ContentSecurityPolicy.init([]))
+
+      [csp] = get_resp_header(conn, "content-security-policy")
+      assert csp =~ "default-src 'self'"
+      assert is_binary(conn.assigns.csp_nonce)
+    end
   end
 
   describe "generate_nonce/0" do
