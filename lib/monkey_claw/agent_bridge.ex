@@ -454,14 +454,37 @@ defmodule MonkeyClaw.AgentBridge do
   @doc """
   Get a persisted session history record by ID.
 
-  Returns `{:ok, session}` if found, `{:error, :not_found}` otherwise.
+  Verifies the session belongs to the given workspace before
+  returning — returns `{:error, :not_found}` if the session
+  doesn't exist or belongs to a different workspace.
+
+  ## Examples
+
+      {:ok, session} = AgentBridge.get_session_history(session_id, workspace_id)
   """
-  @spec get_session_history(Ecto.UUID.t()) ::
+  @spec get_session_history(Ecto.UUID.t(), Ecto.UUID.t()) ::
           {:ok, Sessions.Session.t()} | {:error, :not_found}
-  defdelegate get_session_history(id), to: Sessions, as: :get_session
+  def get_session_history(session_id, workspace_id)
+      when is_binary(session_id) and byte_size(session_id) > 0 and
+             is_binary(workspace_id) and byte_size(workspace_id) > 0 do
+    case Sessions.get_session(session_id) do
+      {:ok, %{workspace_id: ^workspace_id} = session} ->
+        {:ok, session}
+
+      {:ok, _wrong_workspace} ->
+        {:error, :not_found}
+
+      {:error, :not_found} = error ->
+        error
+    end
+  end
 
   @doc """
   Get messages for a persisted session, ordered by sequence.
+
+  Verifies the session belongs to the given workspace before
+  returning messages — returns `{:error, :not_found}` if the
+  session doesn't exist or belongs to a different workspace.
 
   ## Options
 
@@ -471,14 +494,33 @@ defmodule MonkeyClaw.AgentBridge do
 
   ## Examples
 
-      messages = AgentBridge.get_session_messages(session_id)
-      messages = AgentBridge.get_session_messages(session_id, %{limit: 50})
+      {:ok, messages} = AgentBridge.get_session_messages(session_id, workspace_id)
+      {:ok, messages} = AgentBridge.get_session_messages(session_id, workspace_id, %{limit: 50})
   """
-  @spec get_session_messages(Ecto.UUID.t()) :: [Sessions.Message.t()]
-  defdelegate get_session_messages(session_id), to: Sessions, as: :get_messages
+  @spec get_session_messages(Ecto.UUID.t(), Ecto.UUID.t()) ::
+          {:ok, [Sessions.Message.t()]} | {:error, :not_found}
+  def get_session_messages(session_id, workspace_id)
+      when is_binary(session_id) and byte_size(session_id) > 0 and
+             is_binary(workspace_id) and byte_size(workspace_id) > 0 do
+    get_session_messages(session_id, workspace_id, %{})
+  end
 
-  @spec get_session_messages(Ecto.UUID.t(), map()) :: [Sessions.Message.t()]
-  defdelegate get_session_messages(session_id, opts), to: Sessions, as: :get_messages
+  @spec get_session_messages(Ecto.UUID.t(), Ecto.UUID.t(), map()) ::
+          {:ok, [Sessions.Message.t()]} | {:error, :not_found}
+  def get_session_messages(session_id, workspace_id, opts)
+      when is_binary(session_id) and byte_size(session_id) > 0 and
+             is_binary(workspace_id) and byte_size(workspace_id) > 0 and is_map(opts) do
+    case Sessions.get_session(session_id) do
+      {:ok, %{workspace_id: ^workspace_id}} ->
+        {:ok, Sessions.get_messages(session_id, opts)}
+
+      {:ok, _wrong_workspace} ->
+        {:error, :not_found}
+
+      {:error, :not_found} = error ->
+        error
+    end
+  end
 
   @doc """
   Full-text search across messages in a workspace via FTS5.

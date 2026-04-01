@@ -109,6 +109,18 @@ defmodule MonkeyClaw.Sessions.Message do
     |> validate_required([:role, :sequence])
     |> validate_inclusion(:role, @roles)
     |> validate_number(:sequence, greater_than_or_equal_to: 0)
+    |> normalize_metadata()
     |> assoc_constraint(:session)
+  end
+
+  # Normalize nil metadata to %{} so the DB NOT NULL constraint is
+  # never violated. This handles callers that explicitly pass
+  # metadata: nil without requiring metadata in validate_required
+  # (since it's genuinely optional with a default).
+  defp normalize_metadata(changeset) do
+    case fetch_change(changeset, :metadata) do
+      {:ok, nil} -> put_change(changeset, :metadata, %{})
+      _ -> changeset
+    end
   end
 end

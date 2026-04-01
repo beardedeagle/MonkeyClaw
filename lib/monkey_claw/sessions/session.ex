@@ -99,6 +99,7 @@ defmodule MonkeyClaw.Sessions.Session do
   def create_changeset(%__MODULE__{} = session, attrs) when is_map(attrs) do
     session
     |> cast(attrs, @create_fields)
+    |> validate_required([:status])
     |> validate_length(:title, max: 200)
     |> validate_inclusion(:status, @statuses)
     |> validate_length(:model, max: 100)
@@ -115,6 +116,7 @@ defmodule MonkeyClaw.Sessions.Session do
   def update_changeset(%__MODULE__{} = session, attrs) when is_map(attrs) do
     session
     |> cast(attrs, @update_fields)
+    |> validate_required([:status, :message_count])
     |> validate_length(:title, max: 200)
     |> validate_inclusion(:status, @statuses)
     |> validate_length(:model, max: 100)
