@@ -1173,11 +1173,14 @@ defmodule MonkeyClaw.AgentBridge.Session do
   # the most complete usage snapshot.
   defp capture_stream_metadata(state, %{type: type, usage: usage} = chunk)
        when type in [:result, :assistant] and is_map(usage) do
-    %{state | stream_metadata: %{
-      "usage" => usage,
-      "model" => Map.get(chunk, :model),
-      "duration_ms" => Map.get(chunk, :duration_ms)
-    }}
+    %{
+      state
+      | stream_metadata: %{
+          "usage" => usage,
+          "model" => Map.get(chunk, :model),
+          "duration_ms" => Map.get(chunk, :duration_ms)
+        }
+    }
   end
 
   defp capture_stream_metadata(state, _chunk), do: state
