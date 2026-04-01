@@ -265,7 +265,7 @@ defmodule MonkeyClaw.Experiments.Runner do
 
       {:error, reason} ->
         Logger.error("Experiment #{config.experiment_id} init failed: #{inspect(reason)}")
-        mark_cancelled(config.experiment_id, "init_failed")
+        _ = mark_cancelled(config.experiment_id, "init_failed")
         {:stop, {:init_failed, reason}, config}
     end
   end
@@ -428,8 +428,9 @@ defmodule MonkeyClaw.Experiments.Runner do
     state = %{state | session_pid: nil, session_monitor_ref: nil}
 
     # Cancel in-flight task if any
-    if state.task_ref,
-      do: Task.Supervisor.terminate_child(MonkeyClaw.Experiments.TaskSupervisor, state.task_pid)
+    _ =
+      if state.task_ref,
+        do: Task.Supervisor.terminate_child(MonkeyClaw.Experiments.TaskSupervisor, state.task_pid)
 
     state = %{state | task_ref: nil, task_pid: nil}
 
@@ -687,7 +688,7 @@ defmodule MonkeyClaw.Experiments.Runner do
   defp check_mutation_scope(_run_result, %{mutation_scope: []}), do: :ok
 
   defp check_mutation_scope(run_result, state) do
-    changed = run_result.files_changed || []
+    changed = run_result.files_changed
     allowed = MapSet.new(state.mutation_scope)
     out_of_scope = Enum.reject(changed, &MapSet.member?(allowed, &1))
 
@@ -729,15 +730,16 @@ defmodule MonkeyClaw.Experiments.Runner do
   end
 
   defp best_effort_rollback(%{strategy: strategy, strategy_state: strategy_state} = state) do
-    # Strategy-internal cleanup
-    try do
-      {:ok, _new_state} = strategy.rollback(strategy_state, %{})
-    rescue
-      error ->
-        Logger.warning(
-          "Experiment #{state.experiment_id} strategy rollback failed: #{inspect(error)}"
-        )
-    end
+    # Strategy-internal cleanup — result intentionally discarded (best-effort)
+    _ =
+      try do
+        {:ok, _new_state} = strategy.rollback(strategy_state, %{})
+      rescue
+        error ->
+          Logger.warning(
+            "Experiment #{state.experiment_id} strategy rollback failed: #{inspect(error)}"
+          )
+      end
 
     # Checkpoint rewind (Runner responsibility, strategy-agnostic)
     checkpoint_id = Map.get(strategy_state || %{}, :checkpoint_id)
@@ -761,9 +763,10 @@ defmodule MonkeyClaw.Experiments.Runner do
 
   defp cancel_and_rollback(state, reason) do
     # Kill in-flight task if any
-    if state.task_pid do
-      Task.Supervisor.terminate_child(MonkeyClaw.Experiments.TaskSupervisor, state.task_pid)
-    end
+    _ =
+      if state.task_pid do
+        Task.Supervisor.terminate_child(MonkeyClaw.Experiments.TaskSupervisor, state.task_pid)
+      end
 
     state = %{state | task_ref: nil, task_pid: nil}
     best_effort_rollback(state)
@@ -822,11 +825,12 @@ defmodule MonkeyClaw.Experiments.Runner do
   # ── Private: Cleanup ─────────────────────────────────────────
 
   defp cleanup(state) do
-    if state.timer_ref, do: Process.cancel_timer(state.timer_ref)
+    _ = if state.timer_ref, do: Process.cancel_timer(state.timer_ref)
 
-    if state.task_pid do
-      Task.Supervisor.terminate_child(MonkeyClaw.Experiments.TaskSupervisor, state.task_pid)
-    end
+    _ =
+      if state.task_pid do
+        Task.Supervisor.terminate_child(MonkeyClaw.Experiments.TaskSupervisor, state.task_pid)
+      end
 
     if state.session_pid do
       try do
@@ -882,7 +886,7 @@ defmodule MonkeyClaw.Experiments.Runner do
       sequence: state.iteration,
       status: status_val,
       run_ref: if(state.task_ref, do: inspect(state.task_ref), else: nil),
-      eval_result: eval_result || %{},
+      eval_result: eval_result,
       state_snapshot: state.strategy_state || %{},
       duration_ms: duration_ms,
       metadata: %{strategy: state.strategy_name, human_gate: state.human_gate}
@@ -951,6 +955,4 @@ defmodule MonkeyClaw.Experiments.Runner do
     |> List.last()
     |> String.downcase()
   end
-
-  defp strategy_to_name(_), do: "unknown"
 end

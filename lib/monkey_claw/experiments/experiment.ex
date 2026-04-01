@@ -105,6 +105,7 @@ defmodule MonkeyClaw.Experiments.Experiment do
           | :rejected
           | :cancelled
           | :halted
+  @type terminal_status :: :accepted | :rejected | :cancelled | :halted
 
   @experiment_types [:code, :research, :prompt]
   @statuses [
@@ -195,7 +196,7 @@ defmodule MonkeyClaw.Experiments.Experiment do
 
   An experiment in a terminal status cannot transition further.
   """
-  @spec terminal_statuses() :: [status(), ...]
+  @spec terminal_statuses() :: [terminal_status(), ...]
   def terminal_statuses, do: @terminal_statuses
 
   @doc """
