@@ -21,9 +21,19 @@ defmodule MonkeyClawWeb.ChatLive do
   2. If a `backend` query param is present, pre-selects a matching model
   3. User submits a message via the chat form
   4. Message is dispatched asynchronously through
-     `Conversation.send_message/4`
-  5. Response is appended to the message list when it arrives
-  6. First user message auto-titles the conversation in the sidebar
+     `Conversation.stream_message/4`
+  5. Streaming chunks are accumulated and displayed progressively
+  6. Final response is appended to the message list when the stream completes
+  7. First user message auto-titles the conversation in the sidebar
+
+  ## Streaming
+
+  Responses arrive as a stream of chunks via `AgentBridge.Session`.
+  The LiveView accumulates raw text in `:stream_content` and sets
+  `:streaming` to `true` once the first chunk arrives. The template
+  renders the in-progress content separately from finalized messages.
+  On stream completion, the accumulated content is converted to a
+  permanent assistant message.
   """
 
   use MonkeyClawWeb, :live_view
@@ -48,6 +58,9 @@ defmodule MonkeyClawWeb.ChatLive do
       |> assign(:active_conversation_id, initial_convo.id)
       |> assign(:messages, [])
       |> assign(:loading, false)
+      |> assign(:streaming, false)
+      |> assign(:stream_content, "")
+      |> assign(:stream_byte_size, 0)
       |> assign(:error, nil)
       |> assign(:page_title, "Chat")
       |> assign(:sent_at, nil)
@@ -73,6 +86,9 @@ defmodule MonkeyClawWeb.ChatLive do
         socket
         |> append_message(:user, message)
         |> assign(:loading, true)
+        |> assign(:streaming, false)
+        |> assign(:stream_content, "")
+        |> assign(:stream_byte_size, 0)
         |> assign(:error, nil)
         |> assign(:sent_at, System.monotonic_time(:millisecond))
         |> push_event("clear-input", %{})
@@ -85,7 +101,7 @@ defmodule MonkeyClawWeb.ChatLive do
         end
 
       _ignore =
-        dispatch_query(
+        dispatch_stream(
           socket.assigns.workspace.id,
           socket.assigns.channel_name,
           message,
@@ -203,12 +219,124 @@ defmodule MonkeyClawWeb.ChatLive do
     socket =
       socket
       |> assign(:loading, false)
+      |> assign(:streaming, false)
+      |> assign(:stream_content, "")
+      |> assign(:stream_byte_size, 0)
+      |> assign(:error, ErrorFormatter.format(reason))
+
+    {:noreply, socket}
+  end
+
+  # Maximum accumulated stream content size (2 MB). Prevents unbounded
+  # memory growth from a runaway backend.
+  @max_stream_content_bytes 2_000_000
+
+  def handle_info({:stream_chunk, _session_id, chunk}, socket) do
+    case extract_content(chunk) do
+      content when is_binary(content) and byte_size(content) > 0 ->
+        new_size = socket.assigns.stream_byte_size + byte_size(content)
+
+        if new_size > @max_stream_content_bytes do
+          # Cancel the backend stream task to free the session for new queries
+          cancel_active_stream(socket)
+
+          socket =
+            socket
+            |> assign(:loading, false)
+            |> assign(:streaming, false)
+            |> assign(:stream_content, "")
+            |> assign(:stream_byte_size, 0)
+            |> assign(:error, "Response exceeded maximum size limit.")
+
+          {:noreply, socket}
+        else
+          # BEAM binary append is amortized O(1) for sequential appends
+          # to the same binary (over-allocation optimization). Tracking
+          # size separately lets us check the cap before concatenating.
+          socket =
+            socket
+            |> assign(:streaming, true)
+            |> assign(:stream_content, socket.assigns.stream_content <> content)
+            |> assign(:stream_byte_size, new_size)
+
+          {:noreply, socket}
+        end
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_info({:stream_done, _session_id}, socket) do
+    content = socket.assigns.stream_content
+    latency_ms = calculate_latency(socket.assigns[:sent_at])
+
+    socket =
+      if byte_size(content) > 0 do
+        metadata = %{
+          latency_ms: latency_ms,
+          thinking: nil,
+          input_tokens: nil,
+          output_tokens: nil,
+          cached_tokens: nil,
+          thinking_tokens: nil,
+          model: socket.assigns.selected_model
+        }
+
+        append_message(socket, :assistant, content, metadata)
+      else
+        socket
+      end
+      |> assign(:loading, false)
+      |> assign(:streaming, false)
+      |> assign(:stream_content, "")
+      |> assign(:stream_byte_size, 0)
+      |> assign(:sent_at, nil)
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:stream_error, _session_id, reason}, socket) do
+    content = socket.assigns.stream_content
+
+    # Preserve any partial content that arrived before the error
+    socket =
+      if is_binary(content) and byte_size(content) > 0 do
+        latency_ms = calculate_latency(socket.assigns[:sent_at])
+
+        metadata = %{
+          latency_ms: latency_ms,
+          thinking: nil,
+          input_tokens: nil,
+          output_tokens: nil,
+          cached_tokens: nil,
+          thinking_tokens: nil,
+          model: socket.assigns.selected_model
+        }
+
+        append_message(socket, :assistant, content, metadata)
+      else
+        socket
+      end
+      |> assign(:loading, false)
+      |> assign(:streaming, false)
+      |> assign(:stream_content, "")
+      |> assign(:stream_byte_size, 0)
+      |> assign(:sent_at, nil)
       |> assign(:error, ErrorFormatter.format(reason))
 
     {:noreply, socket}
   end
 
   # --- Private ---
+
+  # Cancel the active stream task on the backend to free the session.
+  # Safe to call when no workspace or session exists.
+  defp cancel_active_stream(socket) do
+    with %{id: workspace_id} <- socket.assigns[:workspace] do
+      AgentBridge.cancel_stream(workspace_id)
+    end
+  end
 
   defp assign_workspace(socket, nil), do: assign_workspace(socket)
 
@@ -264,12 +392,25 @@ defmodule MonkeyClawWeb.ChatLive do
     end)
   end
 
-  defp dispatch_query(workspace_id, channel_name, message, opts) do
+  defp dispatch_stream(workspace_id, channel_name, message, opts) do
     lv = self()
 
     Task.start(fn ->
-      result = Conversation.send_message(workspace_id, channel_name, message, opts)
-      send(lv, {:ai_response, result})
+      result =
+        Conversation.stream_message(
+          workspace_id,
+          channel_name,
+          message,
+          [{:stream_to, lv} | opts]
+        )
+
+      case result do
+        {:ok, %{streaming: true}} ->
+          :ok
+
+        {:error, reason} ->
+          send(lv, {:ai_response, {:error, reason}})
+      end
     end)
   end
 

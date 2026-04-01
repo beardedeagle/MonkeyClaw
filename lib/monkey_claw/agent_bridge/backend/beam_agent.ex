@@ -30,7 +30,34 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
   end
 
   @impl true
-  def set_model(pid, model), do: :beam_agent_core.set_model(pid, model)
+  def stream(pid, prompt, params) do
+    {:ok, BeamAgent.stream(pid, prompt, params)}
+  end
+
+  # BeamAgent.set_model/2 and BeamAgent.set_permission_mode/2 are not yet
+  # exported by beam_agent_ex. Suppress Dialyzer call_to_missing with
+  # @dialyzer annotations; the function_exported?/3 guard ensures runtime
+  # safety until the API is available.
+
+  @dialyzer {:nowarn_function, set_model: 2}
+  @impl true
+  def set_model(pid, model) do
+    if function_exported?(BeamAgent, :set_model, 2) do
+      BeamAgent.set_model(pid, model)
+    else
+      {:error, :not_supported}
+    end
+  end
+
+  @dialyzer {:nowarn_function, set_permission_mode: 2}
+  @impl true
+  def set_permission_mode(pid, mode) do
+    if function_exported?(BeamAgent, :set_permission_mode, 2) do
+      BeamAgent.set_permission_mode(pid, mode)
+    else
+      {:error, :not_supported}
+    end
+  end
 
   @impl true
   def session_info(pid), do: BeamAgent.session_info(pid)
@@ -40,6 +67,9 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
 
   @impl true
   def receive_event(pid, ref, timeout), do: BeamAgent.receive_event(pid, ref, timeout)
+
+  @impl true
+  def event_unsubscribe(pid, ref), do: BeamAgent.event_unsubscribe(pid, ref)
 
   @impl true
   def thread_start(pid, opts), do: BeamAgent.Threads.thread_start(pid, opts)

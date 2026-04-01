@@ -44,6 +44,78 @@ defmodule MonkeyClaw.AgentBridgeTest do
     end
   end
 
+  describe "stream_query/3" do
+    test "returns error for non-existent session" do
+      assert {:error, {:session_not_found, "nonexistent"}} =
+               AgentBridge.stream_query("nonexistent", "hello")
+    end
+
+    test "rejects non-binary session_id" do
+      assert_raise FunctionClauseError, fn ->
+        AgentBridge.stream_query(123, "hello")
+      end
+    end
+
+    test "rejects non-binary prompt" do
+      assert_raise FunctionClauseError, fn ->
+        AgentBridge.stream_query("session", 123)
+      end
+    end
+
+    test "rejects empty prompt" do
+      assert_raise FunctionClauseError, fn ->
+        AgentBridge.stream_query("session", "")
+      end
+    end
+
+    test "delegates to live session and delivers chunks" do
+      session_id = "stream-test-#{System.unique_integer([:positive])}"
+      config = %{id: session_id, backend: Backend.Test, session_opts: %{}}
+
+      {:ok, _result} = AgentBridge.start_session(config)
+
+      assert {:ok, :streaming} = AgentBridge.stream_query(session_id, "hello")
+
+      assert_receive {:stream_chunk, ^session_id, %{type: :text}}
+      assert_receive {:stream_done, ^session_id}
+
+      AgentBridge.stop_session(session_id)
+    end
+  end
+
+  describe "set_permission_mode/2" do
+    test "returns error for non-existent session" do
+      assert {:error, {:session_not_found, "nonexistent"}} =
+               AgentBridge.set_permission_mode("nonexistent", :plan)
+    end
+
+    test "rejects non-binary session_id" do
+      assert {:error, :invalid_permission_mode} =
+               AgentBridge.set_permission_mode(123, :plan)
+    end
+
+    test "rejects non-atom mode" do
+      assert {:error, :invalid_permission_mode} =
+               AgentBridge.set_permission_mode("session", "plan")
+    end
+
+    test "rejects invalid permission mode atom" do
+      assert {:error, :invalid_permission_mode} =
+               AgentBridge.set_permission_mode("session", :bogus_mode)
+    end
+
+    test "delegates to live session" do
+      session_id = "perm-test-#{System.unique_integer([:positive])}"
+      config = %{id: session_id, backend: Backend.Test, session_opts: %{}}
+
+      {:ok, _result} = AgentBridge.start_session(config)
+
+      assert {:ok, :noop} = AgentBridge.set_permission_mode(session_id, :bypass_permissions)
+
+      AgentBridge.stop_session(session_id)
+    end
+  end
+
   describe "start_thread/2" do
     test "returns error for non-existent session" do
       assert {:error, {:session_not_found, "nonexistent"}} =

@@ -3,7 +3,7 @@ defmodule MonkeyClawWeb.ErrorFormatter do
   Translates agent error reasons into user-facing messages.
 
   Pattern-matches on structured BeamAgent errors enriched by
-  `beam_agent_error_core` as well as application-level error
+  `beam_agent_core` as well as application-level error
   tuples from the conversation workflow.
 
   ## Structured Error Categories
@@ -130,7 +130,7 @@ defmodule MonkeyClawWeb.ErrorFormatter do
   Returns `true` if the message is a categorized error from BeamAgent.
 
   A categorized error is a map with `type: :error` and a `:category` field
-  set by `beam_agent_error_core:categorize/1`.
+  set by `beam_agent_core:categorize/1`.
   """
   @spec categorized_error?(term()) :: boolean()
   def categorized_error?(%{type: :error, category: _}), do: true

@@ -21,7 +21,14 @@ defmodule MonkeyClaw.MixProject do
         ]
       ],
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
-      listeners: [Phoenix.CodeReloader]
+      listeners: [Phoenix.CodeReloader],
+      description: "Secure-by-default personal AI assistant built on BeamAgent and BEAM/OTP",
+      source_url: "https://github.com/beardedeagle/MonkeyClaw",
+      homepage_url: "https://beardedeagle.github.io/MonkeyClaw",
+      docs: [
+        main: "readme",
+        extras: ["README.md"]
+      ]
     ]
   end
 

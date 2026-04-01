@@ -50,6 +50,9 @@ defmodule MonkeyClaw.AgentBridge do
       # Send a query
       {:ok, messages} = MonkeyClaw.AgentBridge.query("workspace-123", "Hello!")
 
+      # Or stream a query (chunks delivered as messages)
+      {:ok, :streaming} = MonkeyClaw.AgentBridge.stream_query("workspace-123", "Hello!")
+
       # Stop the session
       :ok = MonkeyClaw.AgentBridge.stop_session("workspace-123")
 
@@ -155,6 +158,50 @@ defmodule MonkeyClaw.AgentBridge do
   end
 
   @doc """
+  Start a streaming query on a session.
+
+  Spawns a background task that enumerates the response stream.
+  Chunks are delivered to the calling process as messages:
+
+    * `{:stream_chunk, session_id, chunk}` — A response fragment
+    * `{:stream_done, session_id}` — Stream completed successfully
+    * `{:stream_error, session_id, reason}` — Stream failed
+
+  Only one stream may be active per session. Returns
+  `{:error, :stream_already_active}` if a stream is in progress.
+
+  ## Options
+
+    * `:timeout` — Timeout for stream initiation (default: 30_000ms)
+    * `:stream_to` — PID to receive stream messages (default: `self()`)
+  """
+  @spec stream_query(session_id(), String.t(), keyword()) ::
+          {:ok, :streaming} | {:error, term()}
+  def stream_query(session_id, prompt, opts \\ [])
+      when is_binary(session_id) and byte_size(session_id) > 0 and
+             is_binary(prompt) and byte_size(prompt) > 0 do
+    case Session.lookup(session_id) do
+      {:ok, pid} -> Session.stream_query(pid, prompt, opts)
+      {:error, :not_found} -> {:error, {:session_not_found, session_id}}
+    end
+  end
+
+  @doc """
+  Cancel the active stream on a session, if any.
+
+  Sends an asynchronous signal to kill the stream task and free the
+  session for new queries. Safe to call when no stream is active.
+  """
+  @spec cancel_stream(session_id()) :: :ok | {:error, {:session_not_found, session_id()}}
+  def cancel_stream(session_id)
+      when is_binary(session_id) and byte_size(session_id) > 0 do
+    case Session.lookup(session_id) do
+      {:ok, pid} -> Session.cancel_stream(pid)
+      {:error, :not_found} -> {:error, {:session_not_found, session_id}}
+    end
+  end
+
+  @doc """
   Change the model used by a session at runtime.
 
   Looks up the session by ID and sends a control message to the
@@ -169,6 +216,30 @@ defmodule MonkeyClaw.AgentBridge do
       {:ok, pid} -> Session.set_model(pid, model)
       {:error, :not_found} -> {:error, {:session_not_found, session_id}}
     end
+  end
+
+  @valid_permission_modes [:default, :accept_edits, :bypass_permissions, :plan, :dont_ask]
+
+  @doc """
+  Change the permission mode used by a session at runtime.
+
+  Controls how the agent handles tool execution approvals.
+  Valid modes: #{Enum.map_join(@valid_permission_modes, ", ", &"`#{inspect(&1)}`")}.
+
+  Returns `{:error, :invalid_permission_mode}` for unrecognised modes.
+  """
+  @spec set_permission_mode(session_id(), atom()) :: {:ok, term()} | {:error, term()}
+  def set_permission_mode(session_id, mode)
+      when is_binary(session_id) and byte_size(session_id) > 0 and
+             mode in @valid_permission_modes do
+    case Session.lookup(session_id) do
+      {:ok, pid} -> Session.set_permission_mode(pid, mode)
+      {:error, :not_found} -> {:error, {:session_not_found, session_id}}
+    end
+  end
+
+  def set_permission_mode(_session_id, _mode) do
+    {:error, :invalid_permission_mode}
   end
 
   # --- Thread Management ---
@@ -292,6 +363,9 @@ defmodule MonkeyClaw.AgentBridge do
     * `{:session_stopped, id, reason}`
     * `{:session_terminated, id, reason}`
     * `{:beam_agent_event, id, event}`
+    * `{:stream_chunk, id, chunk}`
+    * `{:stream_done, id}`
+    * `{:stream_error, id, reason}`
   """
   @spec subscribe(session_id(), binary()) ::
           :ok

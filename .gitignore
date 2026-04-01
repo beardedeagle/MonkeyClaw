@@ -60,3 +60,6 @@ npm-debug.log
 AGENTS.md
 .beads/.beads-credential-key
 *PLAN*.md
+.remember/
+.serena/
+.expert/

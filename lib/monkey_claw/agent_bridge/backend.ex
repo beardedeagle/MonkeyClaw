@@ -42,6 +42,7 @@ defmodule MonkeyClaw.AgentBridge.Backend do
   @type event_ref :: reference()
   @type message :: map()
   @type thread_info :: map()
+  @type permission_mode :: :default | :accept_edits | :bypass_permissions | :plan | :dont_ask
 
   @doc """
   Start a new agent session.
@@ -91,6 +92,19 @@ defmodule MonkeyClaw.AgentBridge.Backend do
               {:ok, message()} | {:error, term()}
 
   @doc """
+  Return a lazy stream of response messages for a query.
+
+  The returned `Enumerable.t()` yields `{:ok, message()}` tuples
+  for each streaming chunk and `{:error, reason}` on failure.
+  The stream halts naturally when the query completes.
+
+  The caller is responsible for enumerating the stream — typically
+  a spawned task within the Session GenServer.
+  """
+  @callback stream(session_pid(), prompt :: String.t(), params :: map()) ::
+              {:ok, Enumerable.t()} | {:error, term()}
+
+  @doc """
   Change the model used by the session at runtime.
 
   Sends a control message to the underlying agent session to switch
@@ -98,6 +112,28 @@ defmodule MonkeyClaw.AgentBridge.Backend do
   """
   @callback set_model(session_pid(), model :: String.t()) ::
               {:ok, term()} | {:error, term()}
+
+  @doc """
+  Change the permission mode at runtime.
+
+  Controls how the agent handles tool execution approvals:
+
+    * `:default` — Prompt the user for approval
+    * `:accept_edits` — Auto-approve file mutations
+    * `:bypass_permissions` — Approve everything
+    * `:plan` — Read-only mode
+    * `:dont_ask` — Never prompt
+  """
+  @callback set_permission_mode(session_pid(), mode :: permission_mode()) ::
+              {:ok, term()} | {:error, term()}
+
+  @doc """
+  Unsubscribe from session events and flush pending events.
+
+  Called during session teardown to clean up the event subscription
+  created by `event_subscribe/1`.
+  """
+  @callback event_unsubscribe(session_pid(), event_ref()) :: :ok | {:error, term()}
 
   @doc """
   Start a new conversation thread within the session.
