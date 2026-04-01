@@ -50,14 +50,8 @@ defmodule MonkeyClawWeb.ChatLive do
 
   @impl true
   def mount(params, _session, socket) do
-    initial_convo = new_conversation()
-
     socket =
       socket
-      |> assign(:conversations, %{initial_convo.id => initial_convo})
-      |> assign(:conversation_order, [initial_convo.id])
-      |> assign(:active_conversation_id, initial_convo.id)
-      |> assign(:messages, [])
       |> assign(:loading, false)
       |> assign(:streaming, false)
       |> assign(:stream_content, "")
@@ -65,12 +59,12 @@ defmodule MonkeyClawWeb.ChatLive do
       |> assign(:error, nil)
       |> assign(:page_title, "Chat")
       |> assign(:sent_at, nil)
-      |> assign(:session_stats, initial_stats())
       |> assign(:available_models, available_models())
       |> assign(:sidebar_open, true)
       |> assign(:session_history, [])
       |> assign(:viewing_history_id, nil)
       |> assign_workspace(params["workspace_id"])
+      |> restore_or_new_conversation()
       |> load_and_assign_history()
       |> maybe_select_backend(params["backend"])
 
@@ -503,6 +497,61 @@ defmodule MonkeyClawWeb.ChatLive do
   end
 
   # --- Conversation management ---
+
+  # Check for an active AgentBridge session for this workspace and
+  # restore its persisted messages as the initial conversation. Falls
+  # back to a blank new conversation when no active session exists.
+  defp restore_or_new_conversation(socket) do
+    case maybe_restore_session(socket) do
+      {:ok, convo, messages} ->
+        socket
+        |> assign(:conversations, %{convo.id => convo})
+        |> assign(:conversation_order, [convo.id])
+        |> assign(:active_conversation_id, convo.id)
+        |> assign(:messages, messages)
+        |> assign(:session_stats, convo.session_stats)
+
+      :none ->
+        convo = new_conversation()
+
+        socket
+        |> assign(:conversations, %{convo.id => convo})
+        |> assign(:conversation_order, [convo.id])
+        |> assign(:active_conversation_id, convo.id)
+        |> assign(:messages, [])
+        |> assign(:session_stats, initial_stats())
+    end
+  end
+
+  # Look up the workspace's AgentBridge session. If one is active and
+  # has a persisted history_session_id, load the DB messages so the
+  # user resumes where they left off instead of seeing a blank chat.
+  defp maybe_restore_session(%{assigns: %{workspace: %{id: workspace_id}}}) do
+    with {:ok, %{status: :active, history_session_id: session_id}}
+         when is_binary(session_id) <- AgentBridge.session_info(workspace_id),
+         {:ok, %{workspace_id: ^workspace_id} = session} <- Sessions.get_session(session_id) do
+      messages =
+        session_id
+        |> Sessions.get_messages()
+        |> Enum.map(&history_message_to_display/1)
+
+      stats = %{initial_stats() | message_count: length(messages)}
+
+      convo = %{
+        id: Ecto.UUID.generate(),
+        title: session.title || "Restored conversation",
+        messages: messages,
+        session_stats: stats,
+        created_at: session.inserted_at || DateTime.utc_now()
+      }
+
+      {:ok, convo, messages}
+    else
+      _ -> :none
+    end
+  end
+
+  defp maybe_restore_session(_socket), do: :none
 
   defp new_conversation do
     %{
