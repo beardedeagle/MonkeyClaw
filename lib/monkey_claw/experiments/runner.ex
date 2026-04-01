@@ -612,6 +612,7 @@ defmodule MonkeyClaw.Experiments.Runner do
       # DB transition running → evaluating → awaiting_human stays valid.
       persist_eval? =
         eval_status == :evaluating or (eval_status == :stopping and state.human_gate)
+
       if persist_eval?, do: persist_status(state.experiment_id, :evaluating)
 
       Telemetry.decision_auto(
