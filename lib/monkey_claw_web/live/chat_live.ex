@@ -199,34 +199,38 @@ defmodule MonkeyClawWeb.ChatLive do
     {:noreply, update(socket, :sidebar_open, &(!&1))}
   end
 
-  def handle_event("delete_history", %{"id" => session_id}, socket) do
+  def handle_event("delete_history", %{"id" => session_id}, socket)
+      when is_binary(session_id) and byte_size(session_id) > 0 do
     workspace_id = socket.assigns.workspace && socket.assigns.workspace.id
 
-    case Sessions.get_session(session_id) do
-      {:ok, %{workspace_id: ^workspace_id} = session} ->
-        _ = Sessions.delete_session(session)
+    # Refuse to delete a session the AgentBridge is actively writing to
+    # (would leave a dangling history_session_id reference).
+    with false <- active_history_session?(workspace_id, session_id),
+         {:ok, %{workspace_id: ^workspace_id} = session} <- Sessions.get_session(session_id) do
+      _ = Sessions.delete_session(session)
 
-        # If we were viewing this session, return to the active conversation.
-        socket =
-          if socket.assigns.viewing_history_id == session_id do
-            id = socket.assigns.active_conversation_id
-            convo = socket.assigns.conversations[id]
+      # If we were viewing this session, return to the active conversation.
+      socket =
+        if socket.assigns.viewing_history_id == session_id do
+          id = socket.assigns.active_conversation_id
+          convo = socket.assigns.conversations[id]
 
-            socket
-            |> assign(:messages, convo.messages)
-            |> assign(:viewing_history_id, nil)
-            |> assign(:session_stats, convo.session_stats)
-          else
-            socket
-          end
-          |> load_and_assign_history()
+          socket
+          |> assign(:messages, convo.messages)
+          |> assign(:viewing_history_id, nil)
+          |> assign(:session_stats, convo.session_stats)
+        else
+          socket
+        end
+        |> load_and_assign_history()
 
-        {:noreply, socket}
-
-      _ ->
-        {:noreply, socket}
+      {:noreply, socket}
+    else
+      _ -> {:noreply, socket}
     end
   end
+
+  def handle_event("delete_history", _params, socket), do: {:noreply, socket}
 
   def handle_event("load_history", %{"id" => session_id}, socket) do
     workspace_id = socket.assigns.workspace && socket.assigns.workspace.id
@@ -612,7 +616,13 @@ defmodule MonkeyClawWeb.ChatLive do
         |> Sessions.get_messages()
         |> Enum.map(&history_message_to_display/1)
 
-      stats = %{initial_stats() | message_count: length(messages)}
+      assistant_count = Enum.count(messages, &(&1.role == :assistant))
+
+      stats = %{
+        initial_stats()
+        | message_count: assistant_count,
+          current_model: session.model
+      }
 
       convo = %{
         id: Ecto.UUID.generate(),
@@ -629,6 +639,18 @@ defmodule MonkeyClawWeb.ChatLive do
   end
 
   defp maybe_restore_session(_socket), do: :none
+
+  # Returns true when the given SQLite session_id is the one the
+  # AgentBridge is actively writing to.  Deleting it would leave a
+  # dangling history_session_id reference in the GenServer state.
+  defp active_history_session?(workspace_id, session_id) when is_binary(workspace_id) do
+    case AgentBridge.session_info(workspace_id) do
+      {:ok, %{history_session_id: ^session_id}} -> true
+      _ -> false
+    end
+  end
+
+  defp active_history_session?(_, _), do: false
 
   defp new_conversation do
     %{

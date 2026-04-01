@@ -53,7 +53,7 @@
         Past sessions
       </div>
 
-      <div
+      <button
         :for={session <- @session_history}
         class={[
           "group w-full text-left px-3 py-2 rounded-lg text-sm truncate block transition-colors cursor-pointer",
@@ -68,14 +68,15 @@
             <.icon name="hero-clock" class="size-3 flex-none text-base-content/30" />
             <span class="truncate">{session.title || "Untitled session"}</span>
           </div>
-          <span
+          <button
+            type="button"
             phx-click="delete_history"
             phx-value-id={session.id}
             class="opacity-0 group-hover:opacity-100 hover:text-error flex-none cursor-pointer"
-            title="Delete"
+            aria-label="Delete session"
           >
             <.icon name="hero-x-mark-micro" class="size-3.5" />
-          </span>
+          </button>
         </div>
         <div class="text-xs text-base-content/30 mt-0.5">
           {format_time(session.inserted_at)}
@@ -83,7 +84,7 @@
             · {session.message_count} msgs
           </span>
         </div>
-      </div>
+      </button>
     </nav>
   </aside>
 
