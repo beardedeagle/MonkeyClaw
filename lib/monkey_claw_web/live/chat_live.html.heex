@@ -53,19 +53,29 @@
         Past sessions
       </div>
 
-      <button
+      <div
         :for={session <- @session_history}
-        phx-click="load_history"
-        phx-value-id={session.id}
         class={[
-          "group w-full text-left px-3 py-2 rounded-lg text-sm truncate block transition-colors",
+          "group w-full text-left px-3 py-2 rounded-lg text-sm truncate block transition-colors cursor-pointer",
           session.id == @viewing_history_id && "bg-base-300 text-base-content",
           session.id != @viewing_history_id && "text-base-content/60 hover:bg-base-300/50"
         ]}
+        phx-click="load_history"
+        phx-value-id={session.id}
       >
-        <div class="flex items-center gap-1">
-          <.icon name="hero-clock" class="size-3 flex-none text-base-content/30" />
-          <span class="truncate">{session.title || "Untitled session"}</span>
+        <div class="flex items-center justify-between gap-1">
+          <div class="flex items-center gap-1 min-w-0">
+            <.icon name="hero-clock" class="size-3 flex-none text-base-content/30" />
+            <span class="truncate">{session.title || "Untitled session"}</span>
+          </div>
+          <span
+            phx-click="delete_history"
+            phx-value-id={session.id}
+            class="opacity-0 group-hover:opacity-100 hover:text-error flex-none cursor-pointer"
+            title="Delete"
+          >
+            <.icon name="hero-x-mark-micro" class="size-3.5" />
+          </span>
         </div>
         <div class="text-xs text-base-content/30 mt-0.5">
           {format_time(session.inserted_at)}
@@ -73,7 +83,7 @@
             · {session.message_count} msgs
           </span>
         </div>
-      </button>
+      </div>
     </nav>
   </aside>
 
@@ -166,8 +176,8 @@
       </div>
 
       <div :if={@streaming and byte_size(@stream_content) > 0} class="chat chat-start">
-        <div class="chat-bubble max-w-[80%] [&_p]:mb-2 [&_p:last-child]:mb-0 [&_pre]:bg-base-300 [&_pre]:rounded [&_pre]:p-2 [&_pre]:my-2 [&_pre]:overflow-x-auto [&_code]:bg-base-300 [&_code]:rounded [&_code]:px-1 [&_code]:text-sm">
-          <span class="whitespace-pre-wrap">{@stream_content}</span>
+        <div class="chat-bubble max-w-[80%] [&_p]:mb-2 [&_p:last-child]:mb-0 [&_pre]:bg-base-300 [&_pre]:rounded [&_pre]:p-2 [&_pre]:my-2 [&_pre]:overflow-x-auto [&_code]:bg-base-300 [&_code]:rounded [&_code]:px-1 [&_code]:text-sm [&_ul]:list-disc [&_ul]:ml-4 [&_ol]:list-decimal [&_ol]:ml-4 [&_h1]:text-lg [&_h1]:font-bold [&_h2]:text-base [&_h2]:font-bold [&_h3]:font-bold [&_strong]:font-bold [&_a]:underline">
+          {MonkeyClawWeb.Markdown.render(@stream_content)}
           <span class="loading loading-dots loading-xs ml-1 align-baseline"></span>
         </div>
       </div>
