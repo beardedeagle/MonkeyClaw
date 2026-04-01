@@ -187,6 +187,21 @@ defmodule MonkeyClaw.AgentBridge do
   end
 
   @doc """
+  Cancel the active stream on a session, if any.
+
+  Sends an asynchronous signal to kill the stream task and free the
+  session for new queries. Safe to call when no stream is active.
+  """
+  @spec cancel_stream(session_id()) :: :ok | {:error, {:session_not_found, session_id()}}
+  def cancel_stream(session_id)
+      when is_binary(session_id) and byte_size(session_id) > 0 do
+    case Session.lookup(session_id) do
+      {:ok, pid} -> Session.cancel_stream(pid)
+      {:error, :not_found} -> {:error, {:session_not_found, session_id}}
+    end
+  end
+
+  @doc """
   Change the model used by a session at runtime.
 
   Looks up the session by ID and sends a control message to the

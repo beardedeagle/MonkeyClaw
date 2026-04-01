@@ -203,6 +203,20 @@ defmodule MonkeyClaw.AgentBridge.Session do
   end
 
   @doc """
+  Cancel the active stream, if any.
+
+  Sends an asynchronous cast to kill the stream task and clean up
+  stream state. Safe to call when no stream is active (no-op).
+
+  This is a cast (fire-and-forget) because the caller has already
+  decided to stop consuming chunks and doesn't need a reply.
+  """
+  @spec cancel_stream(GenServer.server()) :: :ok
+  def cancel_stream(session) do
+    GenServer.cast(session, :cancel_stream)
+  end
+
+  @doc """
   Change the model used by the session at runtime.
 
   Sends a control message to the underlying agent session to switch
@@ -573,6 +587,11 @@ defmodule MonkeyClaw.AgentBridge.Session do
   end
 
   @impl true
+  def handle_cast(:cancel_stream, state) do
+    {:noreply, kill_stream_task(state)}
+  end
+
+  @impl true
   def handle_info({:DOWN, ref, :process, _pid, reason}, %{monitor_ref: ref} = state) do
     Logger.warning("BeamAgent session #{state.id} terminated unexpectedly: #{inspect(reason)}")
 
@@ -593,19 +612,25 @@ defmodule MonkeyClaw.AgentBridge.Session do
     {:stop, {:beam_agent_terminated, reason}, %{state | status: :terminated}}
   end
 
-  # Stream task crashed — notify caller if the task didn't send a completion signal
+  # Stream task exited normally — the in-band :stream_done or :stream_error
+  # message handles cleanup and demonitors with :flush. No-op here to
+  # prevent clearing state before those messages are processed.
+  def handle_info({:DOWN, ref, :process, _pid, :normal}, %{stream_task_ref: ref} = state) do
+    {:noreply, state}
+  end
+
+  # Stream task crashed — notify caller and clean up since the in-band
+  # completion message was likely never sent.
   def handle_info({:DOWN, ref, :process, _pid, reason}, %{stream_task_ref: ref} = state) do
-    unless reason == :normal do
-      Logger.warning("Stream task for session #{state.id} crashed: #{inspect(reason)}")
+    Logger.warning("Stream task for session #{state.id} crashed: #{inspect(reason)}")
 
-      if is_pid(state.stream_caller) do
-        send(state.stream_caller, {:stream_error, state.id, {:task_crashed, reason}})
-      end
-
-      _ = broadcast(state.id, {:stream_error, state.id, {:task_crashed, reason}})
-
-      emit_stream_exception(state, :stream_task_crash, reason)
+    if is_pid(state.stream_caller) do
+      send(state.stream_caller, {:stream_error, state.id, {:task_crashed, reason}})
     end
+
+    _ = broadcast(state.id, {:stream_error, state.id, {:task_crashed, reason}})
+
+    emit_stream_exception(state, :stream_task_crash, reason)
 
     {:noreply, clear_stream_state(state)}
   end

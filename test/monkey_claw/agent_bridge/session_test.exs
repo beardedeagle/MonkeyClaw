@@ -842,9 +842,8 @@ defmodule MonkeyClaw.AgentBridge.SessionTest do
       assert_receive {:stream_chunk, ^id, %{content: "hi:0"}}
       assert_receive {:stream_done, ^id}
 
-      # Wait for stream state cleanup before second query
-      Process.sleep(10)
-
+      # Stream state is cleared atomically by the :stream_done handler.
+      # The normal :DOWN is a no-op, so no race — second query can start immediately.
       {:ok, :streaming} = Session.stream_query(pid, "bye")
       assert_receive {:stream_chunk, ^id, %{content: "bye:1"}}
       assert_receive {:stream_done, ^id}
@@ -854,9 +853,10 @@ defmodule MonkeyClaw.AgentBridge.SessionTest do
       {:ok, :streaming} = Session.stream_query(pid, "hello")
       assert_receive {:stream_done, _}
 
-      # Give the GenServer time to process the task DOWN and clear state
-      Process.sleep(20)
-
+      # The :stream_done handler clears state atomically and demonitors
+      # with :flush. :sys.get_state/1 is a synchronous call that will
+      # be processed after any pending messages (the normal :DOWN is a
+      # no-op), so it always sees clean state.
       state = :sys.get_state(pid)
       assert is_nil(state.stream_task_ref)
       assert is_nil(state.stream_task_pid)

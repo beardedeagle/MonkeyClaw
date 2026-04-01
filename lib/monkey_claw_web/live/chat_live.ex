@@ -60,6 +60,7 @@ defmodule MonkeyClawWeb.ChatLive do
       |> assign(:loading, false)
       |> assign(:streaming, false)
       |> assign(:stream_content, "")
+      |> assign(:stream_byte_size, 0)
       |> assign(:error, nil)
       |> assign(:page_title, "Chat")
       |> assign(:sent_at, nil)
@@ -87,6 +88,7 @@ defmodule MonkeyClawWeb.ChatLive do
         |> assign(:loading, true)
         |> assign(:streaming, false)
         |> assign(:stream_content, "")
+        |> assign(:stream_byte_size, 0)
         |> assign(:error, nil)
         |> assign(:sent_at, System.monotonic_time(:millisecond))
         |> push_event("clear-input", %{})
@@ -219,6 +221,7 @@ defmodule MonkeyClawWeb.ChatLive do
       |> assign(:loading, false)
       |> assign(:streaming, false)
       |> assign(:stream_content, "")
+      |> assign(:stream_byte_size, 0)
       |> assign(:error, ErrorFormatter.format(reason))
 
     {:noreply, socket}
@@ -231,22 +234,30 @@ defmodule MonkeyClawWeb.ChatLive do
   def handle_info({:stream_chunk, _session_id, chunk}, socket) do
     case extract_content(chunk) do
       content when is_binary(content) and byte_size(content) > 0 ->
-        new_content = socket.assigns.stream_content <> content
+        new_size = socket.assigns.stream_byte_size + byte_size(content)
 
-        if byte_size(new_content) > @max_stream_content_bytes do
+        if new_size > @max_stream_content_bytes do
+          # Cancel the backend stream task to free the session for new queries
+          cancel_active_stream(socket)
+
           socket =
             socket
             |> assign(:loading, false)
             |> assign(:streaming, false)
             |> assign(:stream_content, "")
+            |> assign(:stream_byte_size, 0)
             |> assign(:error, "Response exceeded maximum size limit.")
 
           {:noreply, socket}
         else
+          # BEAM binary append is amortized O(1) for sequential appends
+          # to the same binary (over-allocation optimization). Tracking
+          # size separately lets us check the cap before concatenating.
           socket =
             socket
             |> assign(:streaming, true)
-            |> assign(:stream_content, new_content)
+            |> assign(:stream_content, socket.assigns.stream_content <> content)
+            |> assign(:stream_byte_size, new_size)
 
           {:noreply, socket}
         end
@@ -279,6 +290,7 @@ defmodule MonkeyClawWeb.ChatLive do
       |> assign(:loading, false)
       |> assign(:streaming, false)
       |> assign(:stream_content, "")
+      |> assign(:stream_byte_size, 0)
       |> assign(:sent_at, nil)
 
     {:noreply, socket}
@@ -309,6 +321,7 @@ defmodule MonkeyClawWeb.ChatLive do
       |> assign(:loading, false)
       |> assign(:streaming, false)
       |> assign(:stream_content, "")
+      |> assign(:stream_byte_size, 0)
       |> assign(:sent_at, nil)
       |> assign(:error, ErrorFormatter.format(reason))
 
@@ -316,6 +329,14 @@ defmodule MonkeyClawWeb.ChatLive do
   end
 
   # --- Private ---
+
+  # Cancel the active stream task on the backend to free the session.
+  # Safe to call when no workspace or session exists.
+  defp cancel_active_stream(socket) do
+    with %{id: workspace_id} <- socket.assigns[:workspace] do
+      AgentBridge.cancel_stream(workspace_id)
+    end
+  end
 
   defp assign_workspace(socket, nil), do: assign_workspace(socket)
 
