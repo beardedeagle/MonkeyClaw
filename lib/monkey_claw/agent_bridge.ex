@@ -63,10 +63,12 @@ defmodule MonkeyClaw.AgentBridge do
     * `MonkeyClaw.AgentBridge.Capabilities` — Capability queries
     * `MonkeyClaw.AgentBridge.Scope` — Product concept → BeamAgent scope mapping
     * `MonkeyClaw.AgentBridge.Telemetry` — Telemetry event emission
+    * `MonkeyClaw.Sessions` — Durable session history (SQLite)
   """
 
   alias MonkeyClaw.AgentBridge.{Capabilities, Session, SessionSupervisor}
   alias MonkeyClaw.AgentBridge.Telemetry, as: BridgeTelemetry
+  alias MonkeyClaw.Sessions
 
   @type session_id :: Session.session_id()
 
@@ -419,4 +421,157 @@ defmodule MonkeyClaw.AgentBridge do
   """
   @spec backends() :: [Capabilities.backend(), ...]
   defdelegate backends(), to: Capabilities
+
+  # --- Session History ---
+  #
+  # Durable session history persisted in SQLite. These functions
+  # delegate to MonkeyClaw.Sessions — the Session GenServer
+  # automatically creates and populates history records as
+  # messages flow through.
+
+  @doc """
+  List persisted session history for a workspace, most recent first.
+
+  Unlike `list_sessions/0` (which returns live session IDs from the
+  Registry), this returns durable session records from SQLite.
+
+  ## Options
+
+    * `:limit` — Maximum number of sessions to return
+    * `:status` — Filter by session status (`:active`, `:stopped`, `:crashed`)
+
+  ## Examples
+
+      sessions = AgentBridge.list_session_history(workspace_id)
+      sessions = AgentBridge.list_session_history(workspace_id, %{limit: 10})
+  """
+  @spec list_session_history(Ecto.UUID.t()) :: [Sessions.Session.t()]
+  defdelegate list_session_history(workspace_id), to: Sessions, as: :list_sessions
+
+  @spec list_session_history(Ecto.UUID.t(), map()) :: [Sessions.Session.t()]
+  defdelegate list_session_history(workspace_id, opts), to: Sessions, as: :list_sessions
+
+  @doc """
+  Get a persisted session history record by ID.
+
+  Verifies the session belongs to the given workspace before
+  returning — returns `{:error, :not_found}` if the session
+  doesn't exist or belongs to a different workspace.
+
+  ## Examples
+
+      {:ok, session} = AgentBridge.get_session_history(session_id, workspace_id)
+  """
+  @spec get_session_history(Ecto.UUID.t(), Ecto.UUID.t()) ::
+          {:ok, Sessions.Session.t()} | {:error, :not_found}
+  def get_session_history(session_id, workspace_id)
+      when is_binary(session_id) and byte_size(session_id) > 0 and
+             is_binary(workspace_id) and byte_size(workspace_id) > 0 do
+    case Sessions.get_session(session_id) do
+      {:ok, %{workspace_id: ^workspace_id} = session} ->
+        {:ok, session}
+
+      {:ok, _wrong_workspace} ->
+        {:error, :not_found}
+
+      {:error, :not_found} = error ->
+        error
+    end
+  end
+
+  @doc """
+  Get messages for a persisted session, ordered by sequence.
+
+  Verifies the session belongs to the given workspace before
+  returning messages — returns `{:error, :not_found}` if the
+  session doesn't exist or belongs to a different workspace.
+
+  ## Options
+
+    * `:limit` — Maximum number of messages to return
+    * `:offset` — Number of messages to skip
+    * `:roles` — Filter by message roles (list of atoms)
+
+  ## Examples
+
+      {:ok, messages} = AgentBridge.get_session_messages(session_id, workspace_id)
+      {:ok, messages} = AgentBridge.get_session_messages(session_id, workspace_id, %{limit: 50})
+  """
+  @spec get_session_messages(Ecto.UUID.t(), Ecto.UUID.t()) ::
+          {:ok, [Sessions.Message.t()]} | {:error, :not_found}
+  def get_session_messages(session_id, workspace_id)
+      when is_binary(session_id) and byte_size(session_id) > 0 and
+             is_binary(workspace_id) and byte_size(workspace_id) > 0 do
+    get_session_messages(session_id, workspace_id, %{})
+  end
+
+  @spec get_session_messages(Ecto.UUID.t(), Ecto.UUID.t(), map()) ::
+          {:ok, [Sessions.Message.t()]} | {:error, :not_found}
+  def get_session_messages(session_id, workspace_id, opts)
+      when is_binary(session_id) and byte_size(session_id) > 0 and
+             is_binary(workspace_id) and byte_size(workspace_id) > 0 and is_map(opts) do
+    case Sessions.get_session(session_id) do
+      {:ok, %{workspace_id: ^workspace_id}} ->
+        {:ok, Sessions.get_messages(session_id, opts)}
+
+      {:ok, _wrong_workspace} ->
+        {:error, :not_found}
+
+      {:error, :not_found} = error ->
+        error
+    end
+  end
+
+  @doc """
+  Full-text search across messages in a workspace via FTS5.
+
+  Returns messages matching the query string, ordered by relevance.
+  Supports standard FTS5 syntax (phrases, prefix, boolean operators).
+
+  ## Options
+
+    * `:limit` — Maximum number of results (default: 50)
+
+  ## Examples
+
+      messages = AgentBridge.search_session_messages(workspace_id, "deployment error")
+  """
+  @spec search_session_messages(Ecto.UUID.t(), String.t()) :: [Sessions.Message.t()]
+  defdelegate search_session_messages(workspace_id, query),
+    to: Sessions,
+    as: :search_messages
+
+  @spec search_session_messages(Ecto.UUID.t(), String.t(), map()) :: [Sessions.Message.t()]
+  defdelegate search_session_messages(workspace_id, query, opts),
+    to: Sessions,
+    as: :search_messages
+
+  @doc """
+  Delete a persisted session history record by ID.
+
+  Cascade-deletes all messages and FTS5 index entries.
+  Verifies the session belongs to the given workspace before
+  deleting — returns `{:error, :not_found}` if the session
+  doesn't exist or belongs to a different workspace.
+
+  ## Examples
+
+      {:ok, session} = AgentBridge.delete_session_history(session_id, workspace_id)
+  """
+  @spec delete_session_history(Ecto.UUID.t(), Ecto.UUID.t()) ::
+          {:ok, Sessions.Session.t()} | {:error, :not_found | Ecto.Changeset.t()}
+  def delete_session_history(session_id, workspace_id)
+      when is_binary(session_id) and byte_size(session_id) > 0 and
+             is_binary(workspace_id) and byte_size(workspace_id) > 0 do
+    case Sessions.get_session(session_id) do
+      {:ok, %{workspace_id: ^workspace_id} = session} ->
+        Sessions.delete_session(session)
+
+      {:ok, _wrong_workspace} ->
+        {:error, :not_found}
+
+      {:error, :not_found} = error ->
+        error
+    end
+  end
 end

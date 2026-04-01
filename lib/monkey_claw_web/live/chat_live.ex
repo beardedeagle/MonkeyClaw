@@ -42,6 +42,7 @@ defmodule MonkeyClawWeb.ChatLive do
 
   alias MonkeyClaw.AgentBridge
   alias MonkeyClaw.Assistants
+  alias MonkeyClaw.Sessions
   alias MonkeyClaw.Workflows.Conversation
   alias MonkeyClaw.Workspaces
 
@@ -67,7 +68,10 @@ defmodule MonkeyClawWeb.ChatLive do
       |> assign(:session_stats, initial_stats())
       |> assign(:available_models, available_models())
       |> assign(:sidebar_open, true)
+      |> assign(:session_history, [])
+      |> assign(:viewing_history_id, nil)
       |> assign_workspace(params["workspace_id"])
+      |> load_and_assign_history()
       |> maybe_select_backend(params["backend"])
 
     {:ok, socket, layout: {MonkeyClawWeb.Layouts, :chat}}
@@ -137,6 +141,7 @@ defmodule MonkeyClawWeb.ChatLive do
       |> assign(:active_conversation_id, convo.id)
       |> assign(:messages, [])
       |> assign(:session_stats, initial_stats())
+      |> assign(:viewing_history_id, nil)
       |> assign(:loading, false)
       |> assign(:error, nil)
 
@@ -144,7 +149,7 @@ defmodule MonkeyClawWeb.ChatLive do
   end
 
   def handle_event("switch_conversation", %{"id" => id}, socket) do
-    if id == socket.assigns.active_conversation_id do
+    if id == socket.assigns.active_conversation_id and is_nil(socket.assigns.viewing_history_id) do
       {:noreply, socket}
     else
       socket = persist_active_conversation(socket)
@@ -156,6 +161,7 @@ defmodule MonkeyClawWeb.ChatLive do
             |> assign(:active_conversation_id, id)
             |> assign(:messages, convo.messages)
             |> assign(:session_stats, convo.session_stats)
+            |> assign(:viewing_history_id, nil)
             |> assign(:loading, false)
             |> assign(:error, nil)
 
@@ -197,6 +203,52 @@ defmodule MonkeyClawWeb.ChatLive do
     {:noreply, update(socket, :sidebar_open, &(!&1))}
   end
 
+  def handle_event("load_history", %{"id" => session_id}, socket) do
+    workspace_id = socket.assigns.workspace && socket.assigns.workspace.id
+
+    case Sessions.get_session(session_id) do
+      {:ok, %{workspace_id: ^workspace_id}} ->
+        messages =
+          session_id
+          |> Sessions.get_messages()
+          |> Enum.map(&history_message_to_display/1)
+
+        socket =
+          socket
+          |> persist_active_conversation()
+          |> assign(:messages, messages)
+          |> assign(:viewing_history_id, session_id)
+          |> assign(:loading, false)
+          |> assign(:streaming, false)
+          |> assign(:stream_content, "")
+          |> assign(:stream_byte_size, 0)
+          |> assign(:error, nil)
+
+        {:noreply, socket}
+
+      {:ok, _wrong_workspace} ->
+        {:noreply, assign(socket, :error, "Session not found.")}
+
+      {:error, :not_found} ->
+        {:noreply, assign(socket, :error, "Session not found.")}
+    end
+  end
+
+  def handle_event("back_to_live", _params, socket) do
+    id = socket.assigns.active_conversation_id
+    convo = socket.assigns.conversations[id]
+
+    socket =
+      socket
+      |> assign(:messages, convo.messages)
+      |> assign(:viewing_history_id, nil)
+      |> assign(:session_stats, convo.session_stats)
+      |> assign(:loading, false)
+      |> assign(:error, nil)
+
+    {:noreply, socket}
+  end
+
   # --- Info handlers ---
 
   @impl true
@@ -211,6 +263,7 @@ defmodule MonkeyClawWeb.ChatLive do
       end
       |> assign(:loading, false)
       |> assign(:sent_at, nil)
+      |> load_and_assign_history()
 
     {:noreply, socket}
   end
@@ -292,6 +345,7 @@ defmodule MonkeyClawWeb.ChatLive do
       |> assign(:stream_content, "")
       |> assign(:stream_byte_size, 0)
       |> assign(:sent_at, nil)
+      |> load_and_assign_history()
 
     {:noreply, socket}
   end
@@ -374,6 +428,40 @@ defmodule MonkeyClawWeb.ChatLive do
     end
   end
 
+  defp load_and_assign_history(socket) do
+    case socket.assigns[:workspace] do
+      %{id: workspace_id} ->
+        history = Sessions.list_sessions(workspace_id, %{limit: 20})
+        assign(socket, :session_history, history)
+
+      _ ->
+        assign(socket, :session_history, [])
+    end
+  end
+
+  defp history_message_to_display(%Sessions.Message{} = msg) do
+    content =
+      if msg.role == :assistant and is_binary(msg.content) do
+        MonkeyClawWeb.Markdown.render(msg.content)
+      else
+        msg.content
+      end
+
+    %{
+      id: msg.id,
+      role: msg.role,
+      content: content,
+      thinking: nil,
+      timestamp: msg.inserted_at,
+      latency_ms: nil,
+      input_tokens: nil,
+      output_tokens: nil,
+      cached_tokens: nil,
+      thinking_tokens: nil,
+      model: nil
+    }
+  end
+
   defp find_or_create_default_workspace do
     case Workspaces.list_workspaces() do
       [workspace | _] -> {:ok, workspace}
@@ -437,6 +525,13 @@ defmodule MonkeyClawWeb.ChatLive do
       current_model: nil,
       working_dir: File.cwd!() |> Path.basename()
     }
+  end
+
+  # No-op when viewing history — socket.assigns.messages contains
+  # the historical transcript, not the live conversation's messages.
+  defp persist_active_conversation(%{assigns: %{viewing_history_id: id}} = socket)
+       when not is_nil(id) do
+    socket
   end
 
   defp persist_active_conversation(socket) do

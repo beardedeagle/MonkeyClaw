@@ -130,10 +130,11 @@ with that backend.
 Phoenix LiveView chat interface at `/chat` with real-time streaming,
 markdown rendering, and per-message token stats. Features include
 multi-conversation management (sidebar with create/switch/delete),
-collapsible thinking blocks, code copy buttons, runtime model
-selection across all supported backends, and runtime permission mode
-control (`:default`, `:accept_edits`, `:bypass_permissions`, `:plan`,
-`:dont_ask`).
+session history (past conversations persisted in SQLite with
+full-text search via FTS5), collapsible thinking blocks, code copy
+buttons, runtime model selection across all supported backends, and
+runtime permission mode control (`:default`, `:accept_edits`,
+`:bypass_permissions`, `:plan`, `:dont_ask`).
 
 ### Persistence
 

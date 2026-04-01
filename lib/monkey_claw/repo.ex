@@ -3,8 +3,8 @@ defmodule MonkeyClaw.Repo do
   Ecto repository for MonkeyClaw persistence.
 
   Backed by SQLite3 via `ecto_sqlite3`. All tables use `STRICT`
-  mode (type enforcement at the storage layer) and `WITHOUT ROWID`
-  (clustered B-tree on the binary_id primary key).
+  mode (type enforcement at the storage layer — prevents SQLite's
+  default type affinity coercion).
 
   ## SQLite3 Configuration
 

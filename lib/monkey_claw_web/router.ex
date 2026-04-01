@@ -17,6 +17,7 @@ defmodule MonkeyClawWeb.Router do
     plug :put_root_layout, html: {MonkeyClawWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
+    plug MonkeyClawWeb.Plugs.ContentSecurityPolicy
     plug MonkeyClawWeb.Plugs.MTLSAudit
   end
 

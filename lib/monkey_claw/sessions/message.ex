@@ -1,0 +1,126 @@
+defmodule MonkeyClaw.Sessions.Message do
+  @moduledoc """
+  Ecto schema for individual messages within a conversation session.
+
+  Messages are immutable records — once persisted, they are never
+  updated (only inserted or deleted with their parent session).
+  The schema enforces this by omitting `updated_at` from timestamps.
+
+  ## Roles
+
+  Each message has a `:role` that identifies its source:
+
+    * `:user` — Message sent by the human user
+    * `:assistant` — Response from the AI agent
+    * `:system` — System-generated message (e.g., session start)
+    * `:tool_use` — Agent invoking a tool
+    * `:tool_result` — Result returned from a tool invocation
+
+  ## Ordering
+
+  Messages are ordered by their `:sequence` field, which is a
+  monotonically increasing integer within each session. This is
+  set by the context module on insertion, not by the caller.
+
+  ## Metadata
+
+  The `:metadata` field stores structured data as a JSON map:
+
+    * Tool messages: `%{"tool_name" => "read_file", ...}`
+    * Assistant messages: `%{"model" => "claude-sonnet-4-6", ...}`
+    * Content blocks: `%{"content_blocks" => [...], ...}`
+
+  ## FTS5 Integration
+
+  Message content is indexed in an FTS5 external content table
+  (`session_messages_fts`). Database triggers keep the index in
+  sync automatically on INSERT and DELETE — no application-level
+  sync needed.
+
+  ## Design
+
+  This is NOT a process. Messages are data entities persisted in
+  SQLite3 via Ecto.
+  """
+
+  use Ecto.Schema
+
+  import Ecto.Changeset
+
+  alias MonkeyClaw.Sessions.Session
+
+  @type t :: %__MODULE__{
+          id: Ecto.UUID.t() | nil,
+          role: role() | nil,
+          content: String.t() | nil,
+          sequence: non_neg_integer() | nil,
+          metadata: map(),
+          session_id: Ecto.UUID.t() | nil,
+          inserted_at: DateTime.t() | nil
+        }
+
+  @type role :: :user | :assistant | :system | :tool_use | :tool_result
+
+  @roles [:user, :assistant, :system, :tool_use, :tool_result]
+
+  @doc """
+  Returns the list of valid message roles.
+  """
+  @spec roles() :: [role(), ...]
+  def roles, do: @roles
+
+  @create_fields [:role, :content, :sequence, :metadata]
+
+  @primary_key {:id, :binary_id, autogenerate: true}
+  @foreign_key_type :binary_id
+  schema "session_messages" do
+    field :role, Ecto.Enum, values: @roles
+    field :content, :string
+    field :sequence, :integer
+    field :metadata, :map, default: %{}
+
+    belongs_to :session, Session
+
+    timestamps(type: :utc_datetime_usec, updated_at: false)
+  end
+
+  @doc """
+  Changeset for creating a new message.
+
+  The `:session_id` is set via `Ecto.build_assoc/3` in the
+  context module. Required fields: `:role` and `:sequence`.
+  The `:content` field is optional (tool_use messages may have
+  no text content). The `:metadata` field defaults to an empty map.
+
+  ## Examples
+
+      session
+      |> Ecto.build_assoc(:messages)
+      |> Message.create_changeset(%{
+        role: :user,
+        content: "Hello!",
+        sequence: 1
+      })
+  """
+  @spec create_changeset(t(), map()) :: Ecto.Changeset.t()
+  def create_changeset(%__MODULE__{} = message, attrs) when is_map(attrs) do
+    message
+    |> cast(attrs, @create_fields)
+    |> validate_required([:role, :sequence])
+    |> validate_inclusion(:role, @roles)
+    |> validate_number(:sequence, greater_than_or_equal_to: 0)
+    |> normalize_metadata()
+    |> assoc_constraint(:session)
+  end
+
+  # Normalize nil metadata to %{} so the DB NOT NULL constraint is
+  # never violated. This handles callers that explicitly pass
+  # metadata: nil without requiring metadata in validate_required
+  # (since it's genuinely optional with a default).
+  defp normalize_metadata(changeset) do
+    case fetch_change(changeset, :metadata) do
+      {:ok, nil} -> put_change(changeset, :metadata, %{})
+      _ -> changeset
+    end
+  end
+end

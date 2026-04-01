@@ -9,6 +9,18 @@ defmodule MonkeyClaw.AgentBridge.Session do
     * Monitoring the session process for unexpected termination
     * Subscribing to BeamAgent events and forwarding via Phoenix.PubSub
     * Emitting telemetry events for observability
+    * Persisting conversation history to SQLite (fire-and-forget)
+
+  ## History Persistence
+
+  On init, the GenServer creates a `MonkeyClaw.Sessions.Session` record in
+  SQLite. Query results and accumulated stream content are persisted as
+  `MonkeyClaw.Sessions.Message` records after each interaction completes.
+  Session status is updated on stop (`:stopped`) or crash (`:crashed`).
+
+  All persistence is wrapped in rescue blocks — storage failures are logged
+  but never crash the GenServer. The primary job (BeamAgent session
+  management) is never compromised by the secondary job (SQLite persistence).
 
   ## Process Design
 
@@ -48,6 +60,8 @@ defmodule MonkeyClaw.AgentBridge.Session do
 
   alias MonkeyClaw.AgentBridge.CliResolver
   alias MonkeyClaw.AgentBridge.Telemetry, as: BridgeTelemetry
+  alias MonkeyClaw.Sessions
+  alias MonkeyClaw.Workspaces
 
   # Default query timeout: 2 minutes (LLM queries can be slow)
   @default_query_timeout 120_000
@@ -85,7 +99,9 @@ defmodule MonkeyClaw.AgentBridge.Session do
           stream_task_ref: reference() | nil,
           stream_task_pid: pid() | nil,
           stream_caller: pid() | nil,
-          stream_telemetry_start: integer() | nil
+          stream_telemetry_start: integer() | nil,
+          history_session: Sessions.Session.t() | nil,
+          stream_content_buffer: String.t() | :overflow | nil
         }
 
   @enforce_keys [:id, :config]
@@ -103,6 +119,8 @@ defmodule MonkeyClaw.AgentBridge.Session do
     :stream_task_pid,
     :stream_caller,
     :stream_telemetry_start,
+    :history_session,
+    :stream_content_buffer,
     status: :starting
   ]
 
@@ -399,7 +417,8 @@ defmodule MonkeyClaw.AgentBridge.Session do
           monitor_ref: monitor_ref,
           status: :active,
           started_at: DateTime.utc_now(),
-          telemetry_start: telemetry_start
+          telemetry_start: telemetry_start,
+          history_session: create_history_session(state)
       }
 
       _ = if is_reference(event_ref), do: schedule_event_poll()
@@ -434,6 +453,8 @@ defmodule MonkeyClaw.AgentBridge.Session do
 
     case result do
       {:ok, messages} = result ->
+        state = persist_query_messages(state, prompt, messages)
+
         BridgeTelemetry.query_stop(telemetry_start, %{
           session_id: state.id,
           message_count: length(messages)
@@ -470,6 +491,9 @@ defmodule MonkeyClaw.AgentBridge.Session do
 
     case state.backend.stream(state.session_pid, prompt, beam_params) do
       {:ok, stream} ->
+        # Persist user message before streaming begins
+        _ = persist_user_message(state, prompt)
+
         session_self = self()
 
         {task_pid, task_ref} =
@@ -499,7 +523,8 @@ defmodule MonkeyClaw.AgentBridge.Session do
           | stream_task_ref: task_ref,
             stream_task_pid: task_pid,
             stream_caller: caller,
-            stream_telemetry_start: telemetry_start
+            stream_telemetry_start: telemetry_start,
+            stream_content_buffer: ""
         }
 
         {:reply, {:ok, :streaming}, new_state}
@@ -571,7 +596,8 @@ defmodule MonkeyClaw.AgentBridge.Session do
       backend: get_in(state.config, [:session_opts, :backend]),
       beam_session_id: state.beam_session_id,
       started_at: state.started_at,
-      config: sanitize_config(state.config)
+      config: sanitize_config(state.config),
+      history_session_id: history_session_id(state)
     }
 
     {:reply, {:ok, info}, state}
@@ -594,6 +620,8 @@ defmodule MonkeyClaw.AgentBridge.Session do
   @impl true
   def handle_info({:DOWN, ref, :process, _pid, reason}, %{monitor_ref: ref} = state) do
     Logger.warning("BeamAgent session #{state.id} terminated unexpectedly: #{inspect(reason)}")
+
+    _ = update_history_status(state, :crashed)
 
     case state.telemetry_start do
       nil ->
@@ -640,7 +668,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
       when is_pid(caller) do
     send(caller, {:stream_chunk, state.id, chunk})
     _ = broadcast(state.id, {:stream_chunk, state.id, chunk})
-    {:noreply, state}
+    {:noreply, accumulate_chunk(state, chunk)}
   end
 
   # Stream completed successfully — demonitor with :flush to prevent
@@ -651,6 +679,9 @@ defmodule MonkeyClaw.AgentBridge.Session do
 
     send(caller, {:stream_done, state.id})
     _ = broadcast(state.id, {:stream_done, state.id})
+
+    # Persist accumulated stream content as assistant message
+    state = persist_stream_result(state)
 
     case state.stream_telemetry_start do
       nil -> :ok
@@ -741,6 +772,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
         })
     end
 
+    _ = update_history_status(state, :stopped)
     _ = broadcast(state.id, {:session_stopped, state.id, reason})
     Logger.info("AgentBridge session #{state.id} stopped: #{inspect(reason)}")
 
@@ -876,7 +908,8 @@ defmodule MonkeyClaw.AgentBridge.Session do
       | stream_task_ref: nil,
         stream_task_pid: nil,
         stream_caller: nil,
-        stream_telemetry_start: nil
+        stream_telemetry_start: nil,
+        stream_content_buffer: nil
     }
   end
 
@@ -899,4 +932,235 @@ defmodule MonkeyClaw.AgentBridge.Session do
   defp sanitize_config(config) when is_map(config) do
     Map.take(config, @safe_config_keys)
   end
+
+  # ──────────────────────────────────────────────
+  # History Persistence (fire-and-forget)
+  #
+  # All persistence helpers are defensive: failures are logged
+  # but never crash the GenServer. The live BeamAgent session
+  # is primary; SQLite history is durable secondary storage.
+  # ──────────────────────────────────────────────
+
+  # Create a SQLite session record for history persistence.
+  # Returns the Session struct on success, nil on failure.
+  defp create_history_session(state) do
+    workspace_id = state.id
+    model = get_in(state.config, [:session_opts, :model])
+    attrs = if model, do: %{model: to_string(model)}, else: %{}
+
+    with {:ok, workspace} <- Workspaces.get_workspace(workspace_id),
+         {:ok, session} <- Sessions.create_session(workspace, attrs) do
+      session
+    else
+      {:error, reason} ->
+        Logger.warning("Failed to create history session for #{workspace_id}: #{inspect(reason)}")
+
+        nil
+    end
+  rescue
+    error ->
+      Logger.warning(
+        "History session creation crashed for #{state.id}: #{Exception.message(error)}"
+      )
+
+      nil
+  end
+
+  # Persist the user prompt and all response messages from a synchronous query.
+  # Returns updated state (may have derived title).
+  defp persist_query_messages(%{history_session: nil} = state, _prompt, _messages), do: state
+
+  defp persist_query_messages(%{history_session: session} = state, prompt, messages) do
+    _ = safe_record_message(session, %{role: :user, content: prompt})
+
+    Enum.each(messages, fn msg ->
+      role = extract_message_role(msg)
+      content = extract_message_content(msg)
+      _ = safe_record_message(session, %{role: role, content: content})
+    end)
+
+    maybe_derive_title(state)
+  rescue
+    error ->
+      Logger.warning("Failed to persist query messages: #{Exception.message(error)}")
+      state
+  end
+
+  # Persist a single user message (used before streaming begins).
+  defp persist_user_message(%{history_session: nil}, _prompt), do: :ok
+
+  defp persist_user_message(%{history_session: session}, prompt) do
+    _ = safe_record_message(session, %{role: :user, content: prompt})
+    :ok
+  rescue
+    error ->
+      Logger.warning("Failed to persist user message: #{Exception.message(error)}")
+      :ok
+  end
+
+  # Persist the accumulated stream buffer as an assistant message.
+  # Returns updated state (may have derived title).
+  defp persist_stream_result(%{history_session: nil} = state), do: state
+
+  defp persist_stream_result(%{history_session: session, stream_content_buffer: buffer} = state)
+       when is_binary(buffer) and byte_size(buffer) > 0 do
+    _ = safe_record_message(session, %{role: :assistant, content: buffer})
+    maybe_derive_title(state)
+  rescue
+    error ->
+      Logger.warning("Failed to persist stream result: #{Exception.message(error)}")
+      state
+  end
+
+  defp persist_stream_result(%{stream_content_buffer: :overflow} = state) do
+    Logger.warning("Skipping history persistence for session #{state.id}: stream buffer overflow")
+    state
+  end
+
+  defp persist_stream_result(state), do: state
+
+  # Maximum stream content buffer size for history persistence.
+  # Matches the LiveView cap to prevent unbounded GenServer heap growth
+  # from a malicious or malfunctioning backend.
+  @max_history_buffer_bytes 2_000_000
+
+  # Append chunk text to the stream content buffer.
+  # Only accumulates when a buffer exists (stream was initiated with persistence).
+  # Stops accumulating once the buffer exceeds @max_history_buffer_bytes.
+  #
+  # Note: `buffer <> text` uses BEAM's binary append optimization — when the
+  # binary being appended to has no other references, the VM over-allocates
+  # and appends in-place (amortized O(1)). This is safe here because the
+  # GenServer state is the sole owner of the buffer binary.
+  defp accumulate_chunk(%{stream_content_buffer: buffer} = state, chunk)
+       when is_binary(buffer) do
+    text = extract_chunk_text(chunk)
+
+    if byte_size(buffer) + byte_size(text) > @max_history_buffer_bytes do
+      Logger.warning(
+        "Stream history buffer exceeded #{@max_history_buffer_bytes} bytes " <>
+          "for session #{state.id}, stopping accumulation"
+      )
+
+      %{state | stream_content_buffer: :overflow}
+    else
+      %{state | stream_content_buffer: buffer <> text}
+    end
+  end
+
+  defp accumulate_chunk(state, _chunk), do: state
+
+  # Update the history session status (e.g., :stopped, :crashed).
+  defp update_history_status(%{history_session: nil}, _status), do: :ok
+
+  defp update_history_status(%{history_session: session}, status) do
+    case Sessions.update_session(session, %{status: status}) do
+      {:ok, _updated} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("Failed to update history session status: #{inspect(reason)}")
+        :ok
+    end
+  rescue
+    error ->
+      Logger.warning("History status update crashed: #{Exception.message(error)}")
+      :ok
+  end
+
+  # Derive session title from first user message if not yet set.
+  # Returns updated state with the derived title to avoid redundant derives.
+  defp maybe_derive_title(%{history_session: %{title: title}} = state)
+       when is_binary(title) and byte_size(title) > 0 do
+    state
+  end
+
+  defp maybe_derive_title(%{history_session: session} = state) do
+    case Sessions.derive_title(session) do
+      {:ok, updated_session} -> %{state | history_session: updated_session}
+      _ -> state
+    end
+  rescue
+    _ -> state
+  end
+
+  # Record a message with error handling. Never raises.
+  defp safe_record_message(session, attrs) do
+    case Sessions.record_message(session, attrs) do
+      {:ok, message} ->
+        {:ok, message}
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        Logger.warning("Failed to record message: #{inspect(changeset.errors)}")
+        :error
+
+      {:error, reason} ->
+        Logger.warning("Failed to record message: #{inspect(reason)}")
+        :error
+    end
+  rescue
+    error ->
+      Logger.warning("Message recording crashed: #{Exception.message(error)}")
+      :error
+  end
+
+  # Extract the history session ID from state, or nil.
+  defp history_session_id(%{history_session: %{id: id}}), do: id
+  defp history_session_id(_), do: nil
+
+  # ──────────────────────────────────────────────
+  # Message Content Extraction
+  #
+  # BeamAgent backends return messages and chunks in varying
+  # formats. These extractors handle atom keys, string keys,
+  # and plain binaries defensively.
+  # ──────────────────────────────────────────────
+
+  defp extract_message_role(%{role: role}), do: normalize_role(role)
+  defp extract_message_role(%{"role" => role}), do: normalize_role(role)
+  defp extract_message_role(_), do: :assistant
+
+  @role_map %{
+    "user" => :user,
+    "assistant" => :assistant,
+    "system" => :system,
+    "tool_use" => :tool_use,
+    "tool_result" => :tool_result
+  }
+
+  defp normalize_role(role)
+       when is_atom(role) and role in [:user, :assistant, :system, :tool_use, :tool_result] do
+    role
+  end
+
+  defp normalize_role(role) when is_binary(role), do: Map.get(@role_map, role, :assistant)
+  defp normalize_role(_), do: :assistant
+
+  defp extract_message_content(%{content: content}) when is_binary(content), do: content
+  defp extract_message_content(%{"content" => content}) when is_binary(content), do: content
+
+  defp extract_message_content(%{content_blocks: blocks}) when is_list(blocks),
+    do: extract_text_from_blocks(blocks)
+
+  defp extract_message_content(%{"content_blocks" => blocks}) when is_list(blocks),
+    do: extract_text_from_blocks(blocks)
+
+  defp extract_message_content(_), do: nil
+
+  defp extract_text_from_blocks(blocks) do
+    text =
+      blocks
+      |> Enum.map(&extract_chunk_text/1)
+      |> Enum.reject(&(&1 == "" or is_nil(&1)))
+      |> Enum.join("")
+
+    if byte_size(text) > 0, do: text, else: nil
+  end
+
+  defp extract_chunk_text(chunk) when is_binary(chunk), do: chunk
+  defp extract_chunk_text(%{text: text}) when is_binary(text), do: text
+  defp extract_chunk_text(%{"text" => text}) when is_binary(text), do: text
+  defp extract_chunk_text(%{content: content}) when is_binary(content), do: content
+  defp extract_chunk_text(%{"content" => content}) when is_binary(content), do: content
+  defp extract_chunk_text(_), do: ""
 end

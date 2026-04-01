@@ -2,7 +2,7 @@ defmodule MonkeyClaw.Repo.Migrations.CreateWorkspacesAndChannels do
   use Ecto.Migration
 
   def change do
-    create table(:workspaces, primary_key: false, options: "STRICT, WITHOUT ROWID") do
+    create table(:workspaces, primary_key: false, options: "STRICT") do
       add :id, :binary_id, primary_key: true
       add :name, :string, null: false
       add :description, :text
@@ -16,7 +16,7 @@ defmodule MonkeyClaw.Repo.Migrations.CreateWorkspacesAndChannels do
     create index(:workspaces, [:assistant_id])
     create index(:workspaces, [:status])
 
-    create table(:channels, primary_key: false, options: "STRICT, WITHOUT ROWID") do
+    create table(:channels, primary_key: false, options: "STRICT") do
       add :id, :binary_id, primary_key: true
       add :name, :string, null: false
       add :description, :text

@@ -25,6 +25,7 @@ defmodule MonkeyClaw.Factory do
   """
 
   alias MonkeyClaw.Assistants
+  alias MonkeyClaw.Sessions
   alias MonkeyClaw.Workspaces
 
   # ──────────────────────────────────────────────
@@ -120,5 +121,59 @@ defmodule MonkeyClaw.Factory do
   def insert_channel!(workspace, overrides \\ %{}) do
     {:ok, channel} = Workspaces.create_channel(workspace, channel_attrs(overrides))
     channel
+  end
+
+  # ──────────────────────────────────────────────
+  # Session History Builders
+  # ──────────────────────────────────────────────
+
+  @doc """
+  Build a map of valid session attributes.
+  """
+  @spec session_attrs(Enumerable.t()) :: map()
+  def session_attrs(overrides \\ %{}) do
+    Map.merge(%{model: "claude-sonnet-4-6"}, Map.new(overrides))
+  end
+
+  @doc """
+  Build a map of valid message attributes.
+
+  Defaults to `:user` role with unique content.
+  """
+  @spec message_attrs(Enumerable.t()) :: map()
+  def message_attrs(overrides \\ %{}) do
+    Map.merge(
+      %{
+        role: :user,
+        content: "message-#{System.unique_integer([:positive])}"
+      },
+      Map.new(overrides)
+    )
+  end
+
+  @doc """
+  Insert a session into the database within a workspace.
+
+  Delegates to `MonkeyClaw.Sessions.create_session/2`.
+  Raises on validation failure.
+  """
+  @spec insert_session!(MonkeyClaw.Workspaces.Workspace.t(), Enumerable.t()) ::
+          MonkeyClaw.Sessions.Session.t()
+  def insert_session!(workspace, overrides \\ %{}) do
+    {:ok, session} = Sessions.create_session(workspace, session_attrs(overrides))
+    session
+  end
+
+  @doc """
+  Record a message within a session.
+
+  Delegates to `MonkeyClaw.Sessions.record_message/2`.
+  Raises on validation failure. Sequence is auto-assigned.
+  """
+  @spec insert_message!(MonkeyClaw.Sessions.Session.t(), Enumerable.t()) ::
+          MonkeyClaw.Sessions.Message.t()
+  def insert_message!(session, overrides \\ %{}) do
+    {:ok, message} = Sessions.record_message(session, message_attrs(overrides))
+    message
   end
 end
