@@ -90,21 +90,18 @@ defmodule MonkeyClaw.AgentBridgeTest do
     end
 
     test "rejects non-binary session_id" do
-      assert_raise FunctionClauseError, fn ->
-        AgentBridge.set_permission_mode(123, :plan)
-      end
+      assert {:error, :invalid_permission_mode} =
+               AgentBridge.set_permission_mode(123, :plan)
     end
 
     test "rejects non-atom mode" do
-      assert_raise FunctionClauseError, fn ->
-        AgentBridge.set_permission_mode("session", "plan")
-      end
+      assert {:error, :invalid_permission_mode} =
+               AgentBridge.set_permission_mode("session", "plan")
     end
 
     test "rejects invalid permission mode atom" do
-      assert_raise FunctionClauseError, fn ->
-        AgentBridge.set_permission_mode("session", :bogus_mode)
-      end
+      assert {:error, :invalid_permission_mode} =
+               AgentBridge.set_permission_mode("session", :bogus_mode)
     end
 
     test "delegates to live session" do

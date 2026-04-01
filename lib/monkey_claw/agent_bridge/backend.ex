@@ -42,6 +42,7 @@ defmodule MonkeyClaw.AgentBridge.Backend do
   @type event_ref :: reference()
   @type message :: map()
   @type thread_info :: map()
+  @type permission_mode :: :default | :accept_edits | :bypass_permissions | :plan | :dont_ask
 
   @doc """
   Start a new agent session.
@@ -123,7 +124,7 @@ defmodule MonkeyClaw.AgentBridge.Backend do
     * `:plan` — Read-only mode
     * `:dont_ask` — Never prompt
   """
-  @callback set_permission_mode(session_pid(), mode :: atom()) ::
+  @callback set_permission_mode(session_pid(), mode :: permission_mode()) ::
               {:ok, term()} | {:error, term()}
 
   @doc """

@@ -190,12 +190,16 @@ defmodule MonkeyClaw.AgentBridge.Session do
     timeout = Keyword.get(opts, :timeout, @default_stream_start_timeout)
     caller = Keyword.get(opts, :stream_to, self())
 
-    beam_params =
-      opts
-      |> Keyword.drop([:timeout, :stream_to])
-      |> Map.new()
+    if is_pid(caller) do
+      beam_params =
+        opts
+        |> Keyword.drop([:timeout, :stream_to])
+        |> Map.new()
 
-    GenServer.call(session, {:stream_query, prompt, beam_params, caller}, timeout)
+      GenServer.call(session, {:stream_query, prompt, beam_params, caller}, timeout)
+    else
+      {:error, :invalid_stream_to}
+    end
   end
 
   @doc """
@@ -218,7 +222,8 @@ defmodule MonkeyClaw.AgentBridge.Session do
   Controls how the agent handles tool execution approvals.
   Valid modes: #{Enum.map_join(@valid_permission_modes, ", ", &"`#{inspect(&1)}`")}.
   """
-  @spec set_permission_mode(GenServer.server(), atom()) :: {:ok, term()} | {:error, term()}
+  @spec set_permission_mode(GenServer.server(), MonkeyClaw.AgentBridge.Backend.permission_mode()) ::
+          {:ok, term()} | {:error, term()}
   def set_permission_mode(session, mode) when mode in @valid_permission_modes do
     GenServer.call(session, {:set_permission_mode, mode}, 10_000)
   end
@@ -437,7 +442,11 @@ defmodule MonkeyClaw.AgentBridge.Session do
     {:reply, {:error, :session_unavailable}, state}
   end
 
-  def handle_call({:stream_query, _prompt, _params, _caller}, _from, %{stream_task_ref: ref} = state)
+  def handle_call(
+        {:stream_query, _prompt, _params, _caller},
+        _from,
+        %{stream_task_ref: ref} = state
+      )
       when not is_nil(ref) do
     {:reply, {:error, :stream_already_active}, state}
   end
@@ -452,12 +461,18 @@ defmodule MonkeyClaw.AgentBridge.Session do
         {task_pid, task_ref} =
           spawn_monitor(fn ->
             try do
-              Enum.each(stream, fn
-                {:ok, chunk} -> send(session_self, {:stream_chunk, chunk})
-                {:error, reason} -> send(session_self, {:stream_error, reason})
-              end)
+              result =
+                Enum.reduce_while(stream, :ok, fn
+                  {:ok, chunk}, :ok ->
+                    send(session_self, {:stream_chunk, chunk})
+                    {:cont, :ok}
 
-              send(session_self, :stream_done)
+                  {:error, reason}, :ok ->
+                    send(session_self, {:stream_error, reason})
+                    {:halt, :error}
+                end)
+
+              if result == :ok, do: send(session_self, :stream_done)
             rescue
               error ->
                 detail = {error.__struct__, Exception.message(error)}
@@ -806,6 +821,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
       send(state.stream_caller, {:stream_error, state.id, :session_stopped})
     end
 
+    _ = broadcast(state.id, {:stream_error, state.id, :session_stopped})
     emit_stream_exception(state, :stream_killed, :session_stopped)
 
     clear_stream_state(state)
@@ -816,14 +832,12 @@ defmodule MonkeyClaw.AgentBridge.Session do
   # Unsubscribe from BeamAgent events. Safe to call when not subscribed.
   defp unsubscribe_events(%{event_ref: ref, session_pid: pid, backend: backend} = state)
        when is_reference(ref) and is_pid(pid) do
-    try do
-      backend.event_unsubscribe(pid, ref)
-    catch
-      kind, error ->
-        Logger.warning(
-          "Failed to unsubscribe events for session #{state.id} (#{kind}): #{inspect(error)}"
-        )
-    end
+    backend.event_unsubscribe(pid, ref)
+  catch
+    kind, error ->
+      Logger.warning(
+        "Failed to unsubscribe events for session #{state.id} (#{kind}): #{inspect(error)}"
+      )
   end
 
   defp unsubscribe_events(_state), do: :ok

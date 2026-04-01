@@ -34,11 +34,28 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
     {:ok, BeamAgent.stream(pid, prompt, params)}
   end
 
-  @impl true
-  def set_model(pid, model), do: BeamAgent.set_model(pid, model)
+  # BeamAgent.set_model/2 and BeamAgent.set_permission_mode/2 are not yet
+  # exported by beam_agent_ex. Use apply/3 behind function_exported?/3 to
+  # avoid compile-time references that Dialyzer flags as call_to_missing,
+  # and to degrade gracefully at runtime until the API is available.
 
   @impl true
-  def set_permission_mode(pid, mode), do: BeamAgent.set_permission_mode(pid, mode)
+  def set_model(pid, model) do
+    if function_exported?(BeamAgent, :set_model, 2) do
+      apply(BeamAgent, :set_model, [pid, model])
+    else
+      {:error, :not_supported}
+    end
+  end
+
+  @impl true
+  def set_permission_mode(pid, mode) do
+    if function_exported?(BeamAgent, :set_permission_mode, 2) do
+      apply(BeamAgent, :set_permission_mode, [pid, mode])
+    else
+      {:error, :not_supported}
+    end
+  end
 
   @impl true
   def session_info(pid), do: BeamAgent.session_info(pid)

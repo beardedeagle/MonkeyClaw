@@ -1042,12 +1042,12 @@ defmodule MonkeyClaw.AgentBridge.SessionTest do
       {:ok, :streaming} = Session.stream_query(pid, "hello")
 
       assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :stream, :start], _,
-                       %{session_id: ^session_id}}
+                      %{session_id: ^session_id}}
 
       assert_receive {:stream_done, ^session_id}, 1_000
 
-      assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :stream, :stop],
-                       %{duration: d}, %{session_id: ^session_id}}
+      assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :stream, :stop], %{duration: d},
+                      %{session_id: ^session_id}}
 
       assert is_integer(d) and d >= 0
 
@@ -1073,7 +1073,7 @@ defmodule MonkeyClaw.AgentBridge.SessionTest do
       assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :stream, :start], _, _}
 
       assert_receive {:telemetry, [:monkey_claw, :agent_bridge, :stream, :exception], _,
-                       %{session_id: ^session_id, kind: :stream_error}},
+                      %{session_id: ^session_id, kind: :stream_error}},
                      1_000
 
       :telemetry.detach(handler_id)

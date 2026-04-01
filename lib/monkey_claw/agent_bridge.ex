@@ -173,6 +173,7 @@ defmodule MonkeyClaw.AgentBridge do
   ## Options
 
     * `:timeout` — Timeout for stream initiation (default: 30_000ms)
+    * `:stream_to` — PID to receive stream messages (default: `self()`)
   """
   @spec stream_query(session_id(), String.t(), keyword()) ::
           {:ok, :streaming} | {:error, term()}
@@ -220,6 +221,10 @@ defmodule MonkeyClaw.AgentBridge do
       {:ok, pid} -> Session.set_permission_mode(pid, mode)
       {:error, :not_found} -> {:error, {:session_not_found, session_id}}
     end
+  end
+
+  def set_permission_mode(_session_id, _mode) do
+    {:error, :invalid_permission_mode}
   end
 
   # --- Thread Management ---

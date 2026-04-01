@@ -119,7 +119,14 @@
         </div>
       </div>
 
-      <div :if={@loading} class="chat chat-start">
+      <div :if={@streaming and byte_size(@stream_content) > 0} class="chat chat-start">
+        <div class="chat-bubble max-w-[80%] [&_p]:mb-2 [&_p:last-child]:mb-0 [&_pre]:bg-base-300 [&_pre]:rounded [&_pre]:p-2 [&_pre]:my-2 [&_pre]:overflow-x-auto [&_code]:bg-base-300 [&_code]:rounded [&_code]:px-1 [&_code]:text-sm">
+          <span class="whitespace-pre-wrap">{@stream_content}</span>
+          <span class="loading loading-dots loading-xs ml-1 align-baseline"></span>
+        </div>
+      </div>
+
+      <div :if={@loading and not @streaming} class="chat chat-start">
         <div class="chat-bubble">
           <span class="loading loading-dots loading-sm"></span>
         </div>
