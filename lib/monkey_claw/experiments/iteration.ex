@@ -130,11 +130,22 @@ defmodule MonkeyClaw.Experiments.Iteration do
   # unchanged nil defaults (cast won't register nil → nil as a change).
   defp normalize_map_fields(changeset) do
     Enum.reduce([:eval_result, :state_snapshot, :metadata], changeset, fn field, cs ->
-      case fetch_change(cs, field) do
-        {:ok, nil} -> put_change(cs, field, %{})
-        {:ok, _} -> cs
-        :error -> if get_field(cs, field) == nil, do: put_change(cs, field, %{}), else: cs
-      end
+      normalize_map_field(cs, field)
     end)
+  end
+
+  defp normalize_map_field(changeset, field) do
+    case fetch_change(changeset, field) do
+      {:ok, nil} ->
+        put_change(changeset, field, %{})
+
+      {:ok, _} ->
+        changeset
+
+      :error ->
+        if get_field(changeset, field) == nil,
+          do: put_change(changeset, field, %{}),
+          else: changeset
+    end
   end
 end

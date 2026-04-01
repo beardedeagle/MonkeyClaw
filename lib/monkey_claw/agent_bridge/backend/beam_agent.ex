@@ -89,6 +89,7 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
   @impl true
   def checkpoint_save(pid, label) do
     if function_exported?(BeamAgent.Checkpoint, :save, 2) do
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
       apply(BeamAgent.Checkpoint, :save, [pid, label])
     else
       {:error, :not_supported}
@@ -98,6 +99,7 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
   @impl true
   def checkpoint_rewind(pid, checkpoint_id) do
     if function_exported?(BeamAgent.Checkpoint, :rewind, 2) do
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
       apply(BeamAgent.Checkpoint, :rewind, [pid, checkpoint_id])
     else
       {:error, :not_supported}

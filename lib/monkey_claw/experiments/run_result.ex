@@ -103,10 +103,12 @@ defmodule MonkeyClaw.Experiments.RunResult do
   # Examines tool_use messages for file mutation tools and extracts paths.
   defp derive_files_changed(messages) do
     messages
-    |> Enum.filter(&tool_use_message?/1)
     |> Enum.filter(fn msg ->
-      name = to_string(Map.get(msg, :name, Map.get(msg, "name", "")))
-      MapSet.member?(@file_mutation_tools, name)
+      tool_use_message?(msg) and
+        MapSet.member?(
+          @file_mutation_tools,
+          to_string(Map.get(msg, :name, Map.get(msg, "name", "")))
+        )
     end)
     |> Enum.flat_map(&extract_file_paths/1)
     |> Enum.uniq()
@@ -127,28 +129,21 @@ defmodule MonkeyClaw.Experiments.RunResult do
   defp extract_file_paths(msg) do
     input = Map.get(msg, :input, Map.get(msg, "input", %{}))
 
-    path_keys = ["path", "file_path", "filepath", "filename", "file"]
+    string_keys = ["path", "file_path", "filepath", "filename", "file"]
+    atom_keys = [:path, :file_path, :filepath, :filename, :file]
 
-    paths =
-      Enum.flat_map(path_keys, fn key ->
-        case Map.get(input, key) do
-          path when is_binary(path) and byte_size(path) > 0 -> [path]
-          _ -> []
-        end
-      end)
-
-    case paths do
-      [] ->
-        # Try atom keys as fallback
-        Enum.flat_map([:path, :file_path, :filepath, :filename, :file], fn key ->
-          case Map.get(input, key) do
-            path when is_binary(path) and byte_size(path) > 0 -> [path]
-            _ -> []
-          end
-        end)
-
-      found ->
-        found
+    case extract_paths_from_keys(input, string_keys) do
+      [] -> extract_paths_from_keys(input, atom_keys)
+      found -> found
     end
+  end
+
+  defp extract_paths_from_keys(input, keys) do
+    Enum.flat_map(keys, fn key ->
+      case Map.get(input, key) do
+        path when is_binary(path) and byte_size(path) > 0 -> [path]
+        _ -> []
+      end
+    end)
   end
 end

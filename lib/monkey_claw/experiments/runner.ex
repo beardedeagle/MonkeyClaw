@@ -655,35 +655,31 @@ defmodule MonkeyClaw.Experiments.Runner do
   # H1: Wraps strategy.evaluate/3 in try/rescue to prevent strategy
   # bugs from crashing the Runner GenServer.
   defp safe_evaluate(state, run_result) do
-    try do
-      case state.strategy.evaluate(state.strategy_state, run_result, %{}) do
-        {:ok, eval_result, strategy_state} ->
-          {:ok, eval_result, strategy_state}
+    case state.strategy.evaluate(state.strategy_state, run_result, %{}) do
+      {:ok, eval_result, strategy_state} ->
+        {:ok, eval_result, strategy_state}
 
-        other ->
-          {:error, :strategy_crashed, :evaluate, {:unexpected_return, other}}
-      end
-    rescue
-      error ->
-        {:error, :strategy_crashed, :evaluate, error}
+      other ->
+        {:error, :strategy_crashed, :evaluate, {:unexpected_return, other}}
     end
+  rescue
+    error ->
+      {:error, :strategy_crashed, :evaluate, error}
   end
 
   # H1: Wraps strategy.decide/4 in try/rescue to prevent strategy
   # bugs from crashing the Runner GenServer.
   defp safe_decide(state, eval_result) do
-    try do
-      case state.strategy.decide(state.strategy_state, eval_result, state.iteration, %{}) do
-        {decision, strategy_state} when decision in [:continue, :accept, :reject, :halt] ->
-          {:ok, decision, strategy_state}
+    case state.strategy.decide(state.strategy_state, eval_result, state.iteration, %{}) do
+      {decision, strategy_state} when decision in [:continue, :accept, :reject, :halt] ->
+        {:ok, decision, strategy_state}
 
-        other ->
-          {:error, :strategy_crashed, :decide, {:unexpected_return, other}}
-      end
-    rescue
-      error ->
-        {:error, :strategy_crashed, :decide, error}
+      other ->
+        {:error, :strategy_crashed, :decide, {:unexpected_return, other}}
     end
+  rescue
+    error ->
+      {:error, :strategy_crashed, :decide, error}
   end
 
   # H2: Validates that all files changed by the agent are within the

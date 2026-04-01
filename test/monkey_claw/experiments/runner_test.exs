@@ -451,7 +451,7 @@ defmodule MonkeyClaw.Experiments.RunnerTest do
 
       # At least one iteration completed before stopping
       iterations = Experiments.get_iterations(experiment.id)
-      assert length(iterations) >= 1
+      assert iterations != []
     end
 
     test "halts immediately when awaiting human" do
