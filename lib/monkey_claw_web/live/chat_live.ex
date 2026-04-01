@@ -50,27 +50,22 @@ defmodule MonkeyClawWeb.ChatLive do
 
   @impl true
   def mount(params, _session, socket) do
-    initial_convo = new_conversation()
-
     socket =
       socket
-      |> assign(:conversations, %{initial_convo.id => initial_convo})
-      |> assign(:conversation_order, [initial_convo.id])
-      |> assign(:active_conversation_id, initial_convo.id)
-      |> assign(:messages, [])
       |> assign(:loading, false)
       |> assign(:streaming, false)
       |> assign(:stream_content, "")
       |> assign(:stream_byte_size, 0)
+      |> assign(:stream_usage, nil)
       |> assign(:error, nil)
       |> assign(:page_title, "Chat")
       |> assign(:sent_at, nil)
-      |> assign(:session_stats, initial_stats())
       |> assign(:available_models, available_models())
       |> assign(:sidebar_open, true)
       |> assign(:session_history, [])
       |> assign(:viewing_history_id, nil)
       |> assign_workspace(params["workspace_id"])
+      |> restore_or_new_conversation()
       |> load_and_assign_history()
       |> maybe_select_backend(params["backend"])
 
@@ -93,6 +88,7 @@ defmodule MonkeyClawWeb.ChatLive do
         |> assign(:streaming, false)
         |> assign(:stream_content, "")
         |> assign(:stream_byte_size, 0)
+        |> assign(:stream_usage, nil)
         |> assign(:error, nil)
         |> assign(:sent_at, System.monotonic_time(:millisecond))
         |> push_event("clear-input", %{})
@@ -203,6 +199,39 @@ defmodule MonkeyClawWeb.ChatLive do
     {:noreply, update(socket, :sidebar_open, &(!&1))}
   end
 
+  def handle_event("delete_history", %{"id" => session_id}, socket)
+      when is_binary(session_id) and byte_size(session_id) > 0 do
+    workspace_id = socket.assigns.workspace && socket.assigns.workspace.id
+
+    # Refuse to delete a session the AgentBridge is actively writing to
+    # (would leave a dangling history_session_id reference).
+    with false <- active_history_session?(workspace_id, session_id),
+         {:ok, %{workspace_id: ^workspace_id} = session} <- Sessions.get_session(session_id) do
+      _ = Sessions.delete_session(session)
+
+      # If we were viewing this session, return to the active conversation.
+      socket =
+        if socket.assigns.viewing_history_id == session_id do
+          id = socket.assigns.active_conversation_id
+          convo = socket.assigns.conversations[id]
+
+          socket
+          |> assign(:messages, convo.messages)
+          |> assign(:viewing_history_id, nil)
+          |> assign(:session_stats, convo.session_stats)
+        else
+          socket
+        end
+        |> load_and_assign_history()
+
+      {:noreply, socket}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("delete_history", _params, socket), do: {:noreply, socket}
+
   def handle_event("load_history", %{"id" => session_id}, socket) do
     workspace_id = socket.assigns.workspace && socket.assigns.workspace.id
 
@@ -263,6 +292,7 @@ defmodule MonkeyClawWeb.ChatLive do
       end
       |> assign(:loading, false)
       |> assign(:sent_at, nil)
+      |> persist_active_conversation()
       |> load_and_assign_history()
 
     {:noreply, socket}
@@ -285,37 +315,71 @@ defmodule MonkeyClawWeb.ChatLive do
   @max_stream_content_bytes 2_000_000
 
   def handle_info({:stream_chunk, _session_id, chunk}, socket) do
-    case extract_content(chunk) do
-      content when is_binary(content) and byte_size(content) > 0 ->
+    # Capture usage metadata from assistant/result messages.
+    socket = maybe_capture_usage(socket, chunk)
+
+    case classify_stream_chunk(chunk) do
+      {:replace, content} ->
+        # :assistant messages carry cumulative content_blocks — the latest
+        # message has the full response so far. Replace the buffer to avoid
+        # doubling from repeated cumulative text.
+        #
+        # Safety guard: if the new content is shorter than the current buffer,
+        # the backend is sending incremental deltas, not cumulative snapshots.
+        # Fall back to append to avoid losing prior content.
+        current_size = socket.assigns.stream_byte_size
+        new_content_size = byte_size(content)
+
+        {effective_content, effective_size} =
+          if new_content_size < current_size do
+            # Incremental delta — append
+            {socket.assigns.stream_content <> content, current_size + new_content_size}
+          else
+            # Cumulative snapshot — replace
+            {content, new_content_size}
+          end
+
+        if effective_size > @max_stream_content_bytes do
+          cancel_active_stream(socket)
+
+          {:noreply,
+           socket
+           |> assign(:loading, false)
+           |> assign(:streaming, false)
+           |> assign(:stream_content, "")
+           |> assign(:stream_byte_size, 0)
+           |> assign(:error, "Response exceeded maximum size limit.")}
+        else
+          {:noreply,
+           socket
+           |> assign(:streaming, true)
+           |> assign(:stream_content, effective_content)
+           |> assign(:stream_byte_size, effective_size)}
+        end
+
+      {:append, content} ->
+        # :text and other incremental chunks — append to existing buffer.
         new_size = socket.assigns.stream_byte_size + byte_size(content)
 
         if new_size > @max_stream_content_bytes do
-          # Cancel the backend stream task to free the session for new queries
           cancel_active_stream(socket)
 
-          socket =
-            socket
-            |> assign(:loading, false)
-            |> assign(:streaming, false)
-            |> assign(:stream_content, "")
-            |> assign(:stream_byte_size, 0)
-            |> assign(:error, "Response exceeded maximum size limit.")
-
-          {:noreply, socket}
+          {:noreply,
+           socket
+           |> assign(:loading, false)
+           |> assign(:streaming, false)
+           |> assign(:stream_content, "")
+           |> assign(:stream_byte_size, 0)
+           |> assign(:error, "Response exceeded maximum size limit.")}
         else
-          # BEAM binary append is amortized O(1) for sequential appends
-          # to the same binary (over-allocation optimization). Tracking
-          # size separately lets us check the cap before concatenating.
-          socket =
-            socket
-            |> assign(:streaming, true)
-            |> assign(:stream_content, socket.assigns.stream_content <> content)
-            |> assign(:stream_byte_size, new_size)
-
-          {:noreply, socket}
+          {:noreply,
+           socket
+           |> assign(:streaming, true)
+           |> assign(:stream_content, socket.assigns.stream_content <> content)
+           |> assign(:stream_byte_size, new_size)}
         end
 
-      _ ->
+      :skip ->
         {:noreply, socket}
     end
   end
@@ -323,17 +387,18 @@ defmodule MonkeyClawWeb.ChatLive do
   def handle_info({:stream_done, _session_id}, socket) do
     content = socket.assigns.stream_content
     latency_ms = calculate_latency(socket.assigns[:sent_at])
+    usage = socket.assigns.stream_usage
 
     socket =
       if byte_size(content) > 0 do
         metadata = %{
           latency_ms: latency_ms,
           thinking: nil,
-          input_tokens: nil,
-          output_tokens: nil,
-          cached_tokens: nil,
+          input_tokens: extract_usage_field(usage, "input_tokens"),
+          output_tokens: extract_usage_field(usage, "output_tokens"),
+          cached_tokens: extract_cached_tokens(usage),
           thinking_tokens: nil,
-          model: socket.assigns.selected_model
+          model: extract_usage_model(usage) || socket.assigns.selected_model
         }
 
         append_message(socket, :assistant, content, metadata)
@@ -344,7 +409,9 @@ defmodule MonkeyClawWeb.ChatLive do
       |> assign(:streaming, false)
       |> assign(:stream_content, "")
       |> assign(:stream_byte_size, 0)
+      |> assign(:stream_usage, nil)
       |> assign(:sent_at, nil)
+      |> persist_active_conversation()
       |> load_and_assign_history()
 
     {:noreply, socket}
@@ -352,6 +419,7 @@ defmodule MonkeyClawWeb.ChatLive do
 
   def handle_info({:stream_error, _session_id, reason}, socket) do
     content = socket.assigns.stream_content
+    usage = socket.assigns.stream_usage
 
     # Preserve any partial content that arrived before the error
     socket =
@@ -361,11 +429,11 @@ defmodule MonkeyClawWeb.ChatLive do
         metadata = %{
           latency_ms: latency_ms,
           thinking: nil,
-          input_tokens: nil,
-          output_tokens: nil,
-          cached_tokens: nil,
+          input_tokens: extract_usage_field(usage, "input_tokens"),
+          output_tokens: extract_usage_field(usage, "output_tokens"),
+          cached_tokens: extract_cached_tokens(usage),
           thinking_tokens: nil,
-          model: socket.assigns.selected_model
+          model: extract_usage_model(usage) || socket.assigns.selected_model
         }
 
         append_message(socket, :assistant, content, metadata)
@@ -376,8 +444,11 @@ defmodule MonkeyClawWeb.ChatLive do
       |> assign(:streaming, false)
       |> assign(:stream_content, "")
       |> assign(:stream_byte_size, 0)
+      |> assign(:stream_usage, nil)
       |> assign(:sent_at, nil)
       |> assign(:error, ErrorFormatter.format(reason))
+      |> persist_active_conversation()
+      |> load_and_assign_history()
 
     {:noreply, socket}
   end
@@ -431,7 +502,13 @@ defmodule MonkeyClawWeb.ChatLive do
   defp load_and_assign_history(socket) do
     case socket.assigns[:workspace] do
       %{id: workspace_id} ->
-        history = Sessions.list_sessions(workspace_id, %{limit: 20})
+        # Active DB sessions have a live AgentBridge GenServer — they
+        # are current conversations, not past history.
+        history =
+          workspace_id
+          |> Sessions.list_sessions(%{limit: 20})
+          |> Enum.reject(&(&1.status == :active))
+
         assign(socket, :session_history, history)
 
       _ ->
@@ -447,18 +524,20 @@ defmodule MonkeyClawWeb.ChatLive do
         msg.content
       end
 
+    meta = msg.metadata || %{}
+
     %{
       id: msg.id,
       role: msg.role,
       content: content,
-      thinking: nil,
+      thinking: meta["thinking"],
       timestamp: msg.inserted_at,
-      latency_ms: nil,
-      input_tokens: nil,
-      output_tokens: nil,
-      cached_tokens: nil,
-      thinking_tokens: nil,
-      model: nil
+      latency_ms: meta["duration_ms"],
+      input_tokens: meta["input_tokens"],
+      output_tokens: meta["output_tokens"],
+      cached_tokens: meta["cached_tokens"],
+      thinking_tokens: meta["thinking_tokens"],
+      model: meta["model"]
     }
   end
 
@@ -504,6 +583,73 @@ defmodule MonkeyClawWeb.ChatLive do
 
   # --- Conversation management ---
 
+  # Check for an active AgentBridge session for this workspace and
+  # restore its persisted messages as the initial conversation. Falls
+  # back to a blank new conversation when no active session exists.
+  defp restore_or_new_conversation(socket) do
+    case maybe_restore_session(socket) do
+      {:ok, convo, messages} ->
+        socket
+        |> assign(:conversations, %{convo.id => convo})
+        |> assign(:conversation_order, [convo.id])
+        |> assign(:active_conversation_id, convo.id)
+        |> assign(:messages, messages)
+        |> assign(:session_stats, convo.session_stats)
+
+      :none ->
+        convo = new_conversation()
+
+        socket
+        |> assign(:conversations, %{convo.id => convo})
+        |> assign(:conversation_order, [convo.id])
+        |> assign(:active_conversation_id, convo.id)
+        |> assign(:messages, [])
+        |> assign(:session_stats, initial_stats())
+    end
+  end
+
+  # Look up the workspace's AgentBridge session. If one is active and
+  # has a persisted history_session_id, load the DB messages so the
+  # user resumes where they left off instead of seeing a blank chat.
+  defp maybe_restore_session(%{assigns: %{workspace: %{id: workspace_id}}}) do
+    with {:ok, %{status: :active, history_session_id: session_id}}
+         when is_binary(session_id) <- AgentBridge.session_info(workspace_id),
+         {:ok, %{workspace_id: ^workspace_id} = session} <- Sessions.get_session(session_id) do
+      messages =
+        session_id
+        |> Sessions.get_messages()
+        |> Enum.map(&history_message_to_display/1)
+
+      stats = aggregate_session_stats(messages, session.model)
+
+      convo = %{
+        id: Ecto.UUID.generate(),
+        title: session.title || "Restored conversation",
+        messages: messages,
+        session_stats: stats,
+        created_at: session.inserted_at || DateTime.utc_now()
+      }
+
+      {:ok, convo, messages}
+    else
+      _ -> :none
+    end
+  end
+
+  defp maybe_restore_session(_socket), do: :none
+
+  # Returns true when the given SQLite session_id is the one the
+  # AgentBridge is actively writing to.  Deleting it would leave a
+  # dangling history_session_id reference in the GenServer state.
+  defp active_history_session?(workspace_id, session_id) when is_binary(workspace_id) do
+    case AgentBridge.session_info(workspace_id) do
+      {:ok, %{history_session_id: ^session_id}} -> true
+      _ -> false
+    end
+  end
+
+  defp active_history_session?(_, _), do: false
+
   defp new_conversation do
     %{
       id: Ecto.UUID.generate(),
@@ -525,6 +671,25 @@ defmodule MonkeyClawWeb.ChatLive do
       current_model: nil,
       working_dir: File.cwd!() |> Path.basename()
     }
+  end
+
+  # Rebuild aggregate session stats from restored messages so the
+  # stats footer shows correct totals after session restore.
+  defp aggregate_session_stats(messages, model) do
+    messages
+    |> Enum.filter(&(&1.role == :assistant))
+    |> Enum.reduce(initial_stats(), fn msg, acc ->
+      %{
+        acc
+        | total_input_tokens: acc.total_input_tokens + (msg.input_tokens || 0),
+          total_output_tokens: acc.total_output_tokens + (msg.output_tokens || 0),
+          total_cached_tokens: acc.total_cached_tokens + (msg.cached_tokens || 0),
+          total_thinking_tokens: acc.total_thinking_tokens + (msg.thinking_tokens || 0),
+          message_count: acc.message_count + 1,
+          current_model: msg.model || acc.current_model
+      }
+    end)
+    |> Map.put(:current_model, model || nil)
   end
 
   # No-op when viewing history — socket.assigns.messages contains
@@ -637,8 +802,73 @@ defmodule MonkeyClawWeb.ChatLive do
 
   defp extract_thinking(_), do: nil
 
+  # Classify a streaming chunk for the stream_chunk handler.
+  #
+  # :assistant messages carry cumulative content_blocks — each new message
+  # has the FULL response so far, not just the delta. We return {:replace, text}
+  # so the handler overwrites the buffer instead of appending (which would
+  # double the content on every update).
+  #
+  # :text and other incremental messages return {:append, text}.
+  # :result messages return :skip (metadata only, captured by maybe_capture_usage).
+  defp classify_stream_chunk(%{type: :assistant, content_blocks: blocks})
+       when is_list(blocks) do
+    content =
+      blocks
+      |> Enum.filter(fn block -> Map.get(block, :type) == :text end)
+      |> Enum.map_join("\n", fn block -> Map.get(block, :text, "") end)
+
+    if byte_size(content) > 0, do: {:replace, content}, else: :skip
+  end
+
+  defp classify_stream_chunk(%{type: :result}), do: :skip
+
+  defp classify_stream_chunk(%{type: :text, content: content})
+       when is_binary(content) and byte_size(content) > 0,
+       do: {:append, content}
+
+  defp classify_stream_chunk(%{content: content})
+       when is_binary(content) and byte_size(content) > 0,
+       do: {:append, content}
+
+  defp classify_stream_chunk(_), do: :skip
+
   defp displayable_message?(%{type: :assistant}), do: true
   defp displayable_message?(_), do: false
+
+  # --- Stream usage capture ---
+
+  # Capture usage data from :result and :assistant messages during streaming.
+  # BeamAgent sends a :result message at stream end carrying the API usage map.
+  # The usage map has binary string keys (from JSON parsing), e.g., "input_tokens".
+  defp maybe_capture_usage(socket, %{type: type, usage: usage} = chunk)
+       when type in [:result, :assistant] and is_map(usage) do
+    assign(socket, :stream_usage, %{
+      usage: usage,
+      model: Map.get(chunk, :model),
+      duration_ms: Map.get(chunk, :duration_ms)
+    })
+  end
+
+  defp maybe_capture_usage(socket, _chunk), do: socket
+
+  # Usage map keys are binary strings from JSON: "input_tokens", "output_tokens", etc.
+  defp extract_usage_field(%{usage: usage}, key) when is_map(usage) and is_binary(key),
+    do: Map.get(usage, key)
+
+  defp extract_usage_field(_, _), do: nil
+
+  defp extract_cached_tokens(%{usage: usage}) when is_map(usage) do
+    cache_read = Map.get(usage, "cache_read_input_tokens", 0) || 0
+    cache_create = Map.get(usage, "cache_creation_input_tokens", 0) || 0
+    total = cache_read + cache_create
+    if total > 0, do: total, else: nil
+  end
+
+  defp extract_cached_tokens(_), do: nil
+
+  defp extract_usage_model(%{model: model}) when is_binary(model), do: model
+  defp extract_usage_model(_), do: nil
 
   # No assistant content — surface the first categorized error
   # from the message stream (e.g., rate_limit with retry_after).

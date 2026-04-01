@@ -7,6 +7,13 @@ defmodule MonkeyClaw.Application do
 
   @impl true
   def start(_type, _args) do
+    # Initialize BeamAgent ETS table ownership before any SDK calls.
+    # Hardened mode (the default) uses protected tables with write
+    # proxying through shard owner processes — process-isolated write
+    # control. Must happen before the supervision tree starts, since
+    # SessionSupervisor children will touch BeamAgent ETS tables.
+    :ok = :beam_agent_table_owner.init()
+
     children = [
       MonkeyClawWeb.Telemetry,
       MonkeyClaw.Repo,
