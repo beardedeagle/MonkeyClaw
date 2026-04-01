@@ -1,5 +1,13 @@
 defmodule MonkeyClaw.AgentBridge.CapabilitiesTest do
-  use ExUnit.Case, async: true
+  # async: false — BeamAgent capabilities touch the globally-named
+  # :beam_agent_registry ETS table. Without beam_agent_table_owner
+  # initialization, ensure_table/2 creates the table in the calling
+  # process (public mode default). Concurrent test processes race on
+  # this shared named table: one process creates it, another sees it
+  # via ets:whereis, the creator dies (destroying the table), and the
+  # other crashes on ets:insert. OTP 28 scheduler changes make this
+  # race reliably reproducible.
+  use ExUnit.Case, async: false
 
   alias MonkeyClaw.AgentBridge.Capabilities
 
