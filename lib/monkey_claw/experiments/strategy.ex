@@ -135,9 +135,12 @@ defmodule MonkeyClaw.Experiments.Strategy do
 
   The `opts` map may contain `:checkpoint_id` if the Runner
   successfully saved a checkpoint before this iteration.
+
+  Return `{:error, reason}` to abort the current iteration's
+  preparation phase.
   """
   @callback prepare_iteration(state(), iteration(), opts()) ::
-              {:ok, state()}
+              {:ok, state()} | {:error, term()}
 
   @doc """
   Generate the agent prompt for this iteration.

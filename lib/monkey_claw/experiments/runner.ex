@@ -607,8 +607,11 @@ defmodule MonkeyClaw.Experiments.Runner do
       eval_status = if state.status == :stopping, do: :stopping, else: :evaluating
       state = %{eval_state | strategy_state: decide_strategy_state, status: eval_status}
 
-      # :stopping is internal-only, not a persisted status
-      if eval_status == :evaluating, do: persist_status(state.experiment_id, :evaluating)
+      # :stopping is internal-only, not a persisted status — but we must
+      # still persist :evaluating when the human gate will follow, so the
+      # DB transition running → evaluating → awaiting_human stays valid.
+      persist_eval? = eval_status == :evaluating or (eval_status == :stopping and state.human_gate)
+      if persist_eval?, do: persist_status(state.experiment_id, :evaluating)
 
       Telemetry.decision_auto(
         state.experiment_id,
@@ -799,10 +802,10 @@ defmodule MonkeyClaw.Experiments.Runner do
           _other ->
             state
         end
-      rescue
-        error ->
+      catch
+        kind, reason ->
           Logger.warning(
-            "Experiment #{state.experiment_id} strategy rollback failed: #{inspect(error)}"
+            "Experiment #{state.experiment_id} strategy rollback failed: #{inspect({kind, reason})}"
           )
 
           state
