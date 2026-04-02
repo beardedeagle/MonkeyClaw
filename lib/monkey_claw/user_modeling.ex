@@ -125,7 +125,7 @@ defmodule MonkeyClaw.UserModeling do
   end
 
   @doc """
-  Toggle prompt injection for a user profile.
+  Toggle user context enrichment for a profile.
 
   When `enabled` is `false`, `get_injectable_context/1` returns an
   empty string even if the profile has observed topics and preferences.

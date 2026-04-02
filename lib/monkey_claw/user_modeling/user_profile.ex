@@ -4,16 +4,16 @@ defmodule MonkeyClaw.UserModeling.UserProfile do
 
   A user profile accumulates observations about the user's behavior
   within a workspace — topics of interest, interaction patterns, and
-  preferences. The profile is used by the injection plug to provide
-  personalized context in agent queries.
+  preferences. The profile is used by the context enrichment plug
+  to personalize agent queries.
 
   ## Privacy Levels
 
-    * `:full` — All observations recorded and available for injection
+    * `:full` — All observations recorded and available for context enrichment
     * `:limited` — Only topic frequency observations, no behavioral
       patterns (query timing, response preferences)
-    * `:none` — No observations recorded, no injection. Profile exists
-      only for display_name and explicit preferences.
+    * `:none` — No observations recorded, no context enrichment. Profile
+      exists only for display_name and explicit preferences.
 
   ## Associations
 
