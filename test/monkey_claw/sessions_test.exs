@@ -453,6 +453,102 @@ defmodule MonkeyClaw.SessionsTest do
   end
 
   # ──────────────────────────────────────────────
+  # FTS5 Search Filters
+  # ──────────────────────────────────────────────
+
+  describe "search_messages/3 with filters" do
+    test "filters by :after temporal boundary" do
+      workspace = insert_workspace!()
+      session = insert_session!(workspace)
+      insert_message!(session, %{role: :user, content: "temporal_after_keyword"})
+
+      # Search with a future :after should find nothing
+      future = DateTime.add(DateTime.utc_now(), 3600, :second)
+      results = Sessions.search_messages(workspace.id, "temporal_after_keyword", %{after: future})
+
+      assert results == []
+    end
+
+    test "filters by :before temporal boundary" do
+      workspace = insert_workspace!()
+      session = insert_session!(workspace)
+      insert_message!(session, %{role: :user, content: "temporal_before_keyword"})
+
+      # Search with a past :before should find nothing
+      past = DateTime.add(DateTime.utc_now(), -3600, :second)
+
+      results =
+        Sessions.search_messages(workspace.id, "temporal_before_keyword", %{before: past})
+
+      assert results == []
+    end
+
+    test "filters by :roles" do
+      workspace = insert_workspace!()
+      session = insert_session!(workspace)
+      insert_message!(session, %{role: :user, content: "role_filter_keyword"})
+      insert_message!(session, %{role: :assistant, content: "role_filter_keyword"})
+      insert_message!(session, %{role: :system, content: "role_filter_keyword"})
+
+      results =
+        Sessions.search_messages(workspace.id, "role_filter_keyword", %{roles: [:user]})
+
+      assert length(results) == 1
+      assert hd(results).role == :user
+    end
+
+    test "filters by multiple :roles" do
+      workspace = insert_workspace!()
+      session = insert_session!(workspace)
+      insert_message!(session, %{role: :user, content: "multi_role_keyword"})
+      insert_message!(session, %{role: :assistant, content: "multi_role_keyword"})
+      insert_message!(session, %{role: :system, content: "multi_role_keyword"})
+
+      results =
+        Sessions.search_messages(workspace.id, "multi_role_keyword", %{
+          roles: [:user, :assistant]
+        })
+
+      assert length(results) == 2
+      roles = Enum.map(results, & &1.role) |> Enum.sort()
+      assert roles == [:assistant, :user]
+    end
+
+    test "excludes session by :exclude_session_id" do
+      workspace = insert_workspace!()
+      s1 = insert_session!(workspace)
+      s2 = insert_session!(workspace)
+      insert_message!(s1, %{role: :user, content: "exclude_session_keyword"})
+      insert_message!(s2, %{role: :user, content: "exclude_session_keyword"})
+
+      results =
+        Sessions.search_messages(workspace.id, "exclude_session_keyword", %{
+          exclude_session_id: s1.id
+        })
+
+      assert length(results) == 1
+      assert hd(results).session_id == s2.id
+    end
+
+    test "combines multiple filters" do
+      workspace = insert_workspace!()
+      session = insert_session!(workspace)
+      insert_message!(session, %{role: :user, content: "combined_filter_keyword"})
+      insert_message!(session, %{role: :assistant, content: "combined_filter_keyword"})
+
+      results =
+        Sessions.search_messages(workspace.id, "combined_filter_keyword", %{
+          roles: [:user],
+          after: DateTime.add(DateTime.utc_now(), -3600, :second),
+          limit: 5
+        })
+
+      assert length(results) == 1
+      assert hd(results).role == :user
+    end
+  end
+
+  # ──────────────────────────────────────────────
   # Title Derivation
   # ──────────────────────────────────────────────
 

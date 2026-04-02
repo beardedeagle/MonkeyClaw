@@ -58,6 +58,7 @@ npm-debug.log
 .claude/
 .omc/
 AGENTS.md
+CLAUDE.md
 .beads/.beads-credential-key
 *PLAN*.md
 *GAP_ANALYSIS*.md
