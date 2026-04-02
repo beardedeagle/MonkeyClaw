@@ -151,9 +151,12 @@ defmodule MonkeyClaw.Experiments do
   Create an experiment and start its Runner process.
 
   This is the primary entry point for launching experiments. It
-  atomically creates the experiment record and starts a supervised
-  Runner GenServer. If the Runner fails to start, the experiment
-  record is cleaned up.
+  creates the experiment record in the database and then starts a
+  supervised Runner GenServer. If the Runner fails to start in a
+  controlled way (e.g., `Runner.start_link/1` returns an error),
+  the experiment record is cleaned up. A crash between the database
+  insert and Runner startup may leave an experiment record without
+  a running Runner.
 
   ## Runner Config
 

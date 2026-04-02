@@ -1177,8 +1177,11 @@ defmodule MonkeyClaw.Experiments.Runner do
   # ── Private: Extension Hook Firing ──────────────────────────
 
   # Fires an extension hook through the plug pipeline.
-  # Extensions.execute/2 returns {:ok, ctx} | {:error, reason} —
-  # we log failures but never crash the Runner for a hook issue.
+  # Extensions.execute/2 returns {:ok, ctx} | {:error, reason} in
+  # normal operation — we log tagged errors. If a plug raises or
+  # exits, that crash propagates and takes down the Runner; the
+  # DynamicSupervisor handles restart. This is intentional BEAM
+  # semantics — no rescue on internal system calls.
   # Skips execution entirely when no plugs are registered.
   defp fire_hook(hook, data) do
     if Extensions.has_plugs?(hook) do
