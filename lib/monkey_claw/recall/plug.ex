@@ -148,16 +148,17 @@ defmodule MonkeyClaw.Recall.Plug do
 
     result = Recall.recall(workspace_id, prompt, recall_opts)
 
+    # Always assign recall_result for observability — even when
+    # formatted is empty (e.g., budget too small but matches exist).
+    ctx = Context.assign(ctx, :recall_result, result)
+
     case result do
       %{formatted: ""} ->
         ctx
 
       %{formatted: context_block} ->
         enhanced = context_block <> "\n\n---\n\n" <> prompt
-
-        ctx
-        |> Context.assign(:effective_prompt, enhanced)
-        |> Context.assign(:recall_result, result)
+        Context.assign(ctx, :effective_prompt, enhanced)
     end
   end
 end

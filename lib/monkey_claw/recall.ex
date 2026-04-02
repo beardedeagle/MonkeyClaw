@@ -111,7 +111,7 @@ defmodule MonkeyClaw.Recall do
       sanitized ->
         search_opts = build_search_opts(sanitized, opts)
         matches = Sessions.search_messages(workspace_id, sanitized, search_opts)
-        max_chars = Map.get(opts, :max_chars, @default_max_chars)
+        max_chars = clamp_pos_integer(Map.get(opts, :max_chars), @default_max_chars)
         %{text: formatted, truncated: truncated} = Formatter.format(matches, max_chars)
 
         %{
@@ -169,7 +169,7 @@ defmodule MonkeyClaw.Recall do
   # are forwarded as-is if present.
   @spec build_search_opts(String.t(), recall_opts()) :: search_opts_map()
   defp build_search_opts(_sanitized, opts) do
-    base = %{limit: Map.get(opts, :limit, @default_limit)}
+    base = %{limit: clamp_pos_integer(Map.get(opts, :limit), @default_limit)}
 
     base
     |> maybe_put(:after, opts)
@@ -181,6 +181,9 @@ defmodule MonkeyClaw.Recall do
   @filter_keys [:after, :before, :roles, :exclude_session_id]
   @type filter_key :: :after | :before | :roles | :exclude_session_id
   @type search_opts_map :: %{:limit => pos_integer(), optional(filter_key()) => term()}
+
+  defp clamp_pos_integer(v, _default) when is_integer(v) and v > 0, do: v
+  defp clamp_pos_integer(_v, default), do: default
 
   @spec maybe_put(search_opts_map(), filter_key(), map()) :: search_opts_map()
   defp maybe_put(target, key, source) when key in @filter_keys do

@@ -56,7 +56,7 @@ defmodule MonkeyClaw.Recall.Formatter do
 
   def format(messages, max_chars)
       when is_list(messages) and is_integer(max_chars) and max_chars > 0 do
-    budget = max_chars - byte_size(@header)
+    budget = max_chars - String.length(@header)
 
     if budget <= 0 do
       %{text: "", truncated: true}
@@ -86,8 +86,8 @@ defmodule MonkeyClaw.Recall.Formatter do
       msgs = Map.fetch!(session_map, session_id)
       block = format_session_block(session_id, msgs)
       # Only charge separator cost between blocks, not for the first.
-      separator_cost = if acc == [], do: 0, else: byte_size(@session_separator)
-      block_size = byte_size(block) + separator_cost
+      separator_cost = if acc == [], do: 0, else: String.length(@session_separator)
+      block_size = String.length(block) + separator_cost
 
       if block_size <= remaining do
         {[block | acc], remaining - block_size, trunc}
@@ -146,7 +146,7 @@ defmodule MonkeyClaw.Recall.Formatter do
   defp truncate_content(nil), do: "[no content]"
 
   defp truncate_content(content) when is_binary(content) do
-    if byte_size(content) <= @max_content_length do
+    if String.length(content) <= @max_content_length do
       content
     else
       String.slice(content, 0, @max_content_length) <> "..."

@@ -114,9 +114,11 @@ defmodule MonkeyClaw.Recall.PlugTest do
 
       result = RecallPlug.call(ctx, opts)
 
-      # No effective_prompt should be set
+      # No effective_prompt should be set, but recall_result is
+      # always assigned for observability when recall runs.
       assert result.assigns[:effective_prompt] == nil
-      assert result.assigns[:recall_result] == nil
+      assert result.assigns[:recall_result] != nil
+      assert result.assigns[:recall_result].match_count == 0
     end
 
     test "skips short prompts" do
