@@ -226,7 +226,10 @@ Configuration is via application config:
 
     config :monkey_claw, MonkeyClaw.Extensions,
       hooks: %{
-        query_pre: [{MonkeyClaw.Skills.Plug, max_skills: 5, min_score: 0.0}]
+        query_pre: [
+          {MonkeyClaw.Recall.Plug, max_results: 10, max_chars: 4000},
+          {MonkeyClaw.Skills.Plug, max_skills: 5, max_chars: 2000}
+        ]
       }
 
 All functions are pure (database and ETS I/O aside) — no processes,

@@ -23,9 +23,9 @@ defmodule MonkeyClaw.Skills.Skill do
   ## Tags
 
   Tags are stored as a JSON array in a TEXT column and represented
-  as a list of strings in Elixir. The `:map` Ecto type handles
-  JSON serialization; explicit list validation in changesets ensures
-  correctness.
+  as a list of strings in Elixir. The `{:array, :string}` Ecto type
+  handles JSON serialization via `ecto_sqlite3`; explicit list
+  validation in changesets ensures correctness.
 
   ## Design
 
@@ -111,6 +111,7 @@ defmodule MonkeyClaw.Skills.Skill do
     |> validate_tags()
     |> validate_score_bounds()
     |> generate_fts_rowid()
+    |> unique_constraint(:fts_rowid)
     |> assoc_constraint(:workspace)
   end
 

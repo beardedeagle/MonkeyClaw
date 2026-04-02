@@ -2,16 +2,9 @@ defmodule MonkeyClaw.Skills.PlugTest do
   use MonkeyClaw.DataCase
 
   alias MonkeyClaw.Extensions.Context
-  alias MonkeyClaw.Skills.Cache
   alias MonkeyClaw.Skills.Plug, as: SkillsPlug
 
   import MonkeyClaw.Factory
-
-  setup do
-    Cache.init()
-    :ets.delete_all_objects(Cache.table_name())
-    :ok
-  end
 
   # ──────────────────────────────────────────────
   # init/1

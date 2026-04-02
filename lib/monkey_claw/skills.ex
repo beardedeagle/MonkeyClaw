@@ -241,26 +241,40 @@ defmodule MonkeyClaw.Skills do
   @spec record_usage(Skill.t(), keyword()) :: {:ok, Skill.t()} | {:error, Ecto.Changeset.t()}
   def record_usage(%Skill{} = skill, opts \\ []) when is_list(opts) do
     success? = Keyword.get(opts, :success, false)
-    new_usage = skill.usage_count + 1
-    new_success = if success?, do: skill.success_count + 1, else: skill.success_count
-    score = min(1.0, max(0.0, new_success / new_usage))
 
-    result =
-      skill
-      |> Skill.update_changeset(%{
-        usage_count: new_usage,
-        success_count: new_success,
-        effectiveness_score: score
-      })
-      |> Repo.update()
+    inc_fields =
+      if success?,
+        do: [usage_count: 1, success_count: 1],
+        else: [usage_count: 1]
 
-    case result do
-      {:ok, updated} ->
-        Cache.invalidate(skill.workspace_id)
-        {:ok, updated}
+    query = from(s in Skill, where: s.id == ^skill.id)
 
-      error ->
-        error
+    case Repo.update_all(query, inc: inc_fields) do
+      {1, _} ->
+        # Reload to compute effectiveness_score from stored values,
+        # avoiding read-modify-write race on concurrent updates.
+        updated = Repo.get!(Skill, skill.id)
+        score = min(1.0, max(0.0, updated.success_count / max(updated.usage_count, 1)))
+
+        result =
+          updated
+          |> Skill.update_changeset(%{effectiveness_score: score})
+          |> Repo.update()
+
+        case result do
+          {:ok, scored} ->
+            Cache.invalidate(scored.workspace_id)
+            {:ok, scored}
+
+          error ->
+            error
+        end
+
+      {0, _} ->
+        {:error,
+         skill
+         |> Ecto.Changeset.change()
+         |> Ecto.Changeset.add_error(:id, "not found")}
     end
   end
 

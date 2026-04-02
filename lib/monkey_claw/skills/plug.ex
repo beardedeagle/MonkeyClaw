@@ -14,20 +14,21 @@ defmodule MonkeyClaw.Skills.Plug do
       skills context → recall context → original prompt
 
   Skills.Plug reads `ctx.assigns[:effective_prompt]` — if already
-  set by a prior plug (e.g., Recall.Plug), it prepends the skills
-  block before the existing value. If not set, it prepends before
-  `ctx.data[:prompt]`. This ensures correct ordering regardless
-  of plug registration order.
+  set by a prior plug (typically `MonkeyClaw.Recall.Plug`), it
+  prepends the skills block before the existing value. If not set,
+  it prepends before `ctx.data[:prompt]`. To ensure correct
+  composition, configure `MonkeyClaw.Skills.Plug` to run after
+  `MonkeyClaw.Recall.Plug` on the `:query_pre` hook.
 
   ## Configuration
 
-  Register in application config BEFORE Recall.Plug:
+  Register in application config AFTER Recall.Plug:
 
       config :monkey_claw, MonkeyClaw.Extensions,
         hooks: %{
           query_pre: [
-            {MonkeyClaw.Skills.Plug, max_skills: 5, max_chars: 2000},
-            {MonkeyClaw.Recall.Plug, max_results: 10, max_chars: 4000}
+            {MonkeyClaw.Recall.Plug, max_results: 10, max_chars: 4000},
+            {MonkeyClaw.Skills.Plug, max_skills: 5, max_chars: 2000}
           ]
         }
 
@@ -48,7 +49,7 @@ defmodule MonkeyClaw.Skills.Plug do
 
   alias MonkeyClaw.Extensions.Context
   alias MonkeyClaw.Skills
-  alias MonkeyClaw.Skills.{Cache, Formatter}
+  alias MonkeyClaw.Skills.Formatter
 
   @default_max_skills 5
   @default_max_chars 2000
@@ -160,21 +161,10 @@ defmodule MonkeyClaw.Skills.Plug do
 
   @spec fetch_skills(String.t(), String.t(), opts()) :: [MonkeyClaw.Skills.Skill.t()]
   defp fetch_skills(workspace_id, prompt, opts) do
-    case Cache.get(workspace_id) do
-      {:ok, cached_skills} ->
-        Enum.take(cached_skills, opts.max_skills)
-
-      :miss ->
-        skills = Skills.search_skills(workspace_id, prompt, %{limit: opts.max_skills})
-
-        # Warm the cache with the top skills for this workspace so
-        # subsequent queries in the same TTL window skip the DB.
-        if skills != [] do
-          top = Skills.top_skills(workspace_id, opts.max_skills)
-          Cache.put(workspace_id, top)
-        end
-
-        skills
-    end
+    # Always use FTS search for query-relevant results. The cache
+    # serves workspace-wide top skills which may not be relevant to
+    # the specific prompt. FTS5 queries are fast enough for single-user
+    # workloads; relevance trumps caching here.
+    Skills.search_skills(workspace_id, prompt, %{limit: opts.max_skills})
   end
 end
