@@ -143,7 +143,8 @@ scope enforcement (strategy declares allowed files, Runner rejects
 out-of-scope changes), optional human decision gates (non-blocking),
 automatic BeamAgent checkpoint save/rewind on rollback, configurable
 per-experiment time budgets, full telemetry instrumentation, and
-secret scrubbing of strategy state and results before persistence.
+defense-in-depth secret scrubbing of strategy state, evaluation
+results, and the final experiment result before persistence.
 
 A lifecycle API (`start_experiment/3`, `stop_experiment/1`,
 `cancel_experiment/1`, `experiment_status/1`) provides atomic

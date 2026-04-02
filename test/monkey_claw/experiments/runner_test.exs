@@ -156,7 +156,8 @@ defmodule MonkeyClaw.Experiments.RunnerTest do
     def build_prompt(_state, iteration, _opts), do: {:ok, "Leaky test #{iteration}"}
 
     @impl true
-    def evaluate(state, _run_result, _opts), do: {:ok, %{score: 0.9}, state}
+    def evaluate(state, _run_result, _opts),
+      do: {:ok, %{score: 0.9, api_key: "sk-leaked-key"}, state}
 
     @impl true
     def decide(state, _eval_result, _iteration, _opts), do: {:accept, state}
@@ -988,10 +989,11 @@ defmodule MonkeyClaw.Experiments.RunnerTest do
       wait_for_exit(ref, pid)
 
       {:ok, updated} = Experiments.get_experiment(experiment.id)
-      # Result from LeakyStrategy.evaluate returns %{score: 0.9} — no secrets
-      # But the state is scrubbed. Result should be clean.
+      # LeakyStrategy.evaluate returns %{score: 0.9, api_key: "sk-leaked-key"}
+      # The persisted result must have the secret scrubbed.
       assert is_map(updated.result)
       assert updated.result["score"] == 0.9
+      assert updated.result["api_key"] == "[REDACTED]"
     end
   end
 end

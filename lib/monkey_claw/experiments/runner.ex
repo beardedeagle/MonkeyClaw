@@ -920,7 +920,7 @@ defmodule MonkeyClaw.Experiments.Runner do
       status: terminal_status,
       completed_at: now,
       state: scrub_secrets(state.strategy_state),
-      result: scrub_secrets(state.last_eval_result),
+      result: maybe_scrub_secrets(state.last_eval_result),
       iteration_count: state.iteration
     }
 
@@ -1020,7 +1020,7 @@ defmodule MonkeyClaw.Experiments.Runner do
       sequence: state.iteration,
       status: status_val,
       run_ref: run_ref,
-      eval_result: eval_result,
+      eval_result: scrub_secrets(eval_result),
       state_snapshot: scrub_secrets(state.strategy_state),
       duration_ms: duration_ms,
       metadata: %{strategy: state.strategy_name, human_gate: state.human_gate}
@@ -1099,6 +1099,11 @@ defmodule MonkeyClaw.Experiments.Runner do
     client_secret encryption_key
   )
 
+  # Preserves nil (no result) vs empty map (empty result) distinction.
+  # Used for experiment.result where nil means "no evaluation ran".
+  defp maybe_scrub_secrets(nil), do: nil
+  defp maybe_scrub_secrets(value), do: scrub_secrets(value)
+
   defp scrub_secrets(nil), do: %{}
 
   defp scrub_secrets(state) when is_map(state) do
@@ -1164,10 +1169,10 @@ defmodule MonkeyClaw.Experiments.Runner do
   # PubSub.broadcast/3 returns :ok — it doesn't raise. If PubSub
   # is dead, that's a supervision tree failure, not something
   # the Runner should swallow.
-  @spec broadcast(String.t(), atom(), map()) :: :ok
   defp broadcast(experiment_id, event, payload) do
     message = %{event: event, experiment_id: experiment_id, payload: payload}
-    Phoenix.PubSub.broadcast(MonkeyClaw.PubSub, "experiment:#{experiment_id}", message)
+    _ = Phoenix.PubSub.broadcast(MonkeyClaw.PubSub, "experiment:#{experiment_id}", message)
+    :ok
   end
 
   # ── Private: Extension Hook Firing ──────────────────────────
@@ -1176,7 +1181,6 @@ defmodule MonkeyClaw.Experiments.Runner do
   # Extensions.execute/2 returns {:ok, ctx} | {:error, reason} —
   # we discard the return. If the extension system itself is broken,
   # let it crash — supervision handles that.
-  @spec fire_hook(atom(), map()) :: :ok
   defp fire_hook(hook, data) do
     _ = Extensions.execute(hook, data)
     :ok
