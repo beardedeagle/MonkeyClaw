@@ -470,13 +470,13 @@ defmodule MonkeyClaw.Sessions do
   end
 
   defp maybe_add_after_filter({conds, params, idx}, %{after: %DateTime{} = dt}) do
-    {conds ++ ["m.inserted_at >= ?#{idx}"], params ++ [DateTime.to_iso8601(dt)], idx + 1}
+    {conds ++ ["m.inserted_at >= ?#{idx}"], params ++ [format_datetime_usec(dt)], idx + 1}
   end
 
   defp maybe_add_after_filter(state, _opts), do: state
 
   defp maybe_add_before_filter({conds, params, idx}, %{before: %DateTime{} = dt}) do
-    {conds ++ ["m.inserted_at <= ?#{idx}"], params ++ [DateTime.to_iso8601(dt)], idx + 1}
+    {conds ++ ["m.inserted_at <= ?#{idx}"], params ++ [format_datetime_usec(dt)], idx + 1}
   end
 
   defp maybe_add_before_filter(state, _opts), do: state
@@ -513,6 +513,17 @@ defmodule MonkeyClaw.Sessions do
   end
 
   defp maybe_add_exclude_session_filter(state, _opts), do: state
+
+  # Format a DateTime to the same microsecond ISO8601 format that
+  # ecto_sqlite3 uses for :utc_datetime_usec columns. SQLite compares
+  # timestamps as TEXT, so the format must match exactly — DateTime.to_iso8601/1
+  # omits fractional seconds for whole-second values, which produces
+  # incorrect TEXT comparisons against stored microsecond timestamps.
+  defp format_datetime_usec(%DateTime{} = dt) do
+    dt
+    |> DateTime.truncate(:microsecond)
+    |> Calendar.strftime("%Y-%m-%dT%H:%M:%S.%6fZ")
+  end
 
   # Clamp search limit to a safe integer range.
   # Rejects non-integer, zero, and negative values.

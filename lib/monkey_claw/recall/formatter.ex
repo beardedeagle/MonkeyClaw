@@ -83,7 +83,7 @@ defmodule MonkeyClaw.Recall.Formatter do
 
     session_order
     |> Enum.reduce({[], budget, false}, fn session_id, {acc, remaining, trunc} ->
-      msgs = Map.fetch!(session_map, session_id)
+      msgs = session_map |> Map.fetch!(session_id) |> Enum.sort_by(& &1.sequence)
       block = format_session_block(session_id, msgs)
       # Only charge separator cost between blocks, not for the first.
       separator_cost = if acc == [], do: 0, else: String.length(@session_separator)
