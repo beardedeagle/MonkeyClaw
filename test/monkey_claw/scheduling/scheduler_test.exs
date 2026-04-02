@@ -29,9 +29,6 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
 
       Scheduler.trigger_poll()
 
-      # Give the cast time to complete
-      :timer.sleep(100)
-
       {:ok, updated} = Scheduling.get_schedule_entry(entry.id)
       assert updated.run_count == 1
       assert updated.status == :completed
@@ -48,7 +45,6 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
       assert is_nil(entry.last_run_at)
 
       Scheduler.trigger_poll()
-      :timer.sleep(100)
 
       {:ok, updated} = Scheduling.get_schedule_entry(entry.id)
       refute is_nil(updated.last_run_at)
@@ -63,7 +59,6 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
       entry_b = insert_schedule_entry!(workspace, %{next_run_at: past})
 
       Scheduler.trigger_poll()
-      :timer.sleep(100)
 
       {:ok, updated_a} = Scheduling.get_schedule_entry(entry_a.id)
       {:ok, updated_b} = Scheduling.get_schedule_entry(entry_b.id)
@@ -83,7 +78,6 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
         })
 
       Scheduler.trigger_poll()
-      :timer.sleep(100)
 
       {:ok, unchanged} = Scheduling.get_schedule_entry(entry.id)
       assert unchanged.run_count == 0
@@ -105,7 +99,6 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
       assert paused.status == :paused
 
       Scheduler.trigger_poll()
-      :timer.sleep(100)
 
       {:ok, unchanged} = Scheduling.get_schedule_entry(entry.id)
       assert unchanged.run_count == 0
@@ -126,7 +119,6 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
       assert completed.status == :completed
 
       Scheduler.trigger_poll()
-      :timer.sleep(100)
 
       {:ok, unchanged} = Scheduling.get_schedule_entry(entry.id)
       assert unchanged.run_count == 0
@@ -146,7 +138,6 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
         })
 
       Scheduler.trigger_poll()
-      :timer.sleep(100)
 
       {:ok, updated} = Scheduling.get_schedule_entry(entry.id)
       assert updated.run_count == 1
@@ -168,7 +159,6 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
         })
 
       Scheduler.trigger_poll()
-      :timer.sleep(100)
 
       {:ok, updated} = Scheduling.get_schedule_entry(entry.id)
       assert updated.run_count == 1

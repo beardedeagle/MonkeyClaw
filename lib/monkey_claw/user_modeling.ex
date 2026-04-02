@@ -62,7 +62,8 @@ defmodule MonkeyClaw.UserModeling do
 
       {:ok, profile} = UserModeling.ensure_profile(workspace)
   """
-  @spec ensure_profile(Workspace.t()) :: {:ok, UserProfile.t()} | {:error, Ecto.Changeset.t()}
+  @spec ensure_profile(Workspace.t()) ::
+          {:ok, UserProfile.t()} | {:error, Ecto.Changeset.t()} | {:error, :not_found}
   def ensure_profile(%Workspace{} = workspace) do
     case Repo.get_by(UserProfile, workspace_id: workspace.id) do
       nil ->

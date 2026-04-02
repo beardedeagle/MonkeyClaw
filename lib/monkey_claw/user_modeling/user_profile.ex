@@ -12,8 +12,8 @@ defmodule MonkeyClaw.UserModeling.UserProfile do
     * `:full` — All observations recorded and available for context enrichment
     * `:limited` — Only topic frequency observations, no behavioral
       patterns (query timing, response preferences)
-    * `:none` — No observations recorded, no context enrichment. Profile
-      exists only for display_name and explicit preferences.
+    * `:none` — No passive observations recorded. Explicit preferences
+      may still be enriched into queries if `injection_enabled` is true.
 
   ## Associations
 

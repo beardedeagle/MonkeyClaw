@@ -72,14 +72,15 @@ defmodule MonkeyClaw.Scheduling.Scheduler do
   end
 
   @doc """
-  Force an immediate poll for due schedule entries.
+  Force an immediate synchronous poll for due schedule entries.
 
-  Useful for testing or when a new entry is created with a
-  `next_run_at` in the past.
+  Blocks until the poll cycle completes. Useful for testing
+  and for immediate execution when a new entry is created
+  with a `next_run_at` in the past.
   """
   @spec trigger_poll() :: :ok
   def trigger_poll do
-    GenServer.cast(__MODULE__, :trigger_poll)
+    GenServer.call(__MODULE__, :trigger_poll)
   end
 
   # ── GenServer Callbacks ──────────────────────────────────────
@@ -115,10 +116,10 @@ defmodule MonkeyClaw.Scheduling.Scheduler do
   end
 
   @impl true
-  def handle_cast(:trigger_poll, %__MODULE__{} = state) do
+  def handle_call(:trigger_poll, _from, %__MODULE__{} = state) do
     state = cancel_timer(state)
     execute_poll()
-    {:noreply, schedule_poll(state)}
+    {:reply, :ok, schedule_poll(state)}
   end
 
   @impl true
