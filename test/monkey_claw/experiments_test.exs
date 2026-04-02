@@ -473,10 +473,13 @@ defmodule MonkeyClaw.ExperimentsTest do
       {:ok, experiment, pid} =
         Experiments.start_experiment(workspace, attrs, runner_config)
 
+      # Subscribe after start — async init via {:continue, :initialize}
+      # ensures iteration_started hasn't fired yet.
+      Phoenix.PubSub.subscribe(MonkeyClaw.PubSub, "experiment:#{experiment.id}")
       ref = Process.monitor(pid)
 
-      # Wait for first iteration to start, then stop
-      Process.sleep(100)
+      # Synchronize on iteration start instead of fixed sleep
+      assert_receive %{event: :iteration_started}, 5_000
       assert :ok = Experiments.stop_experiment(experiment.id)
 
       assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 10_000
@@ -510,10 +513,13 @@ defmodule MonkeyClaw.ExperimentsTest do
       {:ok, experiment, pid} =
         Experiments.start_experiment(workspace, attrs, runner_config)
 
+      # Subscribe after start — async init via {:continue, :initialize}
+      # ensures iteration_started hasn't fired yet.
+      Phoenix.PubSub.subscribe(MonkeyClaw.PubSub, "experiment:#{experiment.id}")
       ref = Process.monitor(pid)
 
-      # Wait for iteration to start, then cancel
-      Process.sleep(100)
+      # Synchronize on iteration start instead of fixed sleep
+      assert_receive %{event: :iteration_started}, 5_000
       assert :ok = Experiments.cancel_experiment(experiment.id)
 
       assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 10_000

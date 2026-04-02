@@ -934,24 +934,23 @@ defmodule MonkeyClaw.Experiments.Runner do
            attrs
          ) do
       {:ok, _} ->
-        :ok
+        # Only notify observers after successful persist — consumers
+        # should not see :experiment_completed if the DB write failed.
+        hook_data = %{
+          experiment_id: state.experiment_id,
+          status: Atom.to_string(terminal_status),
+          iteration: state.iteration,
+          strategy: state.strategy_name,
+          termination_reason: termination_reason,
+          duration_ms: duration_ms
+        }
+
+        broadcast(state.experiment_id, :experiment_completed, hook_data)
+        fire_hook(:experiment_completed, hook_data)
 
       {:error, reason} ->
         Logger.error("Experiment #{state.experiment_id} final persist failed: #{inspect(reason)}")
     end
-
-    # Notify observers — experiment completed
-    hook_data = %{
-      experiment_id: state.experiment_id,
-      status: Atom.to_string(terminal_status),
-      iteration: state.iteration,
-      strategy: state.strategy_name,
-      termination_reason: termination_reason,
-      duration_ms: duration_ms
-    }
-
-    broadcast(state.experiment_id, :experiment_completed, hook_data)
-    fire_hook(:experiment_completed, hook_data)
 
     {:stop, :normal, %{state | status: terminal_status}}
   end
@@ -1179,10 +1178,24 @@ defmodule MonkeyClaw.Experiments.Runner do
 
   # Fires an extension hook through the plug pipeline.
   # Extensions.execute/2 returns {:ok, ctx} | {:error, reason} —
-  # we discard the return. If the extension system itself is broken,
-  # let it crash — supervision handles that.
+  # we log failures but never crash the Runner for a hook issue.
+  # Skips execution entirely when no plugs are registered.
   defp fire_hook(hook, data) do
-    _ = Extensions.execute(hook, data)
-    :ok
+    if Extensions.has_plugs?(hook) do
+      case Extensions.execute(hook, data) do
+        {:ok, _ctx} ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning(
+            "Experiment #{data[:experiment_id]} extension hook #{inspect(hook)} failed: " <>
+              inspect(reason)
+          )
+
+          :ok
+      end
+    else
+      :ok
+    end
   end
 end

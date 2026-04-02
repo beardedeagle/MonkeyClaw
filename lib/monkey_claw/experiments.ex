@@ -271,7 +271,7 @@ defmodule MonkeyClaw.Experiments do
                status: experiment.status,
                iteration: experiment.iteration_count,
                max_iterations: experiment.max_iterations,
-               strategy: Atom.to_string(experiment.type)
+               type: experiment.type
              }}
 
           error ->
