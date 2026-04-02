@@ -61,12 +61,12 @@ defmodule MonkeyClaw.UserModeling.Observer do
   @doc """
   Start the Observer GenServer.
 
-  Accepts an optional keyword list for GenServer options. The flush
-  interval is read from Application env `:monkey_claw, :observer_flush_interval_ms`
-  (default: #{@default_flush_interval_ms}ms).
+  ## Options
+
+    * `:flush_interval_ms` — Override the flush interval in milliseconds
   """
   @spec start_link(keyword()) :: GenServer.on_start()
-  def start_link(opts \\ []) do
+  def start_link(opts \\ []) when is_list(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
@@ -83,7 +83,10 @@ defmodule MonkeyClaw.UserModeling.Observer do
   @spec observe(Ecto.UUID.t(), observation()) :: :ok
   def observe(workspace_id, %{prompt: _} = observation)
       when is_binary(workspace_id) and byte_size(workspace_id) > 0 do
-    GenServer.cast(__MODULE__, {:observe, workspace_id, observation})
+    case Process.whereis(__MODULE__) do
+      nil -> :ok
+      pid -> GenServer.cast(pid, {:observe, workspace_id, observation})
+    end
   end
 
   @doc """
@@ -113,9 +116,11 @@ defmodule MonkeyClaw.UserModeling.Observer do
 
   @impl true
   @spec init(keyword()) :: {:ok, t()}
-  def init(_opts) do
+  def init(opts) when is_list(opts) do
     flush_interval =
-      Application.get_env(:monkey_claw, :observer_flush_interval_ms, @default_flush_interval_ms)
+      Keyword.get_lazy(opts, :flush_interval_ms, fn ->
+        Application.get_env(:monkey_claw, :observer_flush_interval_ms, @default_flush_interval_ms)
+      end)
 
     timer_ref = schedule_flush(flush_interval)
 

@@ -11,9 +11,7 @@ defmodule MonkeyClaw.UserModeling.ObservationPlugTest do
     # Observer is disabled in test.exs (:start_observer false).
     # Start a test-controlled instance with a long flush interval
     # so the periodic timer doesn't fire during tests.
-    Application.put_env(:monkey_claw, :observer_flush_interval_ms, 999_999_999)
-    start_supervised!(Observer)
-    on_exit(fn -> Application.delete_env(:monkey_claw, :observer_flush_interval_ms) end)
+    start_supervised!({Observer, [flush_interval_ms: 999_999_999]})
     :ok
   end
 
