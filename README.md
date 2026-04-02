@@ -180,7 +180,7 @@ runtime permission mode control (`:default`, `:accept_edits`,
 
 SQLite3 via `ecto_sqlite3`. Embedded and zero-ops — a natural fit
 for single-user self-hosted deployments. Tables use STRICT mode and
-WITHOUT ROWID for type safety and efficient UUID-keyed lookups.
+WITHOUT ROWID for type safety and clustered UUID primary key lookups.
 
 ## Prerequisites
 

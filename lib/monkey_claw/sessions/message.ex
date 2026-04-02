@@ -33,9 +33,14 @@ defmodule MonkeyClaw.Sessions.Message do
   ## FTS5 Integration
 
   Message content is indexed in an FTS5 external content table
-  (`session_messages_fts`). Database triggers keep the index in
-  sync automatically on INSERT and DELETE — no application-level
-  sync needed.
+  (`session_messages_fts`). The `fts_rowid` field is an
+  application-generated unique integer (63-bit random via
+  `:crypto.strong_rand_bytes/1`) that bridges the WITHOUT ROWID
+  source table to the FTS5 index — FTS5 external content mode
+  requires an integer key for linkage. Database triggers keep the
+  index in sync automatically on INSERT and DELETE — no
+  application-level sync needed beyond generating the `fts_rowid`
+  at changeset time.
 
   ## Design
 
@@ -54,6 +59,7 @@ defmodule MonkeyClaw.Sessions.Message do
           role: role() | nil,
           content: String.t() | nil,
           sequence: non_neg_integer() | nil,
+          fts_rowid: integer() | nil,
           metadata: map(),
           session_id: Ecto.UUID.t() | nil,
           inserted_at: DateTime.t() | nil
@@ -77,6 +83,7 @@ defmodule MonkeyClaw.Sessions.Message do
     field :role, Ecto.Enum, values: @roles
     field :content, :string
     field :sequence, :integer
+    field :fts_rowid, :integer
     field :metadata, :map, default: %{}
 
     belongs_to :session, Session
@@ -109,8 +116,28 @@ defmodule MonkeyClaw.Sessions.Message do
     |> validate_required([:role, :sequence])
     |> validate_inclusion(:role, @roles)
     |> validate_number(:sequence, greater_than_or_equal_to: 0)
+    |> assign_fts_rowid()
+    |> unique_constraint(:fts_rowid)
     |> normalize_metadata()
     |> assoc_constraint(:session)
+  end
+
+  # Generate a restart-safe integer for FTS5 external content linkage.
+  # WITHOUT ROWID tables have no implicit rowid, so this bridges
+  # the source table to the FTS5 index. Uses a cryptographically
+  # random 63-bit positive integer; the unique DB index on fts_rowid
+  # plus unique_constraint/3 ensures any extremely unlikely collision
+  # is surfaced as a changeset error instead of raising.
+  defp assign_fts_rowid(changeset) do
+    case get_field(changeset, :fts_rowid) do
+      nil -> put_change(changeset, :fts_rowid, random_fts_rowid())
+      _existing -> changeset
+    end
+  end
+
+  defp random_fts_rowid do
+    <<int::unsigned-64>> = :crypto.strong_rand_bytes(8)
+    Bitwise.band(int, 0x7FFF_FFFF_FFFF_FFFF)
   end
 
   # Normalize nil metadata to %{} so the DB NOT NULL constraint is

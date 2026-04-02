@@ -18,8 +18,10 @@ defmodule MonkeyClaw.Sessions do
   Message content is indexed in an FTS5 external content table
   (`session_messages_fts`). Database triggers keep the index in
   sync automatically on INSERT and DELETE — no application-level
-  sync needed. Search results join back to source messages via
-  rowid for full metadata access.
+  sync needed beyond generating the `fts_rowid` at changeset time.
+  Search results join back to source messages via `fts_rowid` (an
+  application-generated unique integer that bridges the WITHOUT
+  ROWID source table to the FTS5 index).
 
   ## Design
 
@@ -292,12 +294,19 @@ defmodule MonkeyClaw.Sessions do
     limit = opts |> Map.get(:limit, 50) |> clamp_search_limit()
 
     # Use raw SQL for FTS5 MATCH + join back to source messages.
-    # External content FTS5 joins via rowid. We join through sessions
-    # to verify workspace ownership (defense in depth).
+    # External content FTS5 joins via fts_rowid (the application-
+    # generated integer key, since all tables are WITHOUT ROWID).
+    # We join through sessions to verify workspace ownership
+    # (defense in depth).
+    #
+    # fts_rowid is intentionally excluded from the SELECT — it is
+    # an internal linkage column for FTS5, not part of the domain
+    # model. Message structs from search will have fts_rowid: nil.
     sql = """
-    SELECT m.*
+    SELECT m.id, m.role, m.content, m.sequence, m.metadata,
+           m.session_id, m.inserted_at
     FROM session_messages_fts AS fts
-    JOIN session_messages AS m ON m.rowid = fts.rowid
+    JOIN session_messages AS m ON m.fts_rowid = fts.rowid
     JOIN sessions AS s ON s.id = m.session_id
     WHERE fts.content MATCH ?1
       AND s.workspace_id = ?2

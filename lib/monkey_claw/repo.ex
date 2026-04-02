@@ -4,7 +4,9 @@ defmodule MonkeyClaw.Repo do
 
   Backed by SQLite3 via `ecto_sqlite3`. All tables use `STRICT`
   mode (type enforcement at the storage layer — prevents SQLite's
-  default type affinity coercion).
+  default type affinity coercion) and `WITHOUT ROWID` (clustered
+  UUID primary keys — eliminates the implicit rowid B-tree for
+  more efficient lookups).
 
   ## SQLite3 Configuration
 
