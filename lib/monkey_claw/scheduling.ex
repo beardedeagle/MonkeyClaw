@@ -19,6 +19,8 @@ defmodule MonkeyClaw.Scheduling do
   (database I/O aside) and safe for concurrent use.
   """
 
+  require Logger
+
   import Ecto.Query
 
   alias MonkeyClaw.Repo
@@ -256,11 +258,15 @@ defmodule MonkeyClaw.Scheduling do
   # Guard: interval entry with missing/invalid interval_ms cannot compute
   # the next run time. Mark as failed to prevent infinite re-firing.
   defp compute_post_run_attrs(
-         %ScheduleEntry{schedule_type: :interval},
+         %ScheduleEntry{schedule_type: :interval, id: id, interval_ms: interval_ms},
          attrs,
          _now,
          _new_run_count
        ) do
+    Logger.warning(
+      "Schedule entry #{id} has invalid interval_ms=#{inspect(interval_ms)} — marking failed"
+    )
+
     Map.put(attrs, :status, :failed)
   end
 end

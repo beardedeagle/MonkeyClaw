@@ -80,7 +80,10 @@ defmodule MonkeyClaw.Scheduling.Scheduler do
   """
   @spec trigger_poll() :: :ok
   def trigger_poll do
-    GenServer.call(__MODULE__, :trigger_poll)
+    case Process.whereis(__MODULE__) do
+      nil -> :ok
+      pid -> GenServer.call(pid, :trigger_poll, 30_000)
+    end
   end
 
   # ── GenServer Callbacks ──────────────────────────────────────
@@ -167,9 +170,14 @@ defmodule MonkeyClaw.Scheduling.Scheduler do
           :ok
 
         {:error, changeset} ->
+          # record_run failure means the entry stays active+due, which would
+          # cause duplicate experiments on the next poll. Mark failed to prevent
+          # infinite re-firing. The experiment was already created above.
           Logger.warning(
-            "Scheduler failed to record run for entry #{entry.id}: #{inspect(changeset.errors)}"
+            "Scheduler failed to record run for entry #{entry.id}: #{inspect(changeset.errors)} — marking failed"
           )
+
+          mark_entry_failed(entry)
       end
     else
       {:error, :not_found} ->
@@ -214,7 +222,16 @@ defmodule MonkeyClaw.Scheduling.Scheduler do
   defp cancel_timer(%__MODULE__{timer_ref: nil} = state), do: state
 
   defp cancel_timer(%__MODULE__{timer_ref: ref} = state) when is_reference(ref) do
-    _remaining = Process.cancel_timer(ref)
+    _remaining = Process.cancel_timer(ref, info: false)
+
+    # Flush any :poll message that arrived between timer fire and cancel.
+    # Without this, a stale :poll in the mailbox causes a double poll cycle.
+    receive do
+      :poll -> :ok
+    after
+      0 -> :ok
+    end
+
     %{state | timer_ref: nil}
   end
 end

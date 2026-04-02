@@ -43,6 +43,7 @@ defmodule MonkeyClaw.UserModeling.Observer do
   alias MonkeyClaw.UserModeling
 
   @default_flush_interval_ms 30_000
+  @max_buffer_size 10_000
 
   @type observation :: %{required(:prompt) => String.t(), optional(:response) => String.t()}
 
@@ -136,12 +137,22 @@ defmodule MonkeyClaw.UserModeling.Observer do
 
   @impl true
   def handle_cast({:observe, workspace_id, observation}, %__MODULE__{} = state) do
-    updated_buffer =
-      Map.update(state.buffer, workspace_id, [observation], fn existing ->
-        [observation | existing]
-      end)
+    current_size = buffer_count(state.buffer)
 
-    {:noreply, %{state | buffer: updated_buffer}}
+    if current_size >= @max_buffer_size do
+      Logger.warning(
+        "Observer buffer full (#{current_size}/#{@max_buffer_size}), dropping observation"
+      )
+
+      {:noreply, state}
+    else
+      updated_buffer =
+        Map.update(state.buffer, workspace_id, [observation], fn existing ->
+          [observation | existing]
+        end)
+
+      {:noreply, %{state | buffer: updated_buffer}}
+    end
   end
 
   @impl true
@@ -159,12 +170,7 @@ defmodule MonkeyClaw.UserModeling.Observer do
 
   @impl true
   def handle_call(:buffer_size, _from, %__MODULE__{} = state) do
-    count =
-      state.buffer
-      |> Map.values()
-      |> Enum.reduce(0, fn observations, acc -> acc + length(observations) end)
-
-    {:reply, count, state}
+    {:reply, buffer_count(state.buffer), state}
   end
 
   @impl true
@@ -172,6 +178,16 @@ defmodule MonkeyClaw.UserModeling.Observer do
     _state = do_flush(state)
     cancel_timer(state.timer_ref)
     :ok
+  end
+
+  # ──────────────────────────────────────────────
+  # Private — Buffer Helpers
+  # ──────────────────────────────────────────────
+
+  defp buffer_count(buffer) do
+    buffer
+    |> Map.values()
+    |> Enum.reduce(0, fn observations, acc -> acc + length(observations) end)
   end
 
   # ──────────────────────────────────────────────
@@ -197,11 +213,21 @@ defmodule MonkeyClaw.UserModeling.Observer do
   end
 
   defp flush_workspace(workspace_id, observation) do
-    UserModeling.record_observation(workspace_id, observation)
-    :ok
+    case UserModeling.record_observation(workspace_id, observation) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Observer flush failed for workspace_id=#{workspace_id}: #{inspect(reason)}"
+        )
+
+        :error
+    end
   rescue
     error ->
-      Logger.warning("Observer flush failed for workspace_id=#{workspace_id}: #{inspect(error)}")
+      Logger.warning("Observer flush crashed for workspace_id=#{workspace_id}: #{inspect(error)}")
+
       :error
   end
 

@@ -194,7 +194,7 @@ defmodule MonkeyClaw.Scheduling.ScheduleEntry do
     |> validate_length(:name, min: 1, max: 200)
     |> validate_length(:description, max: 1000)
     |> validate_interval_ms_for_update(entry.schedule_type)
-    |> validate_experiment_config()
+    |> maybe_validate_experiment_config()
     |> validate_max_runs()
     |> validate_number(:run_count, greater_than_or_equal_to: 0)
     |> validate_status_transition(entry.status)
@@ -240,6 +240,16 @@ defmodule MonkeyClaw.Scheduling.ScheduleEntry do
 
       :error ->
         changeset
+    end
+  end
+
+  # Only validate experiment_config on update when the field is actually
+  # being changed. This avoids re-validating the existing config on
+  # unrelated updates like record_run (run_count, last_run_at, status).
+  defp maybe_validate_experiment_config(changeset) do
+    case fetch_change(changeset, :experiment_config) do
+      {:ok, _} -> validate_experiment_config(changeset)
+      :error -> changeset
     end
   end
 

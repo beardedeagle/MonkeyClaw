@@ -160,6 +160,9 @@ defmodule MonkeyClaw.UserModeling do
 
   Creates a default profile if one does not exist for the workspace.
 
+  Returns `:ok` on success, `{:error, reason}` if the profile cannot
+  be created or updated.
+
   ## Examples
 
       :ok = UserModeling.record_observation(workspace_id, %{
@@ -171,7 +174,7 @@ defmodule MonkeyClaw.UserModeling do
           required(:prompt) => String.t(),
           optional(:response) => String.t()
         }) ::
-          :ok
+          :ok | {:error, term()}
   def record_observation(workspace_id, %{prompt: prompt} = observation)
       when is_binary(workspace_id) and byte_size(workspace_id) > 0 and
              is_binary(prompt) do
@@ -183,9 +186,9 @@ defmodule MonkeyClaw.UserModeling do
         Logger.warning(
           "Failed to get/create profile for observation: workspace_id=#{workspace_id} reason=#{inspect(reason)}"
         )
-    end
 
-    :ok
+        {:error, reason}
+    end
   end
 
   # ──────────────────────────────────────────────
@@ -251,14 +254,14 @@ defmodule MonkeyClaw.UserModeling do
   """
   @spec merge_patterns(map(), map()) :: %{String.t() => non_neg_integer() | float() | map()}
   def merge_patterns(existing, new) when is_map(existing) and is_map(new) do
-    existing_count = min(Map.get(existing, "query_count", 0), @max_query_count)
-    new_count = Map.get(new, "query_count", 0)
+    existing_count = safe_count(Map.get(existing, "query_count", 0), @max_query_count)
+    new_count = safe_count(Map.get(new, "query_count", 0), @max_query_count)
     remaining_capacity = max(@max_query_count - existing_count, 0)
     effective_new_count = min(new_count, remaining_capacity)
     total_count = existing_count + effective_new_count
 
-    existing_avg = Map.get(existing, "avg_prompt_length", 0.0)
-    new_avg = Map.get(new, "avg_prompt_length", 0.0)
+    existing_avg = safe_float(Map.get(existing, "avg_prompt_length", 0.0))
+    new_avg = safe_float(Map.get(new, "avg_prompt_length", 0.0))
 
     merged_avg =
       if total_count > 0 do
@@ -382,7 +385,7 @@ defmodule MonkeyClaw.UserModeling do
           "Failed to update profile observation: profile_id=#{profile.id} reason=#{inspect(reason)}"
         )
 
-        :ok
+        {:error, reason}
     end
   end
 
@@ -436,6 +439,15 @@ defmodule MonkeyClaw.UserModeling do
   end
 
   defp format_preferences(_), do: ""
+
+  # Defensive coercion for numeric values from JSON round-trip through SQLite.
+  # Returns 0 or 0.0 for non-numeric values to prevent ArithmeticError on
+  # corrupted or manually-edited records.
+  defp safe_count(value, max) when is_number(value), do: min(value, max)
+  defp safe_count(_, _), do: 0
+
+  defp safe_float(value) when is_number(value), do: value * 1.0
+  defp safe_float(_), do: 0.0
 
   # Return the top N entries from a map by value (descending).
   defp top_n_by_value(map, n) when map_size(map) <= n, do: map
