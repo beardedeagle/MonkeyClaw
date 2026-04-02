@@ -11,9 +11,9 @@ defmodule MonkeyClaw.Repo.Migrations.CreateExperiments do
       within an experiment, including evaluation results and state
       snapshots for observability and debugging.
 
-  Both tables use `STRICT` mode for type enforcement at the storage
-  layer and `binary_id` primary keys for consistency with the rest
-  of the MonkeyClaw schema.
+  Both tables use `STRICT, WITHOUT ROWID` for type enforcement at
+  the storage layer and clustered UUID primary keys — eliminating
+  the implicit rowid B-tree for more efficient UUID-keyed lookups.
 
   ## Status Lifecycles
 
@@ -31,7 +31,7 @@ defmodule MonkeyClaw.Repo.Migrations.CreateExperiments do
   use Ecto.Migration
 
   def change do
-    create table(:experiments, primary_key: false, options: "STRICT") do
+    create table(:experiments, primary_key: false, options: "STRICT, WITHOUT ROWID") do
       add :id, :binary_id, primary_key: true
       add :title, :string, null: false
       add :type, :string, null: false
@@ -81,7 +81,7 @@ defmodule MonkeyClaw.Repo.Migrations.CreateExperiments do
     create index(:experiments, [:status])
     create index(:experiments, [:type])
 
-    create table(:experiment_iterations, primary_key: false, options: "STRICT") do
+    create table(:experiment_iterations, primary_key: false, options: "STRICT, WITHOUT ROWID") do
       add :id, :binary_id, primary_key: true
 
       # Monotonically increasing within the experiment (1-based).

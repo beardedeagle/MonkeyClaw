@@ -33,9 +33,13 @@ defmodule MonkeyClaw.Sessions.Message do
   ## FTS5 Integration
 
   Message content is indexed in an FTS5 external content table
-  (`session_messages_fts`). Database triggers keep the index in
-  sync automatically on INSERT and DELETE — no application-level
-  sync needed.
+  (`session_messages_fts`). The `fts_rowid` field is an
+  application-generated unique integer (via `System.unique_integer/1`)
+  that bridges the WITHOUT ROWID source table to the FTS5 index —
+  FTS5 external content mode requires an integer key for linkage.
+  Database triggers keep the index in sync automatically on INSERT
+  and DELETE — no application-level sync needed beyond generating
+  the `fts_rowid` at changeset time.
 
   ## Design
 
@@ -54,6 +58,7 @@ defmodule MonkeyClaw.Sessions.Message do
           role: role() | nil,
           content: String.t() | nil,
           sequence: non_neg_integer() | nil,
+          fts_rowid: integer() | nil,
           metadata: map(),
           session_id: Ecto.UUID.t() | nil,
           inserted_at: DateTime.t() | nil
@@ -77,6 +82,7 @@ defmodule MonkeyClaw.Sessions.Message do
     field :role, Ecto.Enum, values: @roles
     field :content, :string
     field :sequence, :integer
+    field :fts_rowid, :integer
     field :metadata, :map, default: %{}
 
     belongs_to :session, Session
@@ -109,8 +115,17 @@ defmodule MonkeyClaw.Sessions.Message do
     |> validate_required([:role, :sequence])
     |> validate_inclusion(:role, @roles)
     |> validate_number(:sequence, greater_than_or_equal_to: 0)
+    |> assign_fts_rowid()
     |> normalize_metadata()
     |> assoc_constraint(:session)
+  end
+
+  # Generate a unique integer for FTS5 external content linkage.
+  # WITHOUT ROWID tables have no implicit rowid, so this bridges
+  # the source table to the FTS5 index. Uses ERTS's monotonic
+  # unique integer — guaranteed unique per BEAM node, zero overhead.
+  defp assign_fts_rowid(changeset) do
+    put_change(changeset, :fts_rowid, System.unique_integer([:positive, :monotonic]))
   end
 
   # Normalize nil metadata to %{} so the DB NOT NULL constraint is

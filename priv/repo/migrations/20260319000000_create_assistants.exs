@@ -2,7 +2,7 @@ defmodule MonkeyClaw.Repo.Migrations.CreateAssistants do
   use Ecto.Migration
 
   def change do
-    create table(:assistants, primary_key: false, options: "STRICT") do
+    create table(:assistants, primary_key: false, options: "STRICT, WITHOUT ROWID") do
       add :id, :binary_id, primary_key: true
       add :name, :string, null: false
       add :description, :text
