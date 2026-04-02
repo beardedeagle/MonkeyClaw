@@ -5,6 +5,8 @@ defmodule MonkeyClaw.Application do
 
   use Application
 
+  alias MonkeyClaw.Skills.Cache, as: SkillsCache
+
   @impl true
   def start(_type, _args) do
     # Initialize BeamAgent ETS table ownership before any SDK calls.
@@ -13,6 +15,11 @@ defmodule MonkeyClaw.Application do
     # control. Must happen before the supervision tree starts, since
     # SessionSupervisor children will touch BeamAgent ETS tables.
     :ok = :beam_agent_table_owner.init()
+
+    # Initialize Skills ETS cache before supervision tree starts.
+    # Skills cache is an application-owned ETS table (not a process)
+    # used for low-latency per-workspace skill lookups.
+    :ok = SkillsCache.init()
 
     children = [
       MonkeyClawWeb.Telemetry,

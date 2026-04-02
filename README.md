@@ -72,6 +72,7 @@ Clean separation of concerns, connected through a public Elixir API.
 | **Workflow**  | `MonkeyClaw.Workflows.Conversation` | Product-level orchestration recipe              |
 | **Experiment**| `MonkeyClaw.Experiments.Experiment`  | Bounded optimization loop with strategy-driven iteration |
 | **Recall**    | `MonkeyClaw.Recall`                  | Cross-session history search and context injection |
+| **Skills**    | `MonkeyClaw.Skills`                  | Reusable procedures extracted from successful experiments with FTS5 search and effectiveness scoring |
 
 Contexts (`MonkeyClaw.Assistants`, `MonkeyClaw.Workspaces`) provide the
 public CRUD API. `MonkeyClaw.AgentBridge` translates domain objects into
@@ -191,6 +192,49 @@ The search layer supports temporal filtering (`:after`/`:before`),
 role filtering (`:roles`), session exclusion (`:exclude_session_id`),
 and configurable result limits. All functions are pure (database I/O
 aside) — no processes, no state.
+
+### Self-Improving Skills
+
+Reusable procedure library built from accepted experiments. The skills
+system extracts proven strategies from the experiment engine, indexes
+them for natural language discovery, and injects relevant skills into
+agent queries automatically.
+
+Three-layer architecture:
+
+| Layer | Module | Owns |
+|-------|--------|------|
+| **Skills** | `MonkeyClaw.Skills` | Skill CRUD, FTS5 search, effectiveness scoring |
+| **Extractor** | `MonkeyClaw.Skills.Extractor` | Auto-extraction from accepted experiments |
+| **Plug** | `MonkeyClaw.Skills.Plug` | Extension plug for `:query_pre` automatic injection |
+
+When an experiment is accepted, the extractor derives a named skill
+from the strategy and result, stores it with an initial effectiveness
+score, and indexes it in FTS5 for full-text search. The skills plug
+hooks into `:query_pre` alongside recall:
+
+1. Searches the skill library using FTS5 against the incoming prompt
+2. Ranks candidates by effectiveness score
+3. Prepends matching skills as reusable context in `:effective_prompt`
+
+An ETS hot cache holds workspace skill sets for non-query contexts
+(dashboards, listing). Query-time injection always uses FTS5 search
+for relevance. Effectiveness scores update on each use — accepted
+outcomes increment the score, rejected outcomes decrement it — so the
+library self-selects toward what actually works over time.
+
+Configuration is via application config:
+
+    config :monkey_claw, MonkeyClaw.Extensions,
+      hooks: %{
+        query_pre: [
+          {MonkeyClaw.Recall.Plug, max_results: 10, max_chars: 4000},
+          {MonkeyClaw.Skills.Plug, max_skills: 5, max_chars: 2000}
+        ]
+      }
+
+All functions are pure (database and ETS I/O aside) — no processes,
+no state beyond the cache.
 
 ### Dashboard
 
