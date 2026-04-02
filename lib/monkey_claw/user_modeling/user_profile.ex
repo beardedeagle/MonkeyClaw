@@ -162,6 +162,9 @@ defmodule MonkeyClaw.UserModeling.UserProfile do
             changeset
         end
 
+      nil ->
+        add_error(changeset, :preferences, "must be a map, got nil")
+
       _ ->
         changeset
     end

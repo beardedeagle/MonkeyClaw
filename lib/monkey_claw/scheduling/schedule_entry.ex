@@ -244,9 +244,12 @@ defmodule MonkeyClaw.Scheduling.ScheduleEntry do
   end
 
   # Validate experiment_config has required keys when set.
+  # Normalizes atom keys to strings for consistent JSON storage.
   defp validate_experiment_config(changeset) do
     case get_field(changeset, :experiment_config) do
       config when is_map(config) and map_size(config) > 0 ->
+        config = stringify_keys(config)
+        changeset = put_change(changeset, :experiment_config, config)
         required_keys = ["title", "type", "max_iterations"]
         missing = Enum.reject(required_keys, &Map.has_key?(config, &1))
 
@@ -266,6 +269,11 @@ defmodule MonkeyClaw.Scheduling.ScheduleEntry do
   # max_runs must be positive if set.
   defp validate_max_runs(changeset) do
     validate_number(changeset, :max_runs, greater_than: 0)
+  end
+
+  # Normalize map keys to strings for consistent JSON storage.
+  defp stringify_keys(map) when is_map(map) do
+    Map.new(map, fn {k, v} -> {to_string(k), v} end)
   end
 
   # Status transitions must follow the defined state machine.

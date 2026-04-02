@@ -183,19 +183,26 @@ defmodule MonkeyClaw.UserModeling.Observer do
   end
 
   defp do_flush(%__MODULE__{buffer: buffer} = state) do
-    Enum.each(buffer, fn {workspace_id, observations} ->
-      merged = merge_observations(observations)
-      flush_workspace(workspace_id, merged)
-    end)
+    failed =
+      Enum.reduce(buffer, %{}, fn {workspace_id, observations}, acc ->
+        merged = merge_observations(observations)
 
-    %{state | buffer: %{}}
+        case flush_workspace(workspace_id, merged) do
+          :ok -> acc
+          :error -> Map.put(acc, workspace_id, observations)
+        end
+      end)
+
+    %{state | buffer: failed}
   end
 
   defp flush_workspace(workspace_id, observation) do
     UserModeling.record_observation(workspace_id, observation)
+    :ok
   rescue
     error ->
       Logger.warning("Observer flush failed for workspace_id=#{workspace_id}: #{inspect(error)}")
+      :error
   end
 
   # Merge multiple observations into a single observation.
