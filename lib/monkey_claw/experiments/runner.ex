@@ -77,6 +77,7 @@ defmodule MonkeyClaw.Experiments.Runner do
   alias MonkeyClaw.AgentBridge.Backend
   alias MonkeyClaw.Experiments
   alias MonkeyClaw.Experiments.{RunResult, Telemetry}
+  alias MonkeyClaw.Extensions
 
   # ── Types ────────────────────────────────────────────────────
 
@@ -122,7 +123,8 @@ defmodule MonkeyClaw.Experiments.Runner do
           pending_duration_ms: non_neg_integer() | nil,
           experiment_start_time: integer() | nil,
           iteration_start_time: integer() | nil,
-          mutation_scope: [String.t()]
+          mutation_scope: [String.t()],
+          last_eval_result: map() | nil
         }
 
   @enforce_keys [:experiment_id, :strategy, :strategy_name, :backend, :config, :max_iterations]
@@ -144,6 +146,7 @@ defmodule MonkeyClaw.Experiments.Runner do
     :pending_duration_ms,
     :experiment_start_time,
     :iteration_start_time,
+    :last_eval_result,
     status: :initializing,
     iteration: 0,
     max_iterations: 10,
@@ -388,6 +391,17 @@ defmodule MonkeyClaw.Experiments.Runner do
         # Update state with prepared strategy_state so rollback has access
         # to any checkpoint_id stored during preparation.
         state = %{state | strategy_state: strategy_state, iteration: iteration}
+
+        # Notify observers
+        hook_data = %{
+          experiment_id: state.experiment_id,
+          iteration: iteration,
+          strategy: state.strategy_name
+        }
+
+        broadcast(state.experiment_id, :iteration_started, hook_data)
+        fire_hook(:iteration_started, hook_data)
+
         build_prompt_and_launch(state, iteration, now)
 
       {:error, reason} ->
@@ -510,6 +524,16 @@ defmodule MonkeyClaw.Experiments.Runner do
             state
         end
 
+      # Notify observers
+      hook_data = %{
+        experiment_id: experiment.id,
+        strategy: strategy_name,
+        max_iterations: experiment.max_iterations
+      }
+
+      broadcast(experiment.id, :experiment_started, hook_data)
+      fire_hook(:experiment_started, hook_data)
+
       # Kick off the first iteration
       send(self(), :next_iteration)
 
@@ -606,9 +630,25 @@ defmodule MonkeyClaw.Experiments.Runner do
         duration_ms
       )
 
+      # Capture last eval_result for experiment.result on completion
+      state = %{eval_state | strategy_state: decide_strategy_state, last_eval_result: eval_result}
+
+      # Notify observers — iteration evaluation complete
+      iter_hook_data = %{
+        experiment_id: state.experiment_id,
+        iteration: state.iteration,
+        strategy: state.strategy_name,
+        score: score,
+        decision: Atom.to_string(auto_decision),
+        duration_ms: duration_ms
+      }
+
+      broadcast(state.experiment_id, :iteration_completed, iter_hook_data)
+      fire_hook(:iteration_completed, iter_hook_data)
+
       # Preserve :stopping set by graceful_stop — don't clobber with :evaluating
       eval_status = if state.status == :stopping, do: :stopping, else: :evaluating
-      state = %{eval_state | strategy_state: decide_strategy_state, status: eval_status}
+      state = %{state | status: eval_status}
 
       # :stopping is internal-only, not a persisted status — but we must
       # still persist :evaluating when the human gate will follow, so the
@@ -875,11 +915,12 @@ defmodule MonkeyClaw.Experiments.Runner do
       duration_ms
     )
 
-    # Persist final state
+    # Persist final state + result
     attrs = %{
       status: terminal_status,
       completed_at: now,
       state: scrub_secrets(state.strategy_state),
+      result: scrub_secrets(state.last_eval_result),
       iteration_count: state.iteration
     }
 
@@ -898,6 +939,19 @@ defmodule MonkeyClaw.Experiments.Runner do
       {:error, reason} ->
         Logger.error("Experiment #{state.experiment_id} final persist failed: #{inspect(reason)}")
     end
+
+    # Notify observers — experiment completed
+    hook_data = %{
+      experiment_id: state.experiment_id,
+      status: Atom.to_string(terminal_status),
+      iteration: state.iteration,
+      strategy: state.strategy_name,
+      termination_reason: termination_reason,
+      duration_ms: duration_ms
+    }
+
+    broadcast(state.experiment_id, :experiment_completed, hook_data)
+    fire_hook(:experiment_completed, hook_data)
 
     {:stop, :normal, %{state | status: terminal_status}}
   end
@@ -1102,5 +1156,29 @@ defmodule MonkeyClaw.Experiments.Runner do
     |> Module.split()
     |> List.last()
     |> String.downcase()
+  end
+
+  # ── Private: PubSub Broadcasting ────────────────────────────
+
+  # Broadcasts experiment events on `"experiment:#{id}"` topic.
+  # PubSub.broadcast/3 returns :ok — it doesn't raise. If PubSub
+  # is dead, that's a supervision tree failure, not something
+  # the Runner should swallow.
+  @spec broadcast(String.t(), atom(), map()) :: :ok
+  defp broadcast(experiment_id, event, payload) do
+    message = %{event: event, experiment_id: experiment_id, payload: payload}
+    Phoenix.PubSub.broadcast(MonkeyClaw.PubSub, "experiment:#{experiment_id}", message)
+  end
+
+  # ── Private: Extension Hook Firing ──────────────────────────
+
+  # Fires an extension hook through the plug pipeline.
+  # Extensions.execute/2 returns {:ok, ctx} | {:error, reason} —
+  # we discard the return. If the extension system itself is broken,
+  # let it crash — supervision handles that.
+  @spec fire_hook(atom(), map()) :: :ok
+  defp fire_hook(hook, data) do
+    _ = Extensions.execute(hook, data)
+    :ok
   end
 end

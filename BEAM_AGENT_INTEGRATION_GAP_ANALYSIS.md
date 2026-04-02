@@ -6,6 +6,8 @@
 > S3 Permission Mode, S4 Event Unsubscribe).
 > Phase 2 Agent Autonomy: S1 Experiment Runs implemented (Strategy behaviour +
 > Runner GenServer + iteration persistence + security hardening).
+> S2 Experiment Loops implemented (lifecycle API, extension hooks,
+> PubSub broadcasting, result population).
 
 ## The Numbers
 
@@ -94,6 +96,30 @@ integrated as a fire-and-forget secondary layer in the Session GenServer.
 - `Backend.Test`: validates ref, clears event state
 - `Session.do_stop_session/1`: calls `unsubscribe_events/1` before stopping
   the BeamAgent process, ensuring no leaked subscriptions
+
+### S2-Autonomy. Experiment Loops (Integration Wiring)
+
+**Implemented 2026-04-02.** Lifecycle API, extension hooks, PubSub broadcasting,
+and result population — completing the experiment engine's integration surface.
+
+- **Lifecycle API**: `Experiments.start_experiment/3` (create + start runner),
+  `stop_experiment/1` (graceful stop via Runner), `cancel_experiment/1`
+  (immediate cancel via Runner), `experiment_status/1` (live Runner info
+  with DB fallback). Atomic create-and-start with cleanup on Runner failure.
+- **Extension hooks**: Four new hook points in `Extensions.Hook`:
+  `:experiment_started`, `:experiment_completed`, `:iteration_started`,
+  `:iteration_completed`. Fired from Runner at lifecycle boundaries.
+  Best-effort — hook failures never crash the Runner.
+- **PubSub broadcasting**: Runner broadcasts on `"experiment:#{id}"` topics
+  (matching `"agent_session:#{id}"` pattern). Events: `:experiment_started`,
+  `:iteration_started`, `:iteration_completed`, `:experiment_completed`.
+  Best-effort — broadcast failures never crash the Runner.
+- **Result population**: `last_eval_result` tracked in Runner state, persisted
+  as `experiment.result` on completion (scrubbed through same secret filter
+  as strategy state). Previously only strategy state was persisted.
+- **Test coverage**: 13 new tests — PubSub event assertions, result population
+  (accept/reject/cancel/secrets), lifecycle API (start/stop/cancel/status).
+  All tests use real GenServer processes (Backend.Test), zero mocks.
 
 ---
 
@@ -372,6 +398,7 @@ Uniquely BEAM-native: hot code reload + supervision + distribution.
 | Settings panel | `BeamAgent.Config`, `BeamAgent.Control` | P2/P6 | Planned |
 | Chat history / SQLite | `list_sessions`, `get_session_messages`, `summarize_session` | S2 | **Done** |
 | Experiment engine (autonomy foundation) | `BeamAgent.query`, `BeamAgent.Checkpoint` | Phase 2 S1 | **Done** |
+| Experiment loops (integration wiring) | Lifecycle API, Extension hooks, PubSub | Phase 2 S2 | **Done** |
 | Bounded experiment loops (deep integration) | `BeamAgent.Runs` + `BeamAgent.Hooks` | D4 + P5 | Planned |
 | Self-improving skills | `BeamAgent.Skills` + `BeamAgent.Memory` | D1 + D6 | Planned |
 | User modeling | `BeamAgent.Memory.remember/recall` | D1 | Planned |
@@ -438,11 +465,13 @@ Uniquely BEAM-native: hot code reload + supervision + distribution.
 
 ### Recommended Next Step
 
-**Phase 2, continuing with S2 (Experiment Loops) and P2 (Context Management).**
-Phase 1 is complete (S1-S4). S2 (Session History) is also complete with SQLite
-persistence. Phase 2 S1 (Experiment Runs) is implemented — the experiment engine
-provides the Strategy behaviour, Runner GenServer, iteration persistence, and
-security hardening (mutation scope enforcement, strategy validation, try/catch
-safety wrappers, error sanitization). Next: wire experiment loops into the
-experiment engine (Phase 2 S2), then tackle P2 (Context Management) and
-P1 (Extended Threads) for beam-agent feature parity.
+**Phase 2 Feature Parity, starting with P1 (Extended Threads) or P2 (Context Management).**
+Phase 1 is complete (S1-S4). Phase 2 Agent Autonomy S1 (Experiment Runs) and
+S2 (Experiment Loops) are both implemented — the experiment engine now provides:
+Strategy behaviour, Runner GenServer, iteration persistence, security hardening,
+lifecycle API (`start_experiment/3`, `stop_experiment/1`, `cancel_experiment/1`,
+`experiment_status/1`), extension hooks (`:experiment_started`, `:experiment_completed`,
+`:iteration_started`, `:iteration_completed`), PubSub broadcasting on
+`"experiment:#{id}"` topics for LiveView, and result population (final eval_result
+persisted as `experiment.result`). Next: P1 (Extended Threads) and P2 (Context
+Management) for beam-agent feature parity.

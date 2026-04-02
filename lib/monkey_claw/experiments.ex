@@ -2,9 +2,9 @@ defmodule MonkeyClaw.Experiments do
   @moduledoc """
   Context module for experiments and experiment iterations.
 
-  Provides CRUD operations for experiments and their iterations.
-  This is the public API for all experiment persistence operations
-  in MonkeyClaw.
+  Provides CRUD operations, lifecycle management, and iteration
+  recording for experiments. This is the public API for all
+  experiment operations in MonkeyClaw.
 
   ## What Is an Experiment
 
@@ -32,7 +32,8 @@ defmodule MonkeyClaw.Experiments do
 
   import Ecto.Query
 
-  alias MonkeyClaw.Experiments.{Experiment, Iteration}
+  alias MonkeyClaw.Experiments.{Experiment, Iteration, Runner}
+  alias MonkeyClaw.Experiments.Supervisor, as: ExpSupervisor
   alias MonkeyClaw.Repo
   alias MonkeyClaw.Workspaces.Workspace
 
@@ -140,6 +141,143 @@ defmodule MonkeyClaw.Experiments do
           {:ok, Experiment.t()} | {:error, Ecto.Changeset.t()}
   def delete_experiment(%Experiment{} = experiment) do
     Repo.delete(experiment)
+  end
+
+  # ──────────────────────────────────────────────
+  # Experiment Lifecycle
+  # ──────────────────────────────────────────────
+
+  @doc """
+  Create an experiment and start its Runner process.
+
+  This is the primary entry point for launching experiments. It
+  atomically creates the experiment record and starts a supervised
+  Runner GenServer. If the Runner fails to start, the experiment
+  record is cleaned up.
+
+  ## Runner Config
+
+  The `runner_config` map is forwarded to `Runner.start_link/1` with
+  the experiment's ID injected. Required keys:
+
+    * `:strategy` — Strategy module implementing the behaviour
+
+  Optional keys:
+
+    * `:backend` — Backend module (default: `Backend.BeamAgent`)
+    * `:session_opts` — Options for `Backend.start_session/1`
+    * `:opts` — Strategy-specific options
+    * `:human_gate` — Enable human decision gate (default: false)
+
+  ## Examples
+
+      {:ok, experiment, pid} = Experiments.start_experiment(workspace, %{
+        title: "Optimize parser",
+        type: :code,
+        max_iterations: 5,
+        config: %{"scoped_files" => ["lib/parser.ex"]}
+      }, %{strategy: MyStrategy})
+  """
+  @spec start_experiment(Workspace.t(), map(), map()) ::
+          {:ok, Experiment.t(), pid()} | {:error, term()}
+  def start_experiment(%Workspace{} = workspace, attrs, runner_config)
+      when is_map(attrs) and is_map(runner_config) do
+    case create_experiment(workspace, attrs) do
+      {:ok, experiment} ->
+        config = Map.put(runner_config, :experiment_id, experiment.id)
+
+        case ExpSupervisor.start_runner(config) do
+          {:ok, pid} ->
+            {:ok, experiment, pid}
+
+          {:error, reason} ->
+            # Runner failed to start — clean up the experiment record.
+            # Still in :created status (Runner.init sets :running),
+            # so deletion is safe — no iterations exist yet.
+            Logger.warning(
+              "Experiment #{experiment.id} runner failed to start: #{inspect(reason)}, " <>
+                "cleaning up record"
+            )
+
+            _ = delete_experiment(experiment)
+            {:error, reason}
+        end
+
+      {:error, changeset} ->
+        {:error, changeset}
+    end
+  end
+
+  @doc """
+  Stop an experiment gracefully.
+
+  The Runner finishes its current iteration, evaluates the result,
+  and halts. Returns `{:error, :not_running}` if no Runner is active.
+
+  ## Examples
+
+      :ok = Experiments.stop_experiment(experiment_id)
+  """
+  @spec stop_experiment(Ecto.UUID.t()) :: :ok | {:error, :not_running}
+  def stop_experiment(experiment_id) when is_binary(experiment_id) do
+    case Runner.lookup(experiment_id) do
+      {:ok, pid} -> Runner.graceful_stop(pid)
+      {:error, :not_found} -> {:error, :not_running}
+    end
+  end
+
+  @doc """
+  Cancel an experiment immediately.
+
+  Rolls back the current iteration and stops the Runner. Returns
+  `{:error, :not_running}` if no Runner is active.
+
+  ## Examples
+
+      :ok = Experiments.cancel_experiment(experiment_id)
+  """
+  @spec cancel_experiment(Ecto.UUID.t()) :: :ok | {:error, :not_running}
+  def cancel_experiment(experiment_id) when is_binary(experiment_id) do
+    case Runner.lookup(experiment_id) do
+      {:ok, pid} -> Runner.cancel(pid)
+      {:error, :not_found} -> {:error, :not_running}
+    end
+  end
+
+  @doc """
+  Get the current status of an experiment.
+
+  If a Runner is active, returns live status from the GenServer.
+  Otherwise, returns the persisted status from the database.
+
+  ## Examples
+
+      {:ok, %{status: :running, iteration: 2, ...}} = Experiments.experiment_status(id)
+      {:ok, %{status: :accepted}} = Experiments.experiment_status(completed_id)
+  """
+  @spec experiment_status(Ecto.UUID.t()) :: {:ok, map()} | {:error, :not_found}
+  def experiment_status(experiment_id) when is_binary(experiment_id) do
+    case Runner.lookup(experiment_id) do
+      {:ok, pid} ->
+        Runner.info(pid)
+
+      {:error, :not_found} ->
+        # No live Runner — fall back to persisted state
+        case get_experiment(experiment_id) do
+          {:ok, experiment} ->
+            {:ok,
+             %{
+               experiment_id: experiment.id,
+               status: experiment.status,
+               iteration: experiment.iteration_count,
+               max_iterations: experiment.max_iterations,
+               strategy: experiment.type
+             }}
+
+          error ->
+            error
+        end
+    end
   end
 
   # ──────────────────────────────────────────────

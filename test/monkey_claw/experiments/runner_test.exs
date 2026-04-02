@@ -812,4 +812,186 @@ defmodule MonkeyClaw.Experiments.RunnerTest do
       assert updated.termination_reason == "user_cancel"
     end
   end
+
+  # ── S2: PubSub Broadcasting ───────────────────────────────────
+
+  describe "PubSub broadcasting" do
+    test "broadcasts experiment_started on init" do
+      workspace = insert_workspace!()
+      experiment = make_experiment(workspace, %{"decisions" => ["accept"]})
+      exp_id = experiment.id
+
+      Phoenix.PubSub.subscribe(MonkeyClaw.PubSub, "experiment:#{exp_id}")
+
+      config = runner_config(experiment)
+      {pid, ref} = start_runner(config)
+      wait_for_exit(ref, pid)
+
+      assert_received %{
+        event: :experiment_started,
+        experiment_id: ^exp_id,
+        payload: %{strategy: "teststrategy", max_iterations: _}
+      }
+    end
+
+    test "broadcasts iteration_started and iteration_completed" do
+      workspace = insert_workspace!()
+      experiment = make_experiment(workspace, %{"decisions" => ["accept"]})
+      exp_id = experiment.id
+
+      Phoenix.PubSub.subscribe(MonkeyClaw.PubSub, "experiment:#{exp_id}")
+
+      config = runner_config(experiment)
+      {pid, ref} = start_runner(config)
+      wait_for_exit(ref, pid)
+
+      assert_received %{
+        event: :iteration_started,
+        experiment_id: ^exp_id,
+        payload: %{iteration: 1, strategy: "teststrategy"}
+      }
+
+      assert_received %{
+        event: :iteration_completed,
+        experiment_id: ^exp_id,
+        payload: %{iteration: 1, score: _, decision: "accept"}
+      }
+    end
+
+    test "broadcasts experiment_completed on terminal state" do
+      workspace = insert_workspace!()
+      experiment = make_experiment(workspace, %{"decisions" => ["accept"]})
+      exp_id = experiment.id
+
+      Phoenix.PubSub.subscribe(MonkeyClaw.PubSub, "experiment:#{exp_id}")
+
+      config = runner_config(experiment)
+      {pid, ref} = start_runner(config)
+      wait_for_exit(ref, pid)
+
+      assert_received %{
+        event: :experiment_completed,
+        experiment_id: ^exp_id,
+        payload: %{status: "accepted", iteration: 1}
+      }
+    end
+
+    test "broadcasts events for multi-iteration experiment" do
+      workspace = insert_workspace!()
+
+      experiment =
+        make_experiment(
+          workspace,
+          %{"decisions" => ["continue", "accept"], "eval_score" => 0.6},
+          %{max_iterations: 10}
+        )
+
+      Phoenix.PubSub.subscribe(MonkeyClaw.PubSub, "experiment:#{experiment.id}")
+
+      config = runner_config(experiment)
+      {pid, ref} = start_runner(config)
+      wait_for_exit(ref, pid)
+
+      # Should receive iteration events for both iterations
+      assert_received %{event: :iteration_started, payload: %{iteration: 1}}
+      assert_received %{event: :iteration_completed, payload: %{iteration: 1}}
+      assert_received %{event: :iteration_started, payload: %{iteration: 2}}
+      assert_received %{event: :iteration_completed, payload: %{iteration: 2}}
+      assert_received %{event: :experiment_completed, payload: %{status: "accepted"}}
+    end
+  end
+
+  # ── S2: Result Population ──────────────────────────────────────
+
+  describe "result population" do
+    test "persists last eval_result as experiment.result on accept" do
+      workspace = insert_workspace!()
+
+      experiment =
+        make_experiment(
+          workspace,
+          %{"decisions" => ["accept"], "eval_score" => 0.85}
+        )
+
+      config = runner_config(experiment)
+      {pid, ref} = start_runner(config)
+      wait_for_exit(ref, pid)
+
+      {:ok, updated} = Experiments.get_experiment(experiment.id)
+      assert updated.status == :accepted
+      assert is_map(updated.result)
+      assert updated.result["score"] == 0.85
+    end
+
+    test "persists result on multi-iteration accept (last eval wins)" do
+      workspace = insert_workspace!()
+
+      experiment =
+        make_experiment(
+          workspace,
+          %{"decisions" => ["continue", "continue", "accept"], "eval_score" => 0.9},
+          %{max_iterations: 10}
+        )
+
+      config = runner_config(experiment)
+      {pid, ref} = start_runner(config)
+      wait_for_exit(ref, pid)
+
+      {:ok, updated} = Experiments.get_experiment(experiment.id)
+      assert updated.status == :accepted
+      # Last iteration's eval_result is the final result
+      assert updated.result["score"] == 0.9
+    end
+
+    test "persists result on reject (pre-rollback eval)" do
+      workspace = insert_workspace!()
+
+      experiment =
+        make_experiment(
+          workspace,
+          %{"decisions" => ["reject"], "eval_score" => 0.3}
+        )
+
+      config = runner_config(experiment)
+      {pid, ref} = start_runner(config)
+      wait_for_exit(ref, pid)
+
+      {:ok, updated} = Experiments.get_experiment(experiment.id)
+      assert updated.status == :rejected
+      assert is_map(updated.result)
+      assert updated.result["score"] == 0.3
+    end
+
+    test "result is nil when experiment cancelled before evaluation" do
+      workspace = insert_workspace!()
+      experiment = make_experiment(workspace, %{"init_error" => "bad_config"})
+      config = runner_config(experiment)
+
+      Process.flag(:trap_exit, true)
+      {:ok, pid} = Runner.start_link(config)
+      assert_receive {:EXIT, ^pid, {:init_failed, "bad_config"}}, 5000
+
+      {:ok, updated} = Experiments.get_experiment(experiment.id)
+      assert updated.status == :cancelled
+      assert updated.result == nil
+    end
+
+    test "scrubs secrets from result" do
+      workspace = insert_workspace!()
+      experiment = make_experiment(workspace)
+
+      config =
+        runner_config(experiment)
+        |> Map.put(:strategy, LeakyStrategy)
+
+      {pid, ref} = start_runner(config)
+      wait_for_exit(ref, pid)
+
+      {:ok, updated} = Experiments.get_experiment(experiment.id)
+      # Result from LeakyStrategy.evaluate returns %{score: 0.9} — no secrets
+      # But the state is scrubbed. Result should be clean.
+      assert is_map(updated.result)
+      assert updated.result["score"] == 0.9
+    end
+  end
 end

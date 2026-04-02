@@ -85,7 +85,8 @@ contract as `Plug.Conn`, applied to MonkeyClaw lifecycle events instead
 of HTTP requests. Extensions do not replace agent-level MCP, skills, or
 plugins, which flow through BeamAgent.
 
-Twelve hook points span queries, sessions, workspaces, and channels.
+Sixteen hook points span queries, sessions, workspaces, channels,
+and experiments.
 Global plugs run on every event; hook-specific plugs run only on their
 declared hook. Pipelines are compiled once at application start and
 cached in `:persistent_term` for zero-overhead runtime lookups.
@@ -141,7 +142,18 @@ Features include async execution via `Task.Supervisor.async_nolink`
 scope enforcement (strategy declares allowed files, Runner rejects
 out-of-scope changes), optional human decision gates (non-blocking),
 automatic BeamAgent checkpoint save/rewind on rollback, configurable
-per-experiment time budgets, and full telemetry instrumentation.
+per-experiment time budgets, full telemetry instrumentation, and
+secret scrubbing of strategy state and results before persistence.
+
+A lifecycle API (`start_experiment/3`, `stop_experiment/1`,
+`cancel_experiment/1`, `experiment_status/1`) provides atomic
+create-and-start with cleanup on failure, graceful stop, immediate
+cancel, and live-or-persisted status queries. Extension hooks fire at
+four lifecycle boundaries (`:experiment_started`, `:iteration_started`,
+`:iteration_completed`, `:experiment_completed`), and PubSub broadcasts
+on `"experiment:#{id}"` topics enable real-time LiveView observation.
+The final evaluation result is persisted as `experiment.result` on
+completion.
 
 ### Dashboard
 

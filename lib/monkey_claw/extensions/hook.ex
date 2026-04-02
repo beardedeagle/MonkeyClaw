@@ -12,6 +12,7 @@ defmodule MonkeyClaw.Extensions.Hook do
     * **Session hooks** — Session lifecycle transitions
     * **Workspace hooks** — Workspace CRUD events
     * **Channel hooks** — Channel CRUD events
+    * **Experiment hooks** — Experiment and iteration lifecycle events
 
   ## Design
 
@@ -34,6 +35,10 @@ defmodule MonkeyClaw.Extensions.Hook do
           | :channel_created
           | :channel_updated
           | :channel_deleted
+          | :experiment_started
+          | :experiment_completed
+          | :iteration_started
+          | :iteration_completed
 
   @hooks [
     :query_pre,
@@ -47,7 +52,11 @@ defmodule MonkeyClaw.Extensions.Hook do
     :workspace_deleted,
     :channel_created,
     :channel_updated,
-    :channel_deleted
+    :channel_deleted,
+    :experiment_started,
+    :experiment_completed,
+    :iteration_started,
+    :iteration_completed
   ]
 
   @doc """
