@@ -33,6 +33,42 @@ defmodule MonkeyClaw.Recall.PlugTest do
 
       assert opts.roles == [:user]
     end
+
+    test "normalizes nil max_chars to default" do
+      opts = RecallPlug.init(max_chars: nil)
+
+      assert opts.max_chars == 4000
+    end
+
+    test "normalizes negative max_results to default" do
+      opts = RecallPlug.init(max_results: -1)
+
+      assert opts.max_results == 10
+    end
+
+    test "normalizes zero max_chars to default" do
+      opts = RecallPlug.init(max_chars: 0)
+
+      assert opts.max_chars == 4000
+    end
+
+    test "normalizes non-atom roles to default" do
+      opts = RecallPlug.init(roles: ["user", "assistant"])
+
+      assert opts.roles == [:user, :assistant]
+    end
+
+    test "normalizes empty roles to default" do
+      opts = RecallPlug.init(roles: [])
+
+      assert opts.roles == [:user, :assistant]
+    end
+
+    test "normalizes non-integer min_query_length to default" do
+      opts = RecallPlug.init(min_query_length: "ten")
+
+      assert opts.min_query_length == 10
+    end
   end
 
   # ──────────────────────────────────────────────

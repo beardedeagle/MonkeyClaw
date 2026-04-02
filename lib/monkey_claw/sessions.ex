@@ -483,10 +483,26 @@ defmodule MonkeyClaw.Sessions do
 
   defp maybe_add_roles_filter({conds, params, idx}, %{roles: roles})
        when is_list(roles) and roles != [] do
-    role_strings = Enum.map(roles, &Atom.to_string/1)
-    count = length(role_strings)
-    placeholders = Enum.map_join(0..(count - 1), ", ", fn i -> "?#{idx + i}" end)
-    {conds ++ ["m.role IN (#{placeholders})"], params ++ role_strings, idx + count}
+    # Defensively coerce atoms and strings; skip invalid entries.
+    role_strings =
+      roles
+      |> Enum.reduce([], fn
+        role, acc when is_atom(role) -> [Atom.to_string(role) | acc]
+        role, acc when is_binary(role) -> [role | acc]
+        _other, acc -> acc
+      end)
+      |> Enum.uniq()
+      |> Enum.reverse()
+
+    case role_strings do
+      [] ->
+        {conds, params, idx}
+
+      _ ->
+        count = length(role_strings)
+        placeholders = Enum.map_join(0..(count - 1), ", ", fn i -> "?#{idx + i}" end)
+        {conds ++ ["m.role IN (#{placeholders})"], params ++ role_strings, idx + count}
+    end
   end
 
   defp maybe_add_roles_filter(state, _opts), do: state

@@ -62,16 +62,27 @@ defmodule MonkeyClaw.Recall.Plug do
   Initialize the plug with configuration options.
 
   Called once when the extension pipeline is compiled. Returns
-  a map of validated options used by `call/2`.
+  a map of validated and normalized options used by `call/2`.
+  Invalid values fall back to defaults rather than crashing
+  at query time.
   """
   @impl true
   @spec init(keyword()) :: opts()
   def init(opts) when is_list(opts) do
     %{
-      max_results: Keyword.get(opts, :max_results, @default_max_results),
-      max_chars: Keyword.get(opts, :max_chars, @default_max_chars),
-      roles: Keyword.get(opts, :roles, @default_roles),
-      min_query_length: Keyword.get(opts, :min_query_length, @default_min_query_length)
+      max_results:
+        opts
+        |> Keyword.get(:max_results, @default_max_results)
+        |> normalize_pos_int(@default_max_results),
+      max_chars:
+        opts
+        |> Keyword.get(:max_chars, @default_max_chars)
+        |> normalize_pos_int(@default_max_chars),
+      roles: opts |> Keyword.get(:roles, @default_roles) |> normalize_roles(),
+      min_query_length:
+        opts
+        |> Keyword.get(:min_query_length, @default_min_query_length)
+        |> normalize_non_neg_int(@default_min_query_length)
     }
   end
 
@@ -91,6 +102,9 @@ defmodule MonkeyClaw.Recall.Plug do
   @spec call(Context.t(), opts()) :: Context.t()
   def call(%Context{event: :query_pre} = ctx, opts) do
     prompt = Map.get(ctx.data, :prompt, "")
+    # Conversation.run_query_pre passes workspace.id as :session_id
+    # in the hook data map. This is the workspace identifier used
+    # to scope recall searches.
     workspace_id = Map.get(ctx.data, :session_id)
 
     cond do
@@ -111,6 +125,18 @@ defmodule MonkeyClaw.Recall.Plug do
   # ──────────────────────────────────────────────
   # Private
   # ──────────────────────────────────────────────
+
+  defp normalize_pos_int(v, _default) when is_integer(v) and v > 0, do: v
+  defp normalize_pos_int(_v, default), do: default
+
+  defp normalize_non_neg_int(v, _default) when is_integer(v) and v >= 0, do: v
+  defp normalize_non_neg_int(_v, default), do: default
+
+  defp normalize_roles(roles) when is_list(roles) and roles != [] do
+    if Enum.all?(roles, &is_atom/1), do: roles, else: @default_roles
+  end
+
+  defp normalize_roles(_), do: @default_roles
 
   @spec inject_recall(Context.t(), String.t(), String.t(), opts()) :: Context.t()
   defp inject_recall(ctx, workspace_id, prompt, opts) do

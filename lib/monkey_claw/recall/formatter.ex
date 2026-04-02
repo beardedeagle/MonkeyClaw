@@ -73,23 +73,49 @@ defmodule MonkeyClaw.Recall.Formatter do
     end
   end
 
-  # Group messages by session and format each group as a block.
-  # Stops adding blocks when the character budget is exhausted.
+  # Group messages by session in input order and format each group
+  # as a block. Stops adding blocks when the character budget is
+  # exhausted. Preserves the order sessions appear in the search
+  # results for deterministic prompt generation.
   @spec build_blocks([Message.t()], non_neg_integer()) :: {[String.t()], boolean()}
   defp build_blocks(messages, budget) do
-    messages
-    |> Enum.group_by(& &1.session_id)
-    |> Enum.reduce({[], budget, false}, fn {session_id, msgs}, {acc, remaining, trunc} ->
+    {session_order, session_map} = group_preserving_order(messages)
+
+    session_order
+    |> Enum.reduce({[], budget, false}, fn session_id, {acc, remaining, trunc} ->
+      msgs = Map.fetch!(session_map, session_id)
       block = format_session_block(session_id, msgs)
-      block_size = byte_size(block) + byte_size(@session_separator)
+      # Only charge separator cost between blocks, not for the first.
+      separator_cost = if acc == [], do: 0, else: byte_size(@session_separator)
+      block_size = byte_size(block) + separator_cost
 
       if block_size <= remaining do
-        {acc ++ [block], remaining - block_size, trunc}
+        {[block | acc], remaining - block_size, trunc}
       else
         {acc, remaining, true}
       end
     end)
-    |> then(fn {blocks, _remaining, truncated} -> {blocks, truncated} end)
+    |> then(fn {blocks, _remaining, truncated} -> {Enum.reverse(blocks), truncated} end)
+  end
+
+  # Group messages by session_id while preserving the order in
+  # which session_ids first appear in the input list. Returns
+  # {ordered_session_ids, %{session_id => [messages]}}.
+  @spec group_preserving_order([Message.t()]) :: {[String.t()], %{String.t() => [Message.t()]}}
+  defp group_preserving_order(messages) do
+    {order, map} =
+      Enum.reduce(messages, {[], %{}}, fn %Message{session_id: sid} = msg, {ord, m} ->
+        if Map.has_key?(m, sid) do
+          {ord, Map.update!(m, sid, &[msg | &1])}
+        else
+          {[sid | ord], Map.put(m, sid, [msg])}
+        end
+      end)
+
+    # Reverse both the session order and each session's message list
+    # to restore original input ordering.
+    reversed_map = Map.new(map, fn {k, v} -> {k, Enum.reverse(v)} end)
+    {Enum.reverse(order), reversed_map}
   end
 
   # Format a group of messages from a single session as a text block.
