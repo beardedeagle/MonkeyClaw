@@ -17,9 +17,10 @@ defmodule MonkeyClaw.Repo.Migrations.CreateSessionHistory do
   The FTS5 table uses external content mode (`content=`) which
   references the source table via a dedicated `fts_rowid` integer
   column — no data duplication. The `fts_rowid` column is an
-  application-generated unique integer (via `System.unique_integer/1`)
-  that serves as the linkage between the WITHOUT ROWID source table
-  and the FTS5 index. Database triggers keep the FTS index in sync
+  application-generated unique integer (63-bit random via
+  `:crypto.strong_rand_bytes/1`) that serves as the linkage between
+  the WITHOUT ROWID source table and the FTS5 index. Database
+  triggers keep the FTS index in sync
   automatically on INSERT and DELETE.
 
   Messages are immutable so no UPDATE trigger is needed.
@@ -56,7 +57,7 @@ defmodule MonkeyClaw.Repo.Migrations.CreateSessionHistory do
       # linkage. WITHOUT ROWID tables have no implicit rowid, so this
       # column bridges the gap — FTS5 external content mode requires
       # an integer key to join back to the source table.
-      # Generated via System.unique_integer([:positive, :monotonic]).
+      # Generated via :crypto.strong_rand_bytes/1 (63-bit random).
       add :fts_rowid, :integer, null: false
 
       add :metadata, :text, null: false, default: "{}"

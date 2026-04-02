@@ -299,7 +299,8 @@ defmodule MonkeyClaw.Sessions do
     # We join through sessions to verify workspace ownership
     # (defense in depth).
     sql = """
-    SELECT m.*
+    SELECT m.id, m.role, m.content, m.sequence, m.metadata,
+           m.session_id, m.inserted_at
     FROM session_messages_fts AS fts
     JOIN session_messages AS m ON m.fts_rowid = fts.rowid
     JOIN sessions AS s ON s.id = m.session_id

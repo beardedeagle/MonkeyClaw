@@ -34,12 +34,13 @@ defmodule MonkeyClaw.Sessions.Message do
 
   Message content is indexed in an FTS5 external content table
   (`session_messages_fts`). The `fts_rowid` field is an
-  application-generated unique integer (via `System.unique_integer/1`)
-  that bridges the WITHOUT ROWID source table to the FTS5 index —
-  FTS5 external content mode requires an integer key for linkage.
-  Database triggers keep the index in sync automatically on INSERT
-  and DELETE — no application-level sync needed beyond generating
-  the `fts_rowid` at changeset time.
+  application-generated unique integer (63-bit random via
+  `:crypto.strong_rand_bytes/1`) that bridges the WITHOUT ROWID
+  source table to the FTS5 index — FTS5 external content mode
+  requires an integer key for linkage. Database triggers keep the
+  index in sync automatically on INSERT and DELETE — no
+  application-level sync needed beyond generating the `fts_rowid`
+  at changeset time.
 
   ## Design
 
@@ -116,16 +117,24 @@ defmodule MonkeyClaw.Sessions.Message do
     |> validate_inclusion(:role, @roles)
     |> validate_number(:sequence, greater_than_or_equal_to: 0)
     |> assign_fts_rowid()
+    |> unique_constraint(:fts_rowid)
     |> normalize_metadata()
     |> assoc_constraint(:session)
   end
 
-  # Generate a unique integer for FTS5 external content linkage.
+  # Generate a restart-safe integer for FTS5 external content linkage.
   # WITHOUT ROWID tables have no implicit rowid, so this bridges
-  # the source table to the FTS5 index. Uses ERTS's monotonic
-  # unique integer — guaranteed unique per BEAM node, zero overhead.
+  # the source table to the FTS5 index. Uses a cryptographically
+  # random 63-bit positive integer; the unique DB index on fts_rowid
+  # plus unique_constraint/3 ensures any extremely unlikely collision
+  # is surfaced as a changeset error instead of raising.
   defp assign_fts_rowid(changeset) do
-    put_change(changeset, :fts_rowid, System.unique_integer([:positive, :monotonic]))
+    put_change(changeset, :fts_rowid, random_fts_rowid())
+  end
+
+  defp random_fts_rowid do
+    <<int::unsigned-64>> = :crypto.strong_rand_bytes(8)
+    Bitwise.band(int, 0x7FFF_FFFF_FFFF_FFFF)
   end
 
   # Normalize nil metadata to %{} so the DB NOT NULL constraint is
