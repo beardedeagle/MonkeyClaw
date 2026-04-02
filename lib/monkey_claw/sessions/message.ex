@@ -129,7 +129,10 @@ defmodule MonkeyClaw.Sessions.Message do
   # plus unique_constraint/3 ensures any extremely unlikely collision
   # is surfaced as a changeset error instead of raising.
   defp assign_fts_rowid(changeset) do
-    put_change(changeset, :fts_rowid, random_fts_rowid())
+    case get_field(changeset, :fts_rowid) do
+      nil -> put_change(changeset, :fts_rowid, random_fts_rowid())
+      _existing -> changeset
+    end
   end
 
   defp random_fts_rowid do

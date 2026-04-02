@@ -298,6 +298,10 @@ defmodule MonkeyClaw.Sessions do
     # generated integer key, since all tables are WITHOUT ROWID).
     # We join through sessions to verify workspace ownership
     # (defense in depth).
+    #
+    # fts_rowid is intentionally excluded from the SELECT — it is
+    # an internal linkage column for FTS5, not part of the domain
+    # model. Message structs from search will have fts_rowid: nil.
     sql = """
     SELECT m.id, m.role, m.content, m.sequence, m.metadata,
            m.session_id, m.inserted_at
