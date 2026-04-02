@@ -11,7 +11,7 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
     # Start a test-controlled instance with a long poll interval.
     # The init fires an immediate poll at delay 0ms, but since the DB starts
     # empty for each test, that first poll is a no-op (errors are rescued).
-    start_supervised!({Scheduler, [poll_interval: 999_999_999]})
+    start_supervised!({Scheduler, [poll_interval: 999_999_999, initial_delay: 999_999_999]})
     :ok
   end
 

@@ -69,7 +69,18 @@ defmodule MonkeyClaw.UserModeling do
         workspace
         |> Ecto.build_assoc(:user_profile)
         |> UserProfile.create_changeset(%{})
-        |> Repo.insert()
+        |> Repo.insert(on_conflict: :nothing, conflict_target: :workspace_id)
+        |> case do
+          {:ok, %UserProfile{id: nil}} ->
+            # on_conflict: :nothing returns a struct with nil id — re-fetch
+            get_profile(workspace.id)
+
+          {:ok, %UserProfile{}} = ok ->
+            ok
+
+          {:error, _} = err ->
+            err
+        end
 
       %UserProfile{} = profile ->
         {:ok, profile}
@@ -223,16 +234,18 @@ defmodule MonkeyClaw.UserModeling do
   """
   @spec merge_patterns(map(), map()) :: %{String.t() => non_neg_integer() | float() | map()}
   def merge_patterns(existing, new) when is_map(existing) and is_map(new) do
-    existing_count = Map.get(existing, "query_count", 0)
+    existing_count = min(Map.get(existing, "query_count", 0), @max_query_count)
     new_count = Map.get(new, "query_count", 0)
-    total_count = min(existing_count + new_count, @max_query_count)
+    remaining_capacity = max(@max_query_count - existing_count, 0)
+    effective_new_count = min(new_count, remaining_capacity)
+    total_count = existing_count + effective_new_count
 
     existing_avg = Map.get(existing, "avg_prompt_length", 0.0)
     new_avg = Map.get(new, "avg_prompt_length", 0.0)
 
     merged_avg =
-      if existing_count + new_count > 0 do
-        (existing_avg * existing_count + new_avg * new_count) / (existing_count + new_count)
+      if total_count > 0 do
+        (existing_avg * existing_count + new_avg * effective_new_count) / total_count
       else
         0.0
       end

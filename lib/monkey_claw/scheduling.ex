@@ -243,12 +243,24 @@ defmodule MonkeyClaw.Scheduling do
          attrs,
          now,
          new_run_count
-       ) do
+       )
+       when is_integer(interval_ms) and interval_ms > 0 do
     if is_integer(max_runs) and new_run_count >= max_runs do
       Map.put(attrs, :status, :completed)
     else
       next = DateTime.add(now, interval_ms, :millisecond)
       Map.put(attrs, :next_run_at, next)
     end
+  end
+
+  # Guard: interval entry with missing/invalid interval_ms cannot compute
+  # the next run time. Mark as failed to prevent infinite re-firing.
+  defp compute_post_run_attrs(
+         %ScheduleEntry{schedule_type: :interval},
+         attrs,
+         _now,
+         _new_run_count
+       ) do
+    Map.put(attrs, :status, :failed)
   end
 end

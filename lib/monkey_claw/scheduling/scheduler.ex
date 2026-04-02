@@ -92,12 +92,14 @@ defmodule MonkeyClaw.Scheduling.Scheduler do
         Application.get_env(:monkey_claw, :scheduler_poll_interval_ms, @default_poll_interval_ms)
       end)
 
+    initial_delay = Keyword.get(opts, :initial_delay, 0)
+
     state = %__MODULE__{
       timer_ref: nil,
       poll_interval: poll_interval
     }
 
-    {:ok, schedule_poll(state, 0)}
+    {:ok, schedule_poll(state, initial_delay)}
   end
 
   @impl true

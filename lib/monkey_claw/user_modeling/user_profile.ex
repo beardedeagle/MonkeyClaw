@@ -114,7 +114,7 @@ defmodule MonkeyClaw.UserModeling.UserProfile do
   ## Examples
 
       workspace
-      |> Ecto.build_assoc(:user_profiles)
+      |> Ecto.build_assoc(:user_profile)
       |> UserProfile.create_changeset(%{
         display_name: "Developer",
         privacy_level: :full
