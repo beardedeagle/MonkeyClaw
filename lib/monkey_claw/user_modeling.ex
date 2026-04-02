@@ -125,6 +125,23 @@ defmodule MonkeyClaw.UserModeling do
     Repo.delete(profile)
   end
 
+  @doc """
+  Toggle prompt injection for a user profile.
+
+  When `enabled` is `false`, `get_injectable_context/1` returns an
+  empty string even if the profile has observed topics and preferences.
+
+  ## Examples
+
+      {:ok, profile} = UserModeling.toggle_injection(profile, false)
+      "" = UserModeling.get_injectable_context(workspace_id)
+  """
+  @spec toggle_injection(UserProfile.t(), boolean()) ::
+          {:ok, UserProfile.t()} | {:error, Ecto.Changeset.t()}
+  def toggle_injection(%UserProfile{} = profile, enabled) when is_boolean(enabled) do
+    update_profile(profile, %{injection_enabled: enabled})
+  end
+
   # ──────────────────────────────────────────────
   # Observation Processing
   # ──────────────────────────────────────────────
@@ -274,8 +291,11 @@ defmodule MonkeyClaw.UserModeling do
 
   Returns a string summarizing the user's top interests and explicit
   preferences, formatted for prepending to agent prompts. Returns
-  an empty string if the profile has no useful data or if
-  `injection_enabled` is false.
+  an empty string if the profile has no useful data.
+
+  This is a pure formatting function — it does NOT check
+  `injection_enabled`. Callers are responsible for gating on
+  that flag (see `get_injectable_context/1`).
 
   ## Examples
 
@@ -284,27 +304,23 @@ defmodule MonkeyClaw.UserModeling do
   """
   @spec build_injection_context(UserProfile.t()) :: String.t()
   def build_injection_context(%UserProfile{} = profile) do
-    if profile.injection_enabled do
-      parts = []
+    parts = []
 
-      parts =
-        case format_top_interests(profile.observed_topics) do
-          "" -> parts
-          interests -> parts ++ ["Top interests: " <> interests]
-        end
-
-      parts =
-        case format_preferences(profile.preferences) do
-          "" -> parts
-          prefs -> parts ++ ["Preferences: " <> prefs]
-        end
-
-      case parts do
-        [] -> ""
-        lines -> "[User context]\n" <> Enum.join(lines, "\n")
+    parts =
+      case format_top_interests(profile.observed_topics) do
+        "" -> parts
+        interests -> parts ++ ["Top interests: " <> interests]
       end
-    else
-      ""
+
+    parts =
+      case format_preferences(profile.preferences) do
+        "" -> parts
+        prefs -> parts ++ ["Preferences: " <> prefs]
+      end
+
+    case parts do
+      [] -> ""
+      lines -> "[User context]\n" <> Enum.join(lines, "\n")
     end
   end
 
@@ -322,8 +338,11 @@ defmodule MonkeyClaw.UserModeling do
   def get_injectable_context(workspace_id)
       when is_binary(workspace_id) and byte_size(workspace_id) > 0 do
     case get_profile(workspace_id) do
-      {:ok, profile} -> build_injection_context(profile)
-      {:error, :not_found} -> ""
+      {:ok, %UserProfile{injection_enabled: true} = profile} ->
+        build_injection_context(profile)
+
+      _ ->
+        ""
     end
   end
 

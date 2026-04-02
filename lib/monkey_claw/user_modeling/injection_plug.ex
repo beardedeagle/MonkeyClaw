@@ -47,13 +47,6 @@ defmodule MonkeyClaw.UserModeling.InjectionPlug do
 
   @behaviour MonkeyClaw.Extensions.Plug
 
-  # Dialyzer suppression: UserProfile.injection_enabled defaults to true and
-  # no current code path sets it to false, so dialyzer narrows the type to
-  # `true` and flags the else branch in build_injection_context/1 as
-  # unreachable from this module's call chain. The branch is correct
-  # defensive code for when users disable injection via update_profile/2.
-  @dialyzer :no_match
-
   alias MonkeyClaw.Extensions.Context
   alias MonkeyClaw.UserModeling
 
@@ -93,11 +86,11 @@ defmodule MonkeyClaw.UserModeling.InjectionPlug do
   @impl true
   @spec call(Context.t(), opts()) :: Context.t()
   def call(%Context{event: :query_pre} = ctx, opts) do
-    prompt = Map.get(ctx.data, :prompt, "")
+    prompt = Map.get(ctx.data, :prompt) || ""
     workspace_id = Map.get(ctx.data, :session_id)
 
     cond do
-      String.length(prompt) < opts.min_query_length ->
+      not is_binary(prompt) or String.length(prompt) < opts.min_query_length ->
         ctx
 
       not is_binary(workspace_id) or byte_size(workspace_id) == 0 ->
@@ -122,7 +115,7 @@ defmodule MonkeyClaw.UserModeling.InjectionPlug do
   defp inject_user_context(ctx, workspace_id, prompt) do
     context_text = UserModeling.get_injectable_context(workspace_id)
 
-    if is_binary(context_text) and byte_size(context_text) > 0 do
+    if byte_size(context_text) > 0 do
       # Compose: prepend user context before existing effective_prompt
       # or the original prompt.
       base = ctx.assigns[:effective_prompt] || prompt

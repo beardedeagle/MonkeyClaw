@@ -172,7 +172,7 @@ defmodule MonkeyClaw.Scheduling.ScheduleEntry do
   def create_changeset(%__MODULE__{} = entry, attrs) when is_map(attrs) do
     entry
     |> cast(attrs, @create_fields)
-    |> validate_required([:name, :schedule_type, :next_run_at])
+    |> validate_required([:name, :schedule_type, :next_run_at, :experiment_config])
     |> validate_length(:name, min: 1, max: 200)
     |> validate_length(:description, max: 1000)
     |> validate_inclusion(:schedule_type, @schedule_types)
@@ -259,7 +259,7 @@ defmodule MonkeyClaw.Scheduling.ScheduleEntry do
         end
 
       _ ->
-        changeset
+        add_error(changeset, :experiment_config, "must be a non-empty map")
     end
   end
 

@@ -167,9 +167,24 @@ defmodule MonkeyClaw.Scheduling.Scheduler do
           "Scheduler skipping entry #{entry.id}: workspace #{entry.workspace_id} not found"
         )
 
-      {:error, changeset} ->
+      {:error, %Ecto.Changeset{} = changeset} ->
         Logger.warning(
-          "Scheduler failed to create experiment for entry #{entry.id}: #{inspect(changeset.errors)}"
+          "Scheduler failed to create experiment for entry #{entry.id}: #{inspect(changeset.errors)} — marking failed"
+        )
+
+        mark_entry_failed(entry)
+    end
+  end
+
+  # Mark a schedule entry as :failed to prevent infinite retry loops.
+  defp mark_entry_failed(entry) do
+    case Scheduling.update_schedule_entry(entry, %{status: :failed}) do
+      {:ok, _updated} ->
+        Logger.info("Scheduler marked entry #{entry.id} as failed")
+
+      {:error, changeset} ->
+        Logger.error(
+          "Scheduler failed to mark entry #{entry.id} as failed: #{inspect(changeset.errors)}"
         )
     end
   end

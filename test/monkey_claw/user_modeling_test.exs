@@ -336,7 +336,7 @@ defmodule MonkeyClaw.UserModelingTest do
   # ──────────────────────────────────────────────
 
   describe "build_injection_context/1" do
-    test "returns empty string when injection_enabled is false" do
+    test "formats context regardless of injection_enabled flag" do
       workspace = insert_workspace!()
 
       profile =
@@ -345,7 +345,11 @@ defmodule MonkeyClaw.UserModelingTest do
           observed_topics: %{"elixir" => 10}
         })
 
-      assert UserModeling.build_injection_context(profile) == ""
+      # build_injection_context is a pure formatting function — it does
+      # NOT check injection_enabled. That gating is in get_injectable_context.
+      result = UserModeling.build_injection_context(profile)
+      assert String.starts_with?(result, "[User context]")
+      assert String.contains?(result, "elixir")
     end
 
     test "returns empty string when no useful data" do
@@ -415,6 +419,17 @@ defmodule MonkeyClaw.UserModelingTest do
 
       assert String.starts_with?(context, "[User context]")
       assert String.contains?(context, "elixir")
+    end
+
+    test "returns empty string when injection is disabled" do
+      workspace = insert_workspace!()
+
+      insert_user_profile!(workspace, %{
+        injection_enabled: false,
+        observed_topics: %{"elixir" => 8}
+      })
+
+      assert UserModeling.get_injectable_context(workspace.id) == ""
     end
 
     test "returns empty string for workspace without profile" do

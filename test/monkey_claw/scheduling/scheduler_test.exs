@@ -8,9 +8,9 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
 
   setup do
     # Scheduler is disabled in test.exs (:start_scheduler false).
-    # Start a test-controlled instance with a long poll interval.
-    # The init fires an immediate poll at delay 0ms, but since the DB starts
-    # empty for each test, that first poll is a no-op (errors are rescued).
+    # Start a test-controlled instance with a long poll interval and initial delay
+    # so it does not poll automatically during setup. Individual tests trigger
+    # polling explicitly via Scheduler.trigger_poll/0 when needed.
     start_supervised!({Scheduler, [poll_interval: 999_999_999, initial_delay: 999_999_999]})
     :ok
   end
