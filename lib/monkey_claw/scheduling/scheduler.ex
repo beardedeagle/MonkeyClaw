@@ -132,7 +132,16 @@ defmodule MonkeyClaw.Scheduling.Scheduler do
 
   defp execute_poll do
     entries = fetch_due_entries()
-    Enum.each(entries, &fire_entry/1)
+    Enum.each(entries, &safe_fire_entry/1)
+  end
+
+  defp safe_fire_entry(entry) do
+    fire_entry(entry)
+  rescue
+    error ->
+      Logger.error(
+        "Scheduler entry #{entry.id} crashed: #{Exception.format(:error, error, __STACKTRACE__)}"
+      )
   end
 
   defp fetch_due_entries do

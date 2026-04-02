@@ -151,10 +151,15 @@ defmodule MonkeyClaw.UserModeling.UserProfile do
   defp validate_preferences(changeset) do
     case get_field(changeset, :preferences) do
       prefs when is_map(prefs) ->
-        if Enum.all?(Map.values(prefs), &serializable_value?/1) do
-          changeset
-        else
-          add_error(changeset, :preferences, "values must be strings, numbers, or booleans")
+        cond do
+          not Enum.all?(Map.keys(prefs), &is_binary/1) ->
+            add_error(changeset, :preferences, "keys must be strings")
+
+          not Enum.all?(Map.values(prefs), &serializable_value?/1) ->
+            add_error(changeset, :preferences, "values must be strings, numbers, or booleans")
+
+          true ->
+            changeset
         end
 
       _ ->

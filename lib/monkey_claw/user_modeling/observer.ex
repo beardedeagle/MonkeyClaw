@@ -97,17 +97,24 @@ defmodule MonkeyClaw.UserModeling.Observer do
   """
   @spec flush() :: :ok
   def flush do
-    GenServer.call(__MODULE__, :flush)
+    case Process.whereis(__MODULE__) do
+      nil -> :ok
+      pid -> GenServer.call(pid, :flush)
+    end
   end
 
   @doc """
   Return the count of pending observations across all workspaces.
 
-  Useful for telemetry and testing.
+  Returns 0 when the Observer is not running. Useful for telemetry
+  and testing.
   """
   @spec buffer_size() :: non_neg_integer()
   def buffer_size do
-    GenServer.call(__MODULE__, :buffer_size)
+    case Process.whereis(__MODULE__) do
+      nil -> 0
+      pid -> GenServer.call(pid, :buffer_size)
+    end
   end
 
   # ──────────────────────────────────────────────
