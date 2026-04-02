@@ -133,19 +133,24 @@ defmodule MonkeyClaw.RecallTest do
 
     test "truncates formatted output to max_chars budget" do
       workspace = insert_workspace!()
-      session = insert_session!(workspace)
 
-      # Insert messages with enough content to exceed a small budget
+      # Insert messages across separate sessions so the formatter can
+      # include some session blocks and drop others when the budget
+      # is exceeded. Each block is ~130 chars; budget of 350 fits
+      # roughly 2 blocks, leaving 3 truncated.
       Enum.each(1..5, fn i ->
-        content = "budget_test_keyword " <> String.duplicate("x", 200) <> " item #{i}"
+        session = insert_session!(workspace)
+        content = "budget_test_keyword " <> String.duplicate("x", 50) <> " item #{i}"
         insert_message!(session, %{role: :user, content: content})
       end)
 
-      result = Recall.recall(workspace.id, "budget_test_keyword", %{max_chars: 100})
+      result = Recall.recall(workspace.id, "budget_test_keyword", %{max_chars: 350})
 
-      # With only 100 chars budget, at least some results should be truncated
-      # (the header alone is ~35 chars)
-      assert result.truncated == true or byte_size(result.formatted) <= 100
+      # Verify results were found and at least one block was formatted,
+      # but the budget was too small to include all session blocks.
+      assert result.match_count > 0
+      assert result.formatted != ""
+      assert result.truncated == true
     end
   end
 

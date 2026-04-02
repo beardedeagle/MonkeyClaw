@@ -178,9 +178,10 @@ defmodule MonkeyClaw.Recall.PlugTest do
 
       result = RecallPlug.call(ctx, opts)
 
-      if result.assigns[:recall_result] do
-        assert Enum.all?(result.assigns[:recall_result].matches, &(&1.role == :user))
-      end
+      recall_result = result.assigns[:recall_result]
+      assert recall_result != nil
+      assert recall_result.match_count > 0
+      assert Enum.all?(recall_result.matches, &(&1.role == :user))
     end
   end
 

@@ -519,10 +519,16 @@ defmodule MonkeyClaw.Sessions do
   # timestamps as TEXT, so the format must match exactly — DateTime.to_iso8601/1
   # omits fractional seconds for whole-second values, which produces
   # incorrect TEXT comparisons against stored microsecond timestamps.
-  defp format_datetime_usec(%DateTime{} = dt) do
+  defp format_datetime_usec(%DateTime{utc_offset: 0, std_offset: 0} = dt) do
     dt
     |> DateTime.truncate(:microsecond)
     |> Calendar.strftime("%Y-%m-%dT%H:%M:%S.%6fZ")
+  end
+
+  defp format_datetime_usec(%DateTime{} = dt) do
+    raise ArgumentError,
+          "format_datetime_usec/1 requires a UTC DateTime, got offset " <>
+            "#{dt.utc_offset}/#{dt.std_offset}"
   end
 
   # Clamp search limit to a safe integer range.
