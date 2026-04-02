@@ -2,9 +2,9 @@ defmodule MonkeyClaw.Skills.Cache do
   @moduledoc """
   ETS hot cache for per-workspace skill lookups.
 
-  Provides low-latency access to top skills for a workspace,
-  avoiding repeated database queries during query-pre plug
-  execution. Entries have a TTL (default 5 minutes) and are
+  Provides low-latency access to cached skill lists for a
+  workspace, used by `top_skills/2` to avoid repeated database
+  queries. Entries have a TTL (default 5 minutes) and are
   invalidated on skill create/update/delete operations.
 
   ## Table Design

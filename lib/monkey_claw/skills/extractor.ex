@@ -133,12 +133,12 @@ defmodule MonkeyClaw.Skills.Extractor do
       is_list(get_in(iteration.state_snapshot, ["steps"])) ->
         iteration.state_snapshot["steps"]
         |> Enum.with_index(1)
-        |> Enum.map_join("\n", fn {step, idx} -> "#{idx}. #{step}" end)
+        |> Enum.map_join("\n", fn {step, idx} -> "#{idx}. #{safe_to_string(step)}" end)
 
       is_list(get_in(iteration.state_snapshot, ["actions"])) ->
         iteration.state_snapshot["actions"]
         |> Enum.with_index(1)
-        |> Enum.map_join("\n", fn {action, idx} -> "#{idx}. #{action}" end)
+        |> Enum.map_join("\n", fn {action, idx} -> "#{idx}. #{safe_to_string(action)}" end)
 
       # Fall back to eval_result details
       is_binary(get_in(iteration.eval_result, ["details"])) ->
@@ -174,6 +174,12 @@ defmodule MonkeyClaw.Skills.Extractor do
       _ -> parts |> Enum.reverse() |> Enum.join("\n")
     end
   end
+
+  # Safely convert a value to a string. Binaries pass through,
+  # non-binaries (maps, lists, etc.) are inspected to avoid
+  # Protocol.UndefinedError from string interpolation.
+  defp safe_to_string(val) when is_binary(val), do: val
+  defp safe_to_string(val), do: inspect(val)
 
   # Build tags from experiment type and config.
   defp build_tags(%Experiment{} = experiment) do

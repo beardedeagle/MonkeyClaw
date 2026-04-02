@@ -298,11 +298,21 @@ defmodule MonkeyClaw.Skills do
   def top_skills(workspace_id, n)
       when is_binary(workspace_id) and byte_size(workspace_id) > 0 and
              is_integer(n) and n > 0 do
-    Skill
-    |> where([s], s.workspace_id == ^workspace_id)
-    |> order_by([s], desc: s.effectiveness_score)
-    |> limit(^n)
-    |> Repo.all()
+    case Cache.get(workspace_id) do
+      {:ok, cached} ->
+        Enum.take(cached, n)
+
+      :miss ->
+        skills =
+          Skill
+          |> where([s], s.workspace_id == ^workspace_id)
+          |> order_by([s], desc: s.effectiveness_score)
+          |> limit(^n)
+          |> Repo.all()
+
+        if skills != [], do: Cache.put(workspace_id, skills)
+        skills
+    end
   end
 
   # ──────────────────────────────────────────────
