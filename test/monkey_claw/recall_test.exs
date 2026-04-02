@@ -204,6 +204,22 @@ defmodule MonkeyClaw.RecallTest do
       assert length(String.split(result, " OR ")) <= 8
     end
 
+    test "strips FTS5 reserved operators" do
+      result = Recall.sanitize_query("deploy and not near production")
+
+      assert result != nil
+      # "and", "not", "near" are FTS5 operators — must be stripped
+      refute String.contains?(result, " and ")
+      refute String.contains?(result, " not ")
+      refute String.contains?(result, " near ")
+      assert String.contains?(result, "deploy")
+      assert String.contains?(result, "production")
+    end
+
+    test "returns nil when only FTS5 reserved words remain" do
+      assert Recall.sanitize_query("and not or near") == nil
+    end
+
     test "downcases keywords" do
       result = Recall.sanitize_query("DEPLOY Production")
 

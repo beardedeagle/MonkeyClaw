@@ -56,6 +56,10 @@ defmodule MonkeyClaw.Recall do
   # punctuation like ?, !, ., commas, and any future FTS5 syntax
   # are all removed, leaving only alphanumeric tokens and spaces.
   @non_word_chars ~r/[^\w\s]/u
+  # FTS5 query operators that must not appear as search terms.
+  # These are case-insensitive in FTS5 and would change query
+  # semantics or produce syntax errors if included as keywords.
+  @fts5_reserved MapSet.new(~w(and or not near))
 
   @type recall_opts :: %{
           optional(:limit) => pos_integer(),
@@ -146,7 +150,7 @@ defmodule MonkeyClaw.Recall do
     |> String.replace(@non_word_chars, " ")
     |> String.downcase()
     |> String.split(~r/\s+/, trim: true)
-    |> Enum.reject(&(byte_size(&1) < @min_keyword_length))
+    |> Enum.reject(&(byte_size(&1) < @min_keyword_length or MapSet.member?(@fts5_reserved, &1)))
     |> Enum.uniq()
     |> Enum.take(@max_keywords)
     |> case do
