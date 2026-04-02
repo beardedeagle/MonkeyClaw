@@ -241,34 +241,39 @@ defmodule MonkeyClaw.Skills do
   @spec record_usage(Skill.t(), keyword()) :: {:ok, Skill.t()} | {:error, Ecto.Changeset.t()}
   def record_usage(%Skill{} = skill, opts \\ []) when is_list(opts) do
     success? = Keyword.get(opts, :success, false)
+    success_inc = if success?, do: 1, else: 0
 
     inc_fields =
       if success?,
         do: [usage_count: 1, success_count: 1],
         else: [usage_count: 1]
 
-    query = from(s in Skill, where: s.id == ^skill.id)
+    # Single atomic UPDATE: increment counters and recompute score
+    # in one SQL statement. All column references see pre-update
+    # values, so we add the increments in the fragment expression.
+    query =
+      from(s in Skill,
+        where: s.id == ^skill.id,
+        update: [
+          inc: ^inc_fields,
+          set: [
+            effectiveness_score:
+              fragment(
+                "MIN(1.0, MAX(0.0, CAST((? + ?) AS REAL) / MAX(? + 1, 1)))",
+                s.success_count,
+                ^success_inc,
+                s.usage_count
+              )
+          ]
+        ]
+      )
 
-    case Repo.update_all(query, inc: inc_fields) do
+    case Repo.update_all(query, []) do
       {1, _} ->
-        # Reload to compute effectiveness_score from stored values,
-        # avoiding read-modify-write race on concurrent updates.
+        # Reload for the return value — the DB row is already consistent.
         updated = Repo.get!(Skill, skill.id)
-        score = min(1.0, max(0.0, updated.success_count / max(updated.usage_count, 1)))
-
-        result =
-          updated
-          |> Skill.update_changeset(%{effectiveness_score: score})
-          |> Repo.update()
-
-        case result do
-          {:ok, scored} ->
-            Cache.invalidate(scored.workspace_id)
-            {:ok, scored}
-
-          error ->
-            error
-        end
+        Cache.invalidate(updated.workspace_id)
+        {:ok, updated}
 
       {0, _} ->
         {:error,
@@ -353,7 +358,7 @@ defmodule MonkeyClaw.Skills do
     FROM skills_fts AS fts
     JOIN skills AS s ON s.fts_rowid = fts.rowid
     WHERE #{Enum.join(conditions, "\n    AND ")}
-    ORDER BY fts.rank
+    ORDER BY fts.rank, s.effectiveness_score DESC
     LIMIT ?#{next_idx}
     """
 

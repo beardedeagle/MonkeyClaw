@@ -171,7 +171,8 @@ defmodule MonkeyClaw.Skills.Skill do
       changeset
     else
       <<int::unsigned-64>> = :crypto.strong_rand_bytes(8)
-      put_change(changeset, :fts_rowid, Bitwise.band(int, 0x7FFF_FFFF_FFFF_FFFF))
+      masked = Bitwise.band(int, 0x7FFF_FFFF_FFFF_FFFF)
+      put_change(changeset, :fts_rowid, max(masked, 1))
     end
   end
 end

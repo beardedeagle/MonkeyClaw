@@ -161,10 +161,12 @@ defmodule MonkeyClaw.Skills.Plug do
 
   @spec fetch_skills(String.t(), String.t(), opts()) :: [MonkeyClaw.Skills.Skill.t()]
   defp fetch_skills(workspace_id, prompt, opts) do
-    # Always use FTS search for query-relevant results. The cache
-    # serves workspace-wide top skills which may not be relevant to
-    # the specific prompt. FTS5 queries are fast enough for single-user
-    # workloads; relevance trumps caching here.
+    # Always use FTS search for query-relevant results. The ETS cache
+    # (`MonkeyClaw.Skills.Cache`) stores workspace-wide top skills for
+    # non-query contexts (dashboards, listing). It is intentionally NOT
+    # used here — injecting cached top skills regardless of the prompt
+    # would sacrifice relevance. FTS5 queries are fast enough for
+    # single-user workloads.
     Skills.search_skills(workspace_id, prompt, %{limit: opts.max_skills})
   end
 end

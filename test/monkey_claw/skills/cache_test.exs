@@ -81,15 +81,17 @@ defmodule MonkeyClaw.Skills.CacheTest do
       original = Application.get_env(:monkey_claw, :skills_cache_ttl_ms)
       Application.put_env(:monkey_claw, :skills_cache_ttl_ms, 1)
 
+      on_exit(fn ->
+        if original,
+          do: Application.put_env(:monkey_claw, :skills_cache_ttl_ms, original),
+          else: Application.delete_env(:monkey_claw, :skills_cache_ttl_ms)
+      end)
+
       :ok = Cache.put("workspace-1", [%Skill{id: "id", title: "T"}])
 
       Process.sleep(10)
 
       assert :miss = Cache.get("workspace-1")
-
-      if original,
-        do: Application.put_env(:monkey_claw, :skills_cache_ttl_ms, original),
-        else: Application.delete_env(:monkey_claw, :skills_cache_ttl_ms)
     end
   end
 end

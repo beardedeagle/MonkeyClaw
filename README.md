@@ -217,10 +217,11 @@ hooks into `:query_pre` alongside recall:
 2. Ranks candidates by effectiveness score
 3. Prepends matching skills as reusable context in `:effective_prompt`
 
-An ETS hot cache holds recently used skills, keeping injection latency
-low. Effectiveness scores update on each use — accepted outcomes
-increment the score, rejected outcomes decrement it — so the library
-self-selects toward what actually works over time.
+An ETS hot cache holds workspace skill sets for non-query contexts
+(dashboards, listing). Query-time injection always uses FTS5 search
+for relevance. Effectiveness scores update on each use — accepted
+outcomes increment the score, rejected outcomes decrement it — so the
+library self-selects toward what actually works over time.
 
 Configuration is via application config:
 

@@ -77,7 +77,7 @@ defmodule MonkeyClaw.Repo.Migrations.CreateSkills do
     execute(
       """
       CREATE TRIGGER skills_fts_update
-      AFTER UPDATE ON skills
+      AFTER UPDATE OF title, description, procedure ON skills
       BEGIN
         INSERT INTO skills_fts(skills_fts, rowid, title, description, procedure)
         VALUES ('delete', old.fts_rowid, old.title, old.description, old.procedure);
