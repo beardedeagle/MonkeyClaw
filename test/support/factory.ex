@@ -27,6 +27,7 @@ defmodule MonkeyClaw.Factory do
   alias MonkeyClaw.Assistants
   alias MonkeyClaw.Experiments
   alias MonkeyClaw.Sessions
+  alias MonkeyClaw.Skills
   alias MonkeyClaw.Workspaces
 
   # ──────────────────────────────────────────────
@@ -215,5 +216,40 @@ defmodule MonkeyClaw.Factory do
   def insert_experiment!(workspace, overrides \\ %{}) do
     {:ok, experiment} = Experiments.create_experiment(workspace, experiment_attrs(overrides))
     experiment
+  end
+
+  # ──────────────────────────────────────────────
+  # Skill Builders
+  # ──────────────────────────────────────────────
+
+  @doc """
+  Build a map of valid skill attributes.
+
+  Generates a unique title with default description and procedure.
+  """
+  @spec skill_attrs(Enumerable.t()) :: map()
+  def skill_attrs(overrides \\ %{}) do
+    Map.merge(
+      %{
+        title: "skill-#{System.unique_integer([:positive])}",
+        description: "A reusable procedure for testing",
+        procedure: "1. First step\n2. Second step\n3. Third step",
+        tags: ["test", "example"]
+      },
+      Map.new(overrides)
+    )
+  end
+
+  @doc """
+  Insert a skill into the database within a workspace.
+
+  Delegates to `MonkeyClaw.Skills.create_skill/2`.
+  Raises on validation failure.
+  """
+  @spec insert_skill!(MonkeyClaw.Workspaces.Workspace.t(), Enumerable.t()) ::
+          MonkeyClaw.Skills.Skill.t()
+  def insert_skill!(workspace, overrides \\ %{}) do
+    {:ok, skill} = Skills.create_skill(workspace, skill_attrs(overrides))
+    skill
   end
 end
