@@ -1,10 +1,41 @@
 defmodule MonkeyClaw.ExperimentsTest do
   use MonkeyClaw.DataCase
 
+  alias MonkeyClaw.AgentBridge.Backend
   alias MonkeyClaw.Experiments
-  alias MonkeyClaw.Experiments.{Experiment, Iteration}
+  alias MonkeyClaw.Experiments.{Experiment, Iteration, Runner}
 
   import MonkeyClaw.Factory
+
+  # ── Test Strategy for Lifecycle Tests ──────────────────────────
+  #
+  # Minimal strategy implementation for lifecycle API tests.
+  # NOT a mock — a real behaviour implementation.
+
+  defmodule LifecycleStrategy do
+    @behaviour MonkeyClaw.Experiments.Strategy
+
+    @impl true
+    def init(_experiment, _opts), do: {:ok, %{__v__: 1}}
+
+    @impl true
+    def prepare_iteration(state, _iteration, _opts), do: {:ok, state}
+
+    @impl true
+    def build_prompt(_state, iteration, _opts), do: {:ok, "lifecycle test #{iteration}"}
+
+    @impl true
+    def evaluate(state, _run_result, _opts), do: {:ok, %{score: 0.75}, state}
+
+    @impl true
+    def decide(state, _eval_result, _iteration, _opts), do: {:accept, state}
+
+    @impl true
+    def rollback(state, _opts), do: {:ok, state}
+
+    @impl true
+    def mutation_scope(_experiment), do: %{files: []}
+  end
 
   # ──────────────────────────────────────────────
   # Experiment CRUD
@@ -353,6 +384,220 @@ defmodule MonkeyClaw.ExperimentsTest do
       {:ok, _} = Experiments.record_iteration(experiment, %{sequence: 2, status: :rejected})
 
       assert Experiments.count_iterations(experiment.id) == 2
+    end
+  end
+
+  # ──────────────────────────────────────────────
+  # Experiment Lifecycle
+  # ──────────────────────────────────────────────
+
+  describe "start_experiment/3" do
+    test "creates experiment and starts runner" do
+      workspace = insert_workspace!()
+
+      attrs = %{title: "Lifecycle test", type: :code, max_iterations: 3}
+      runner_config = %{strategy: LifecycleStrategy, backend: Backend.Test}
+
+      assert {:ok, %Experiment{} = experiment, pid} =
+               Experiments.start_experiment(workspace, attrs, runner_config)
+
+      assert is_pid(pid)
+      assert Process.alive?(pid)
+      assert experiment.title == "Lifecycle test"
+      assert experiment.status == :created
+
+      # Runner is registered and reachable
+      assert {:ok, ^pid} = Runner.lookup(experiment.id)
+
+      # Wait for completion
+      ref = Process.monitor(pid)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 5000
+
+      {:ok, updated} = Experiments.get_experiment(experiment.id)
+      assert updated.status == :accepted
+    end
+
+    test "returns changeset error for invalid attrs" do
+      workspace = insert_workspace!()
+
+      # Missing required :title
+      attrs = %{type: :code, max_iterations: 3}
+      runner_config = %{strategy: LifecycleStrategy, backend: Backend.Test}
+
+      assert {:error, %Ecto.Changeset{}} =
+               Experiments.start_experiment(workspace, attrs, runner_config)
+    end
+
+    test "runner marks experiment cancelled on strategy init failure" do
+      workspace = insert_workspace!()
+
+      attrs = %{title: "Doomed", type: :code, max_iterations: 3}
+
+      # Invalid strategy module — Runner.handle_continue(:initialize)
+      # will fail. Runner.start_link succeeds immediately (async init
+      # is the correct OTP pattern), so start_experiment returns
+      # {:ok, experiment, pid}. The Runner then dies during init and
+      # marks the experiment as :cancelled.
+      runner_config = %{strategy: NonExistentModule, backend: Backend.Test}
+
+      assert {:ok, experiment, pid} =
+               Experiments.start_experiment(workspace, attrs, runner_config)
+
+      # Wait for the Runner to die from async init failure
+      ref = Process.monitor(pid)
+      assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 5000
+
+      {:ok, updated} = Experiments.get_experiment(experiment.id)
+      assert updated.status == :cancelled
+      assert updated.termination_reason == "init_failed"
+    end
+  end
+
+  describe "stop_experiment/1" do
+    test "gracefully stops a running experiment" do
+      workspace = insert_workspace!()
+
+      attrs = %{title: "Stop test", type: :code, max_iterations: 10}
+
+      runner_config = %{
+        strategy: LifecycleStrategy,
+        backend: Backend.Test,
+        session_opts: %{
+          query_responses: fn _prompt, _count ->
+            Process.sleep(200)
+            {:ok, [%{type: :text, content: "working"}]}
+          end
+        }
+      }
+
+      {:ok, experiment, pid} =
+        Experiments.start_experiment(workspace, attrs, runner_config)
+
+      # Subscribe after start — async init via {:continue, :initialize}
+      # ensures iteration_started hasn't fired yet.
+      Phoenix.PubSub.subscribe(MonkeyClaw.PubSub, "experiment:#{experiment.id}")
+      ref = Process.monitor(pid)
+
+      # Synchronize on iteration start instead of fixed sleep
+      assert_receive %{event: :iteration_started}, 5_000
+      assert :ok = Experiments.stop_experiment(experiment.id)
+
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 10_000
+
+      {:ok, updated} = Experiments.get_experiment(experiment.id)
+      assert updated.status in [:halted, :accepted]
+    end
+
+    test "returns error for non-running experiment" do
+      assert {:error, :not_running} = Experiments.stop_experiment(Ecto.UUID.generate())
+    end
+  end
+
+  describe "cancel_experiment/1" do
+    test "cancels a running experiment immediately" do
+      workspace = insert_workspace!()
+
+      attrs = %{title: "Cancel test", type: :code, max_iterations: 10}
+
+      runner_config = %{
+        strategy: LifecycleStrategy,
+        backend: Backend.Test,
+        session_opts: %{
+          query_responses: fn _prompt, _count ->
+            Process.sleep(500)
+            {:ok, [%{type: :text, content: "working"}]}
+          end
+        }
+      }
+
+      {:ok, experiment, pid} =
+        Experiments.start_experiment(workspace, attrs, runner_config)
+
+      # Subscribe after start — async init via {:continue, :initialize}
+      # ensures iteration_started hasn't fired yet.
+      Phoenix.PubSub.subscribe(MonkeyClaw.PubSub, "experiment:#{experiment.id}")
+      ref = Process.monitor(pid)
+
+      # Synchronize on iteration start instead of fixed sleep
+      assert_receive %{event: :iteration_started}, 5_000
+      assert :ok = Experiments.cancel_experiment(experiment.id)
+
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 10_000
+
+      {:ok, updated} = Experiments.get_experiment(experiment.id)
+      assert updated.status == :cancelled
+      assert updated.termination_reason == "user_cancel"
+    end
+
+    test "returns error for non-running experiment" do
+      assert {:error, :not_running} = Experiments.cancel_experiment(Ecto.UUID.generate())
+    end
+  end
+
+  describe "experiment_status/1" do
+    test "returns live status from running Runner" do
+      workspace = insert_workspace!()
+
+      attrs = %{title: "Status test", type: :code, max_iterations: 10}
+
+      runner_config = %{
+        strategy: LifecycleStrategy,
+        backend: Backend.Test,
+        human_gate: true
+      }
+
+      {:ok, experiment, pid} =
+        Experiments.start_experiment(workspace, attrs, runner_config)
+
+      ref = Process.monitor(pid)
+
+      # Wait for human gate pause
+      deadline = System.monotonic_time(:millisecond) + 5000
+
+      poll_status = fn ->
+        case Experiments.experiment_status(experiment.id) do
+          {:ok, %{status: :awaiting_human}} -> true
+          _ -> false
+        end
+      end
+
+      poll_until_true(poll_status, deadline)
+
+      {:ok, status} = Experiments.experiment_status(experiment.id)
+      assert status.status == :awaiting_human
+      assert status.experiment_id == experiment.id
+      assert status.iteration == 1
+
+      Runner.cancel(pid)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 5000
+    end
+
+    test "falls back to DB status when no Runner active" do
+      workspace = insert_workspace!()
+      experiment = insert_experiment!(workspace)
+
+      {:ok, status} = Experiments.experiment_status(experiment.id)
+      assert status.status == :created
+      assert status.experiment_id == experiment.id
+    end
+
+    test "returns not_found for missing experiment" do
+      assert {:error, :not_found} = Experiments.experiment_status(Ecto.UUID.generate())
+    end
+  end
+
+  # ── Private Helpers ──────────────────────────────────────────
+
+  defp poll_until_true(check_fn, deadline) do
+    if System.monotonic_time(:millisecond) > deadline do
+      flunk("Timed out waiting for condition")
+    end
+
+    if check_fn.() do
+      :ok
+    else
+      Process.sleep(10)
+      poll_until_true(check_fn, deadline)
     end
   end
 end
