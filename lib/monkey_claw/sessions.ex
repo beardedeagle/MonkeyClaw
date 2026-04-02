@@ -281,19 +281,30 @@ defmodule MonkeyClaw.Sessions do
   end
 
   @doc """
-  Search messages with options.
+  Search messages with filtering options.
 
   ## Options
 
-    * `:limit` — Maximum number of results (default: 50)
+    * `:limit` — Maximum number of results (default: 50, max: 200)
+    * `:after` — Only messages inserted at or after this `DateTime`
+    * `:before` — Only messages inserted at or before this `DateTime`
+    * `:roles` — Only messages with these roles (list of atoms)
+    * `:exclude_session_id` — Exclude messages from this session
+
+  ## Examples
+
+      Sessions.search_messages(workspace_id, "deploy*", %{
+        roles: [:user, :assistant],
+        after: ~U[2026-03-01 00:00:00Z],
+        limit: 10
+      })
   """
   @spec search_messages(Ecto.UUID.t(), String.t(), map()) :: [Message.t()]
   def search_messages(workspace_id, query, opts)
       when is_binary(workspace_id) and byte_size(workspace_id) > 0 and
              is_binary(query) and byte_size(query) > 0 and is_map(opts) do
-    limit = opts |> Map.get(:limit, 50) |> clamp_search_limit()
-
-    # Use raw SQL for FTS5 MATCH + join back to source messages.
+    # Build SQL dynamically based on filter options.
+    # Uses raw SQL for FTS5 MATCH + join back to source messages.
     # External content FTS5 joins via fts_rowid (the application-
     # generated integer key, since all tables are WITHOUT ROWID).
     # We join through sessions to verify workspace ownership
@@ -302,19 +313,9 @@ defmodule MonkeyClaw.Sessions do
     # fts_rowid is intentionally excluded from the SELECT — it is
     # an internal linkage column for FTS5, not part of the domain
     # model. Message structs from search will have fts_rowid: nil.
-    sql = """
-    SELECT m.id, m.role, m.content, m.sequence, m.metadata,
-           m.session_id, m.inserted_at
-    FROM session_messages_fts AS fts
-    JOIN session_messages AS m ON m.fts_rowid = fts.rowid
-    JOIN sessions AS s ON s.id = m.session_id
-    WHERE fts.content MATCH ?1
-      AND s.workspace_id = ?2
-    ORDER BY fts.rank
-    LIMIT ?3
-    """
+    {sql, params} = build_search_sql(workspace_id, query, opts)
 
-    case Repo.query(sql, [query, workspace_id, limit]) do
+    case Repo.query(sql, params) do
       {:ok, %{rows: rows, columns: columns}} ->
         Enum.map(rows, fn row ->
           columns
@@ -429,6 +430,73 @@ defmodule MonkeyClaw.Sessions do
   end
 
   defp apply_offset(query, _opts), do: query
+
+  # ──────────────────────────────────────────────
+  # Search SQL Builder
+  # ──────────────────────────────────────────────
+
+  # Builds a parameterized FTS5 search query with optional filters.
+  # Parameters use SQLite's ?N positional syntax (1-indexed).
+  # Base query always includes FTS5 MATCH and workspace ownership;
+  # optional filters are appended dynamically.
+  @spec build_search_sql(Ecto.UUID.t(), String.t(), map()) :: {String.t(), [term()]}
+  defp build_search_sql(workspace_id, query, opts) do
+    limit = opts |> Map.get(:limit, 50) |> clamp_search_limit()
+
+    # Base conditions: FTS5 match + workspace scope
+    # ?1 = query, ?2 = workspace_id
+    state = {["fts.content MATCH ?1", "s.workspace_id = ?2"], [query, workspace_id], 3}
+
+    state = maybe_add_after_filter(state, opts)
+    state = maybe_add_before_filter(state, opts)
+    state = maybe_add_roles_filter(state, opts)
+    state = maybe_add_exclude_session_filter(state, opts)
+
+    {conditions, params, next_idx} = state
+    where = Enum.join(conditions, "\n    AND ")
+
+    sql = """
+    SELECT m.id, m.role, m.content, m.sequence, m.metadata,
+           m.session_id, m.inserted_at
+    FROM session_messages_fts AS fts
+    JOIN session_messages AS m ON m.fts_rowid = fts.rowid
+    JOIN sessions AS s ON s.id = m.session_id
+    WHERE #{where}
+    ORDER BY fts.rank
+    LIMIT ?#{next_idx}
+    """
+
+    {sql, params ++ [limit]}
+  end
+
+  defp maybe_add_after_filter({conds, params, idx}, %{after: %DateTime{} = dt}) do
+    {conds ++ ["m.inserted_at >= ?#{idx}"], params ++ [DateTime.to_iso8601(dt)], idx + 1}
+  end
+
+  defp maybe_add_after_filter(state, _opts), do: state
+
+  defp maybe_add_before_filter({conds, params, idx}, %{before: %DateTime{} = dt}) do
+    {conds ++ ["m.inserted_at <= ?#{idx}"], params ++ [DateTime.to_iso8601(dt)], idx + 1}
+  end
+
+  defp maybe_add_before_filter(state, _opts), do: state
+
+  defp maybe_add_roles_filter({conds, params, idx}, %{roles: roles})
+       when is_list(roles) and roles != [] do
+    role_strings = Enum.map(roles, &Atom.to_string/1)
+    count = length(role_strings)
+    placeholders = Enum.map_join(0..(count - 1), ", ", fn i -> "?#{idx + i}" end)
+    {conds ++ ["m.role IN (#{placeholders})"], params ++ role_strings, idx + count}
+  end
+
+  defp maybe_add_roles_filter(state, _opts), do: state
+
+  defp maybe_add_exclude_session_filter({conds, params, idx}, %{exclude_session_id: id})
+       when is_binary(id) and byte_size(id) > 0 do
+    {conds ++ ["m.session_id != ?#{idx}"], params ++ [id], idx + 1}
+  end
+
+  defp maybe_add_exclude_session_filter(state, _opts), do: state
 
   # Clamp search limit to a safe integer range.
   # Rejects non-integer, zero, and negative values.

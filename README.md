@@ -71,6 +71,7 @@ Clean separation of concerns, connected through a public Elixir API.
 | **Pipeline**  | `MonkeyClaw.Extensions.Pipeline`  | Compiled, ordered chain of plugs for a hook point |
 | **Workflow**  | `MonkeyClaw.Workflows.Conversation` | Product-level orchestration recipe              |
 | **Experiment**| `MonkeyClaw.Experiments.Experiment`  | Bounded optimization loop with strategy-driven iteration |
+| **Recall**    | `MonkeyClaw.Recall`                  | Cross-session history search and context injection |
 
 Contexts (`MonkeyClaw.Assistants`, `MonkeyClaw.Workspaces`) provide the
 public CRUD API. `MonkeyClaw.AgentBridge` translates domain objects into
@@ -155,6 +156,41 @@ four lifecycle boundaries (`:experiment_started`, `:iteration_started`,
 on `"experiment:#{id}"` topics enable real-time LiveView observation.
 The final evaluation result is persisted as `experiment.result` on
 completion.
+
+### Cross-Session Recall
+
+Automatic injection of relevant past conversation context into new
+agent queries. The recall system searches across all sessions in a
+workspace using FTS5, formats matching messages into context blocks,
+and prepends them to the agent's prompt.
+
+Three-layer architecture:
+
+| Layer | Module | Owns |
+|-------|--------|------|
+| **Recall** | `MonkeyClaw.Recall` | Query sanitization, search orchestration, result assembly |
+| **Formatter** | `MonkeyClaw.Recall.Formatter` | Session-grouped text blocks with character budgets |
+| **Plug** | `MonkeyClaw.Recall.Plug` | Extension plug for `:query_pre` automatic injection |
+
+The recall plug hooks into the existing extension pipeline at
+`:query_pre`. When a user sends a query, the plug:
+
+1. Extracts keywords from the prompt (sanitized for FTS5)
+2. Searches past sessions via FTS5 with temporal/role filtering
+3. Formats matches into a context block (grouped by session)
+4. Sets `:effective_prompt` with the recalled context prepended
+
+Configuration is via application config:
+
+    config :monkey_claw, MonkeyClaw.Extensions,
+      hooks: %{
+        query_pre: [{MonkeyClaw.Recall.Plug, max_results: 10, max_chars: 4000}]
+      }
+
+The search layer supports temporal filtering (`:after`/`:before`),
+role filtering (`:roles`), session exclusion (`:exclude_session_id`),
+and configurable result limits. All functions are pure (database I/O
+aside) — no processes, no state.
 
 ### Dashboard
 
