@@ -71,12 +71,11 @@ defmodule MonkeyClaw.UserModeling do
         |> UserProfile.create_changeset(%{})
         |> Repo.insert(on_conflict: :nothing, conflict_target: :workspace_id)
         |> case do
-          {:ok, %UserProfile{id: nil}} ->
-            # on_conflict: :nothing returns a struct with nil id — re-fetch
+          {:ok, %UserProfile{}} ->
+            # With :binary_id, on_conflict: :nothing returns a struct with
+            # a client-generated id even when the insert was skipped.
+            # Always re-fetch to guarantee we return the persisted row.
             get_profile(workspace.id)
-
-          {:ok, %UserProfile{}} = ok ->
-            ok
 
           {:error, _} = err ->
             err
