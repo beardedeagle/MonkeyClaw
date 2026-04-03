@@ -100,14 +100,14 @@ defmodule MonkeyClawWeb.Telemetry do
       # Webhook Metrics
       counter("monkey_claw.webhook.received.count",
         tags: [:source, :event_type],
-        description: "Webhook deliveries that passed verification"
+        description: "Webhook requests that passed verification"
       ),
       counter("monkey_claw.webhook.rejected.count",
         tags: [:status],
-        description: "Webhook deliveries rejected by security checks"
+        description: "Webhook requests rejected (auth, content-type, event filter, or server error)"
       ),
       counter("monkey_claw.webhook.rate_limited.count",
-        description: "Webhook deliveries rejected by rate limiting"
+        description: "Webhook requests rejected by rate limiting"
       ),
       counter("monkey_claw.webhook.dispatched.count",
         tags: [:event_type],

@@ -4,8 +4,12 @@ defmodule MonkeyClaw.Webhooks.WebhookDelivery do
 
   Every webhook request that passes initial endpoint lookup is
   recorded as a delivery, regardless of whether it was accepted,
-  rejected, or failed during processing. This provides a complete
-  audit trail for security analysis and debugging.
+  rejected, or failed during processing. The one exception is
+  replay attempts — when a delivery ID matches an existing record,
+  the controller returns `202 Accepted` idempotently without
+  creating a duplicate delivery entry (the original record already
+  serves as the audit trail). This provides a complete audit trail
+  for security analysis and debugging.
 
   ## Status Lifecycle
 
