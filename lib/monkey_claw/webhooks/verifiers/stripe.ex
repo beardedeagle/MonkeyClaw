@@ -40,7 +40,12 @@ defmodule MonkeyClaw.Webhooks.Verifiers.Stripe do
 
   @signature_header "stripe-signature"
 
-  @max_header_length 255
+  # Value-level max for event_type and delivery_id fields.
+  @max_value_length 255
+
+  # Signature header max: t=<10>,v1=<64> per entry. During secret
+  # rotation Stripe sends multiple v1 values, so allow headroom.
+  @max_signature_header_length 512
 
   # ── verify ─────────────────────────────────────────────────
 
@@ -58,10 +63,10 @@ defmodule MonkeyClaw.Webhooks.Verifiers.Stripe do
   @spec verify(String.t(), Plug.Conn.t(), binary()) :: :ok | {:error, :unauthorized}
   def verify(secret, conn, raw_body)
       when is_binary(secret) and byte_size(secret) > 0 and is_binary(raw_body) do
-    with {:ok, timestamp, signature} <- parse_signature_header(conn),
+    with {:ok, timestamp, signatures} <- parse_signature_header(conn),
          :ok <- Security.verify_timestamp(timestamp),
          expected = Security.hmac_sha256_hex(secret, "#{timestamp}.#{raw_body}"),
-         true <- Security.constant_time_compare(expected, signature) do
+         true <- Enum.any?(signatures, &Security.constant_time_compare(expected, &1)) do
       :ok
     else
       _ -> {:error, :unauthorized}
@@ -86,7 +91,7 @@ defmodule MonkeyClaw.Webhooks.Verifiers.Stripe do
 
       event_type
       when is_binary(event_type) and byte_size(event_type) > 0 and
-             byte_size(event_type) <= @max_header_length ->
+             byte_size(event_type) <= @max_value_length ->
         {:ok, event_type}
 
       _ ->
@@ -113,7 +118,7 @@ defmodule MonkeyClaw.Webhooks.Verifiers.Stripe do
 
       id
       when is_binary(id) and byte_size(id) > 0 and
-             byte_size(id) <= @max_header_length ->
+             byte_size(id) <= @max_value_length ->
         {:ok, id}
 
       _ ->
@@ -124,31 +129,43 @@ defmodule MonkeyClaw.Webhooks.Verifiers.Stripe do
   # ── Private — Header Parsing ───────────────────────────────
 
   @spec parse_signature_header(Plug.Conn.t()) ::
-          {:ok, integer(), String.t()} | {:error, :missing_signature}
+          {:ok, integer(), [String.t()]} | {:error, :missing_signature}
   defp parse_signature_header(conn) do
     case Plug.Conn.get_req_header(conn, @signature_header) do
-      [header] when is_binary(header) -> parse_signature_value(header)
-      _ -> {:error, :missing_signature}
+      [header] when is_binary(header) and byte_size(header) <= @max_signature_header_length ->
+        parse_signature_value(header)
+
+      _ ->
+        {:error, :missing_signature}
     end
   end
 
   @spec parse_signature_value(String.t()) ::
-          {:ok, integer(), String.t()} | {:error, :malformed_signature}
+          {:ok, integer(), [String.t()]} | {:error, :malformed_signature}
   defp parse_signature_value(header) do
-    parts =
+    # Collect all key=value pairs, grouping duplicate keys (e.g. multiple v1
+    # signatures during Stripe secret rotation) into lists.
+    grouped =
       header
       |> String.split(",")
-      |> Map.new(fn part ->
+      |> Enum.reduce(%{}, fn part, acc ->
         case String.split(part, "=", parts: 2) do
-          [key, value] -> {String.trim(key), String.trim(value)}
-          _ -> {part, ""}
+          [key, value] ->
+            trimmed_key = String.trim(key)
+            trimmed_value = String.trim(value)
+            Map.update(acc, trimmed_key, [trimmed_value], &[trimmed_value | &1])
+
+          _ ->
+            acc
         end
       end)
 
-    with {:ok, timestamp_str} <- Map.fetch(parts, "t"),
+    with [timestamp_str | _] <- Map.get(grouped, "t", []),
          {timestamp, ""} <- Integer.parse(timestamp_str),
-         {:ok, signature} when byte_size(signature) == 64 <- Map.fetch(parts, "v1") do
-      {:ok, timestamp, signature}
+         signatures = Map.get(grouped, "v1", []),
+         valid_sigs = Enum.filter(signatures, &(byte_size(&1) == 64)),
+         [_ | _] <- valid_sigs do
+      {:ok, timestamp, valid_sigs}
     else
       _ -> {:error, :malformed_signature}
     end

@@ -37,7 +37,9 @@ defmodule MonkeyClaw.Webhooks.Verifiers.GitLab do
   def verify(secret, conn, _raw_body)
       when is_binary(secret) and byte_size(secret) > 0 do
     case Plug.Conn.get_req_header(conn, @token_header) do
-      [token] when is_binary(token) and byte_size(token) > 0 ->
+      [token]
+      when is_binary(token) and byte_size(token) > 0 and
+             byte_size(token) <= @max_header_length ->
         if Security.constant_time_compare(token, secret) do
           :ok
         else

@@ -230,6 +230,7 @@ defmodule MonkeyClawWeb.WebhookController do
 
   @spec send_rate_limited(Plug.Conn.t()) :: Plug.Conn.t()
   defp send_rate_limited(conn) do
+    emit_rejected_telemetry(conn, 429)
     emit_rate_limited_telemetry(conn)
 
     conn

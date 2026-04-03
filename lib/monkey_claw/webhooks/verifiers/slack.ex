@@ -40,6 +40,8 @@ defmodule MonkeyClaw.Webhooks.Verifiers.Slack do
   @signature_header "x-slack-signature"
   @timestamp_header "x-slack-request-timestamp"
 
+  @max_value_length 255
+
   # ── verify ─────────────────────────────────────────────────
 
   @impl true
@@ -62,17 +64,10 @@ defmodule MonkeyClaw.Webhooks.Verifiers.Slack do
   @impl true
   def extract_event_type(conn) do
     # Slack sends event types in the JSON body, not headers.
-    case conn.body_params do
-      %{"event" => %{"type" => event_type}}
-      when is_binary(event_type) and byte_size(event_type) > 0 ->
-        {:ok, event_type}
-
-      %{"type" => type} when is_binary(type) and byte_size(type) > 0 ->
-        {:ok, type}
-
-      _ ->
-        {:ok, "unknown"}
-    end
+    # Nested event.type takes precedence over top-level type.
+    conn.body_params
+    |> raw_event_type()
+    |> validate_value(:invalid_event_type, "unknown")
   end
 
   # ── extract_delivery_id ────────────────────────────────────
@@ -80,16 +75,38 @@ defmodule MonkeyClaw.Webhooks.Verifiers.Slack do
   @impl true
   def extract_delivery_id(conn) do
     # Slack includes event_id in the JSON body for event callbacks.
-    case conn.body_params do
-      %{"event_id" => id} when is_binary(id) and byte_size(id) > 0 ->
-        {:ok, id}
-
-      _ ->
-        {:ok, nil}
-    end
+    conn.body_params
+    |> raw_delivery_id()
+    |> validate_value(:invalid_delivery_id, nil)
   end
 
-  # ── Private ────────────────────────────────────────────────
+  # ── Private — Value Extraction ──────────────────────────────
+
+  # Extract the raw event type string from Slack's nested body format.
+  defp raw_event_type(%{"event" => %{"type" => value}}), do: {:some, value}
+  defp raw_event_type(%{"type" => value}), do: {:some, value}
+  defp raw_event_type(_body), do: :none
+
+  # Extract the raw delivery ID from Slack's body format.
+  defp raw_delivery_id(%{"event_id" => value}), do: {:some, value}
+  defp raw_delivery_id(_body), do: :none
+
+  # Validate an extracted value against length bounds.
+  # Returns {:ok, value} for valid strings, {:ok, default} when absent,
+  # or {:error, error} for empty/oversized values.
+  @type validation_error :: :invalid_event_type | :invalid_delivery_id
+
+  @spec validate_value({:some, term()} | :none, validation_error(), String.t() | nil) ::
+          {:ok, String.t() | nil} | {:error, validation_error()}
+  defp validate_value({:some, value}, _error, _default)
+       when is_binary(value) and byte_size(value) > 0 and
+              byte_size(value) <= @max_value_length,
+       do: {:ok, value}
+
+  defp validate_value({:some, _}, error, _default), do: {:error, error}
+  defp validate_value(:none, _error, default), do: {:ok, default}
+
+  # ── Private — Header Parsing ──────────────────────────────
 
   defp extract_signature(conn) do
     case Plug.Conn.get_req_header(conn, @signature_header) do
