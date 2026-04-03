@@ -6,6 +6,7 @@ defmodule MonkeyClaw.Application do
   use Application
 
   alias MonkeyClaw.Skills.Cache, as: SkillsCache
+  alias MonkeyClaw.Webhooks.RateLimiter
 
   @impl true
   def start(_type, _args) do
@@ -20,6 +21,10 @@ defmodule MonkeyClaw.Application do
     # Skills cache is an application-owned ETS table (not a process)
     # used for low-latency per-workspace skill lookups.
     :ok = SkillsCache.init()
+
+    # Initialize webhook rate limiter ETS table before supervision tree
+    # starts. Uses atomic counters for lock-free concurrent rate checking.
+    :ok = RateLimiter.init()
 
     children =
       [

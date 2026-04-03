@@ -37,7 +37,7 @@ capabilities with security built into the platform, not patched on top.
 ├─────────────────────────────────────────────────────┤
 │  Product Layer                                       │
 │  MonkeyClaw — assistants · workspaces · experiments  │
-│  scheduling · user modeling                          │
+│  scheduling · user modeling · webhooks               │
 ├─────────────────────────────────────────────────────┤
 │  Extension Layer                                    │
 │  Plug pipelines — hooks · contexts · pipelines      │
@@ -76,8 +76,9 @@ Clean separation of concerns, connected through a public Elixir API.
 | **Skills**    | `MonkeyClaw.Skills`                  | Reusable procedures extracted from successful experiments with FTS5 search and effectiveness scoring |
 | **Scheduling**| `MonkeyClaw.Scheduling`              | Timed experiment runs — once or recurring — with status lifecycle and run tracking |
 | **UserModeling**| `MonkeyClaw.UserModeling`          | Privacy-aware observation of user interactions, topic extraction, and injectable context for personalized queries |
+| **Webhooks**  | `MonkeyClaw.Webhooks`                | Secure webhook ingress with HMAC-SHA256 verification, replay detection, rate limiting, and async agent dispatch |
 
-Contexts (`MonkeyClaw.Assistants`, `MonkeyClaw.Workspaces`) provide the
+Contexts (`MonkeyClaw.Assistants`, `MonkeyClaw.Workspaces`, `MonkeyClaw.Webhooks`) provide the
 public CRUD API. `MonkeyClaw.AgentBridge` translates domain objects into
 BeamAgent session and thread configurations. `MonkeyClaw.Workflows`
 composes these into user-facing operations.
@@ -308,6 +309,52 @@ Configuration is via application config alongside other plugs:
           {MonkeyClaw.UserModeling.InjectionPlug, min_query_length: 10}
         ]
       }
+
+### Webhook Ingress
+
+Secure HTTP endpoint for receiving external webhook deliveries and
+routing them to agent workflows. Every incoming request passes through
+a defense-in-depth security pipeline before reaching the agent.
+
+Three-layer architecture:
+
+| Layer | Module | Owns |
+|-------|--------|------|
+| **Webhooks** | `MonkeyClaw.Webhooks` | Endpoint CRUD, delivery tracking, replay detection, secret management |
+| **Security** | `MonkeyClaw.Webhooks.Security` | HMAC-SHA256 signature verification, timestamp freshness, header parsing |
+| **Dispatcher** | `MonkeyClaw.Webhooks.Dispatcher` | Async agent dispatch via `Conversation.send_message/4` |
+
+Security pipeline (in order):
+
+1. **Endpoint lookup** — Active endpoints only; missing, paused, and
+   revoked return identical 404s (anti-enumeration)
+2. **Content-Type** — JSON only (415 for anything else)
+3. **HMAC-SHA256** — Stripe-style signature: `t=<timestamp>,v1=<hex>`
+   with constant-time comparison via `Plug.Crypto.secure_compare/2`
+4. **Timestamp freshness** — 5-minute tolerance window rejects stale
+   signatures
+5. **Replay detection** — Idempotency keys checked against delivery
+   history; replays return 202 without reprocessing
+6. **Rate limiting** — ETS-backed per-endpoint sliding window with
+   atomic counters; 429 with Retry-After header
+7. **Event filtering** — Optional allowed-events map per endpoint
+
+Signing secrets are encrypted at rest with AES-256-GCM using a key
+derived from `secret_key_base` with a domain-specific separator.
+Each encryption uses a random 96-bit IV, so ciphertext differs even
+for identical secrets. Secrets can be rotated but never retrieved
+after creation.
+
+The `CacheBodyReader` preserves raw request bytes in `conn.private`
+for HMAC verification, since `Plug.Parsers` consumes the body during
+JSON decoding. Verified webhooks are dispatched asynchronously via
+`Task.Supervisor` — the controller returns 202 immediately while the
+agent processes the event in a dedicated `"webhook:<endpoint_name>"`
+channel.
+
+All error responses are deliberately opaque — no endpoint IDs, stack
+traces, or distinguishing details. Telemetry counters track received,
+rejected, rate-limited, and dispatched events.
 
 ### Dashboard
 
