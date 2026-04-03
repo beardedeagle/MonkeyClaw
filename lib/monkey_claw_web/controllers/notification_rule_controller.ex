@@ -22,6 +22,8 @@ defmodule MonkeyClawWeb.NotificationRuleController do
 
   use MonkeyClawWeb, :controller
 
+  require Logger
+
   alias MonkeyClaw.Notifications
   alias MonkeyClaw.Notifications.NotificationRule
   alias MonkeyClaw.Notifications.Router, as: NotificationRouter
@@ -55,7 +57,7 @@ defmodule MonkeyClawWeb.NotificationRuleController do
   def create(conn, %{"workspace_id" => workspace_id} = params) do
     with {:ok, workspace} <- Workspaces.get_workspace(workspace_id),
          {:ok, rule} <- Notifications.create_rule(workspace, rule_params(params)) do
-      _ = NotificationRouter.refresh_cache()
+      log_cache_refresh(NotificationRouter.refresh_cache())
 
       conn
       |> put_status(201)
@@ -77,7 +79,7 @@ defmodule MonkeyClawWeb.NotificationRuleController do
     with {:ok, rule} <- Notifications.get_rule(id),
          :ok <- verify_workspace(rule, workspace_id),
          {:ok, updated} <- Notifications.update_rule(rule, rule_params(params)) do
-      _ = NotificationRouter.refresh_cache()
+      log_cache_refresh(NotificationRouter.refresh_cache())
 
       conn
       |> put_status(200)
@@ -102,7 +104,7 @@ defmodule MonkeyClawWeb.NotificationRuleController do
     with {:ok, rule} <- Notifications.get_rule(id),
          :ok <- verify_workspace(rule, workspace_id),
          {:ok, _deleted} <- Notifications.delete_rule(rule) do
-      _ = NotificationRouter.refresh_cache()
+      log_cache_refresh(NotificationRouter.refresh_cache())
       send_resp(conn, 204, "")
     else
       {:error, :not_found} ->
@@ -117,6 +119,12 @@ defmodule MonkeyClawWeb.NotificationRuleController do
   end
 
   # ── Private ─────────────────────────────────────────────────
+
+  defp log_cache_refresh(:ok), do: :ok
+
+  defp log_cache_refresh({:error, reason}) do
+    Logger.warning("NotificationRouter cache refresh failed: #{inspect(reason)}")
+  end
 
   defp verify_workspace(%NotificationRule{} = rule, workspace_id) do
     if rule.workspace_id == workspace_id do

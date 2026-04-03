@@ -200,13 +200,23 @@ defmodule MonkeyClaw.Notifications.Router do
   # This eliminates the gap where events could be missed during refresh.
   defp attach_all_handlers(%__MODULE__{} = state) do
     all_events = Map.values(@event_registry) |> Enum.uniq()
-
-    Enum.each(all_events, fn event ->
-      handler_id = "#{@handler_id}_#{Enum.join(event, ".")}"
-      :telemetry.attach(handler_id, event, &telemetry_handler/4, nil)
-    end)
-
+    Enum.each(all_events, &attach_handler/1)
     %{state | attached_events: all_events}
+  end
+
+  # Best-effort detach before attach makes startup deterministic if a
+  # previous router instance crashed and terminate/2 didn't run.
+  defp attach_handler(event) do
+    handler_id = "#{@handler_id}_#{Enum.join(event, ".")}"
+    _ = :telemetry.detach(handler_id)
+
+    case :telemetry.attach(handler_id, event, &telemetry_handler/4, nil) do
+      :ok ->
+        :ok
+
+      {:error, :already_exists} ->
+        Logger.warning("NotificationRouter handler already attached: #{handler_id}")
+    end
   end
 
   # Load rules from DB and refresh the ETS cache. Handlers remain
