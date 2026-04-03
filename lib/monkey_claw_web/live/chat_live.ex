@@ -314,6 +314,10 @@ defmodule MonkeyClawWeb.ChatLive do
   # memory growth from a runaway backend.
   @max_stream_content_bytes 2_000_000
 
+  # Maximum number of messages kept in the display list. Older messages
+  # are dropped from the front to bound LiveView assign memory.
+  @max_display_messages 1000
+
   def handle_info({:stream_chunk, _session_id, chunk}, socket) do
     # Capture usage metadata from assistant/result messages.
     socket = maybe_capture_usage(socket, chunk)
@@ -453,6 +457,24 @@ defmodule MonkeyClawWeb.ChatLive do
     {:noreply, socket}
   end
 
+  # Normal task exit — no action needed.
+  def handle_info({:DOWN, _ref, :process, _pid, :normal}, socket), do: {:noreply, socket}
+
+  # Task crashed — if we're still loading, surface the error to the user.
+  def handle_info({:DOWN, _ref, :process, _pid, reason}, socket) do
+    if socket.assigns.loading do
+      {:noreply,
+       socket
+       |> assign(:loading, false)
+       |> assign(:streaming, false)
+       |> assign(:stream_content, "")
+       |> assign(:stream_byte_size, 0)
+       |> assign(:error, "Backend task crashed: #{inspect(reason)}")}
+    else
+      {:noreply, socket}
+    end
+  end
+
   # --- Private ---
 
   # Cancel the active stream task on the backend to free the session.
@@ -552,9 +574,14 @@ defmodule MonkeyClawWeb.ChatLive do
 
   defp maybe_set_backend_model(workspace, model) do
     Task.start(fn ->
-      case AgentBridge.set_model(workspace.id, model) do
-        {:ok, _} -> :ok
-        {:error, reason} -> Logger.warning("set_model failed: #{inspect(reason)}")
+      try do
+        case AgentBridge.set_model(workspace.id, model) do
+          {:ok, _} -> :ok
+          {:error, reason} -> Logger.warning("set_model failed: #{inspect(reason)}")
+        end
+      rescue
+        error ->
+          Logger.warning("set_model crashed: #{Exception.format(:error, error, __STACKTRACE__)}")
       end
     end)
   end
@@ -562,23 +589,27 @@ defmodule MonkeyClawWeb.ChatLive do
   defp dispatch_stream(workspace_id, channel_name, message, opts) do
     lv = self()
 
-    Task.start(fn ->
-      result =
-        Conversation.stream_message(
-          workspace_id,
-          channel_name,
-          message,
-          [{:stream_to, lv} | opts]
-        )
+    {:ok, pid} =
+      Task.start(fn ->
+        result =
+          Conversation.stream_message(
+            workspace_id,
+            channel_name,
+            message,
+            [{:stream_to, lv} | opts]
+          )
 
-      case result do
-        {:ok, %{streaming: true}} ->
-          :ok
+        case result do
+          {:ok, %{streaming: true}} ->
+            :ok
 
-        {:error, reason} ->
-          send(lv, {:ai_response, {:error, reason}})
-      end
-    end)
+          {:error, reason} ->
+            send(lv, {:ai_response, {:error, reason}})
+        end
+      end)
+
+    Process.monitor(pid)
+    :ok
   end
 
   # --- Conversation management ---
@@ -746,7 +777,10 @@ defmodule MonkeyClawWeb.ChatLive do
     }
 
     socket
-    |> update(:messages, &(&1 ++ [message]))
+    |> update(:messages, fn messages ->
+      updated = messages ++ [message]
+      if length(updated) > @max_display_messages, do: Enum.drop(updated, 1), else: updated
+    end)
     |> update(:session_stats, fn stats ->
       %{
         stats
@@ -775,7 +809,10 @@ defmodule MonkeyClawWeb.ChatLive do
       model: nil
     }
 
-    update(socket, :messages, &(&1 ++ [message]))
+    update(socket, :messages, fn messages ->
+      updated = messages ++ [message]
+      if length(updated) > @max_display_messages, do: Enum.drop(updated, 1), else: updated
+    end)
   end
 
   # --- Content extraction ---

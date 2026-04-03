@@ -78,10 +78,10 @@ defmodule MonkeyClaw.Scheduling.Scheduler do
   and for immediate execution when a new entry is created
   with a `next_run_at` in the past.
   """
-  @spec trigger_poll() :: :ok
+  @spec trigger_poll() :: :ok | {:error, :not_running}
   def trigger_poll do
     case Process.whereis(__MODULE__) do
-      nil -> :ok
+      nil -> {:error, :not_running}
       pid -> GenServer.call(pid, :trigger_poll, 30_000)
     end
   end
@@ -95,6 +95,11 @@ defmodule MonkeyClaw.Scheduling.Scheduler do
       Keyword.get_lazy(opts, :poll_interval, fn ->
         Application.get_env(:monkey_claw, :scheduler_poll_interval_ms, @default_poll_interval_ms)
       end)
+
+    if not is_integer(poll_interval) or poll_interval <= 0 do
+      raise ArgumentError,
+            "poll_interval must be a positive integer, got: #{inspect(poll_interval)}"
+    end
 
     initial_delay = Keyword.get(opts, :initial_delay, 0)
 

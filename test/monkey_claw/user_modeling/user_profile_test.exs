@@ -129,20 +129,6 @@ defmodule MonkeyClaw.UserModeling.UserProfileTest do
     end
   end
 
-  describe "observing?/1" do
-    test "returns true for :full" do
-      assert UserProfile.observing?(:full) == true
-    end
-
-    test "returns true for :limited" do
-      assert UserProfile.observing?(:limited) == true
-    end
-
-    test "returns false for :none" do
-      assert UserProfile.observing?(:none) == false
-    end
-  end
-
   describe "tracks_patterns?/1" do
     test "returns true only for :full" do
       assert UserProfile.tracks_patterns?(:full) == true

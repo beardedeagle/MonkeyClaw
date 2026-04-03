@@ -267,6 +267,50 @@ defmodule MonkeyClaw.SchedulingTest do
       assert after_second.run_count == 2
       assert after_second.status == :completed
     end
+
+    test "record_run on already-completed :once entry is a no-op status transition" do
+      workspace = insert_workspace!()
+      entry = insert_schedule_entry!(workspace, %{schedule_type: :once})
+
+      # First run completes it
+      {:ok, completed} = Scheduling.record_run(entry)
+      assert completed.status == :completed
+      assert completed.run_count == 1
+
+      # Second record_run: status stays :completed (no-op transition), run_count still increments.
+      # In practice the Scheduler only fires :active entries, so this path is unreachable,
+      # but we document the behaviour for safety.
+      {:ok, again} = Scheduling.record_run(completed)
+      assert again.status == :completed
+      assert again.run_count == 2
+    end
+
+    test "record_run on :interval entry with invalid interval_ms marks entry failed" do
+      workspace = insert_workspace!()
+
+      entry =
+        insert_schedule_entry!(workspace, %{
+          schedule_type: :interval,
+          interval_ms: 60_000,
+          next_run_at: DateTime.add(DateTime.utc_now(), -60, :second)
+        })
+
+      # Corrupt interval_ms directly in the DB to simulate a broken record.
+      # This bypasses Ecto validations — the only way this state can occur.
+      import Ecto.Query
+
+      MonkeyClaw.Repo.update_all(
+        from(e in ScheduleEntry, where: e.id == ^entry.id),
+        set: [interval_ms: nil]
+      )
+
+      {:ok, corrupted} = Scheduling.get_schedule_entry(entry.id)
+      assert is_nil(corrupted.interval_ms)
+
+      {:ok, updated} = Scheduling.record_run(corrupted)
+      assert updated.status == :failed
+      assert updated.run_count == 1
+    end
   end
 
   # ──────────────────────────────────────────────

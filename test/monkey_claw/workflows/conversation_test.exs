@@ -119,7 +119,7 @@ defmodule MonkeyClaw.Workflows.ConversationTest do
       assert {:ok, ctx} = Conversation.run_query_pre("session-1", "Hello")
       assert ctx.event == :query_pre
       assert ctx.data.prompt == "Hello"
-      assert ctx.data.session_id == "session-1"
+      assert ctx.data.workspace_id == "session-1"
       refute ctx.halted
     end
 
@@ -167,7 +167,7 @@ defmodule MonkeyClaw.Workflows.ConversationTest do
       assert ctx.event == :query_post
       assert ctx.data.messages == messages
       assert ctx.data.prompt == "Hello"
-      assert ctx.data.session_id == "session-1"
+      assert ctx.data.workspace_id == "session-1"
     end
 
     test "runs configured plugs" do

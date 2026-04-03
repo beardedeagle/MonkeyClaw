@@ -182,7 +182,7 @@ defmodule MonkeyClaw.UserModeling.InjectionPlugTest do
     data =
       case workspace_id do
         nil -> %{prompt: prompt}
-        id -> %{session_id: id, prompt: prompt}
+        id -> %{workspace_id: id, prompt: prompt}
       end
 
     Context.new!(:query_pre, data)

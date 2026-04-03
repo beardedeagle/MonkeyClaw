@@ -104,7 +104,7 @@ defmodule MonkeyClaw.Skills.Plug do
   @spec call(Context.t(), opts()) :: Context.t()
   def call(%Context{event: :query_pre} = ctx, opts) do
     prompt = Map.get(ctx.data, :prompt, "")
-    workspace_id = Map.get(ctx.data, :session_id)
+    workspace_id = Map.get(ctx.data, :workspace_id)
 
     cond do
       String.length(prompt) < opts.min_query_length ->

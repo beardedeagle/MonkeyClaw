@@ -69,7 +69,7 @@ defmodule MonkeyClaw.Skills.ExtractionPlug do
   @impl true
   @spec call(Context.t(), keyword()) :: Context.t()
   def call(%Context{event: :experiment_completed} = ctx, _opts) do
-    experiment = ctx.data[:experiment] || ctx.data["experiment"]
+    experiment = ctx.data[:experiment]
 
     case experiment do
       %{status: :accepted, workspace_id: workspace_id} when is_binary(workspace_id) ->

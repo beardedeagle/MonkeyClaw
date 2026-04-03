@@ -15,8 +15,8 @@ defmodule MonkeyClaw.Scheduling do
   ## Design
 
   This module is NOT a process. It delegates persistence to
-  `MonkeyClaw.Repo` (Ecto/SQLite3). All functions are pure
-  (database I/O aside) and safe for concurrent use.
+  `MonkeyClaw.Repo` (Ecto/SQLite3). All functions are stateless
+  (no process state) and safe for concurrent use.
   """
 
   require Logger
@@ -173,6 +173,13 @@ defmodule MonkeyClaw.Scheduling do
   For `:once` entries, transitions status to `:completed`. For `:interval`
   entries, computes `next_run_at` as `now + interval_ms`. If `max_runs`
   is set and `run_count` reaches the limit, transitions to `:completed`.
+
+  ## Concurrency
+
+  This function is safe to call from a single serialized caller
+  (the Scheduler GenServer). It reads `run_count` from the struct
+  and increments it in Elixir. If callers are ever parallelized,
+  add `Ecto.Changeset.optimistic_lock/3` on a `lock_version` column.
 
   ## Examples
 

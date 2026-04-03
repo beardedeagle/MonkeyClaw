@@ -62,7 +62,7 @@ defmodule MonkeyClaw.UserModeling.ObservationPlug do
   @spec call(Context.t(), keyword()) :: Context.t()
   def call(%Context{event: :query_post} = ctx, _opts) do
     prompt = Map.get(ctx.data, :prompt, "")
-    workspace_id = Map.get(ctx.data, :session_id)
+    workspace_id = Map.get(ctx.data, :workspace_id)
     messages = Map.get(ctx.data, :messages, [])
 
     if is_binary(workspace_id) and byte_size(workspace_id) > 0 and

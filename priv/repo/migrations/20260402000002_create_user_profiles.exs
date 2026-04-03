@@ -15,7 +15,8 @@ defmodule MonkeyClaw.Repo.Migrations.CreateUserProfiles do
 
     * `"full"` — All observations recorded and injected
     * `"limited"` — Only topic observations, no behavioral patterns
-    * `"none"` — No observations recorded, no injection
+    * `"none"` — No passive observations recorded. Injection is controlled
+      separately by the `injection_enabled` column.
   """
 
   use Ecto.Migration

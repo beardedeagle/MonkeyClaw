@@ -127,6 +127,10 @@ defmodule MonkeyClawWeb.DashboardLive do
   end
 
   @doc false
+  def format_number(n) when is_integer(n) and n < 0 do
+    "-" <> format_number(abs(n))
+  end
+
   def format_number(n) when is_integer(n) do
     n
     |> Integer.to_string()

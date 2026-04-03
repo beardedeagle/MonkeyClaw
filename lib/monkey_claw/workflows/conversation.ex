@@ -272,7 +272,7 @@ defmodule MonkeyClaw.Workflows.Conversation do
 
       {:error, {:session_not_found, _}} ->
         case AgentBridge.start_session(config) do
-          {:ok, _pid} -> :ok
+          {:ok, _result} -> :ok
           {:error, reason} -> {:error, {:session_start_failed, reason}}
         end
 
@@ -306,14 +306,14 @@ defmodule MonkeyClaw.Workflows.Conversation do
   @doc """
   Execute `:query_pre` extension hooks.
 
-  Fires the `:query_pre` hook with the session ID and prompt.
+  Fires the `:query_pre` hook with the workspace ID and prompt.
   If a plug halts the context, returns `{:error, {:halted, ctx}}`.
   """
   @spec run_query_pre(String.t(), String.t()) ::
           {:ok, Extensions.Context.t()} | {:error, term()}
-  def run_query_pre(session_id, prompt)
-      when is_binary(session_id) and is_binary(prompt) do
-    case Extensions.execute(:query_pre, %{session_id: session_id, prompt: prompt}) do
+  def run_query_pre(workspace_id, prompt)
+      when is_binary(workspace_id) and is_binary(prompt) do
+    case Extensions.execute(:query_pre, %{workspace_id: workspace_id, prompt: prompt}) do
       {:ok, %{halted: true} = ctx} -> {:error, {:halted, ctx}}
       {:ok, ctx} -> {:ok, ctx}
       {:error, reason} -> {:error, {:extension_error, reason}}
@@ -323,14 +323,14 @@ defmodule MonkeyClaw.Workflows.Conversation do
   @doc """
   Execute `:query_post` extension hooks.
 
-  Fires the `:query_post` hook with the session ID, prompt,
+  Fires the `:query_post` hook with the workspace ID, prompt,
   and response messages.
   """
   @spec run_query_post(String.t(), String.t(), list()) ::
           {:ok, Extensions.Context.t()} | {:error, term()}
-  def run_query_post(session_id, prompt, messages)
-      when is_binary(session_id) and is_binary(prompt) and is_list(messages) do
-    data = %{session_id: session_id, prompt: prompt, messages: messages}
+  def run_query_post(workspace_id, prompt, messages)
+      when is_binary(workspace_id) and is_binary(prompt) and is_list(messages) do
+    data = %{workspace_id: workspace_id, prompt: prompt, messages: messages}
 
     case Extensions.execute(:query_post, data) do
       {:ok, ctx} -> {:ok, ctx}

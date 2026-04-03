@@ -86,11 +86,14 @@ defmodule MonkeyClaw.UserModeling.InjectionPlug do
   @impl true
   @spec call(Context.t(), opts()) :: Context.t()
   def call(%Context{event: :query_pre} = ctx, opts) do
-    prompt = Map.get(ctx.data, :prompt) || ""
-    workspace_id = Map.get(ctx.data, :session_id)
+    prompt = Map.get(ctx.data, :prompt)
+    workspace_id = Map.get(ctx.data, :workspace_id)
 
     cond do
-      not is_binary(prompt) or String.length(prompt) < opts.min_query_length ->
+      not is_binary(prompt) ->
+        ctx
+
+      String.length(prompt) < opts.min_query_length ->
         ctx
 
       not is_binary(workspace_id) or byte_size(workspace_id) == 0 ->

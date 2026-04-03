@@ -91,13 +91,6 @@ defmodule MonkeyClaw.UserModeling.UserProfile do
   def privacy_levels, do: @privacy_levels
 
   @doc """
-  Returns true if the privacy level allows observations.
-  """
-  @spec observing?(privacy_level()) :: boolean()
-  def observing?(:none), do: false
-  def observing?(_level), do: true
-
-  @doc """
   Returns true if the privacy level allows behavioral pattern tracking.
   """
   @spec tracks_patterns?(privacy_level()) :: boolean()

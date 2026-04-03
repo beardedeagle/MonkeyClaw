@@ -32,7 +32,7 @@ config :monkey_claw, MonkeyClawWeb.Endpoint,
     layout: false
   ],
   pubsub_server: MonkeyClaw.PubSub,
-  live_view: [signing_salt: "O+pZ6FAJ"]
+  live_view: [signing_salt: "+zqFzRJszI2u/fRngg/usTH2EWOjb0QI"]
 
 # Configure the mailer
 #

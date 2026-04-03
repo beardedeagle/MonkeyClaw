@@ -206,7 +206,7 @@ defmodule MonkeyClaw.UserModeling do
       UserModeling.extract_topics("How do I deploy an Elixir release?")
       #=> %{"deploy" => 1, "elixir" => 1, "release" => 1}
   """
-  @spec extract_topics(String.t()) :: %{String.t() => pos_integer()}
+  @spec extract_topics(String.t()) :: %{optional(String.t()) => pos_integer()}
   def extract_topics(text) when is_binary(text) do
     text
     |> String.downcase()
@@ -307,19 +307,18 @@ defmodule MonkeyClaw.UserModeling do
   """
   @spec build_injection_context(UserProfile.t()) :: String.t()
   def build_injection_context(%UserProfile{} = profile) do
-    parts = []
-
     parts =
-      case format_top_interests(profile.observed_topics) do
-        "" -> parts
-        interests -> parts ++ ["Top interests: " <> interests]
-      end
-
-    parts =
-      case format_preferences(profile.preferences) do
-        "" -> parts
-        prefs -> parts ++ ["Preferences: " <> prefs]
-      end
+      [
+        case format_top_interests(profile.observed_topics) do
+          "" -> nil
+          interests -> "Top interests: " <> interests
+        end,
+        case format_preferences(profile.preferences) do
+          "" -> nil
+          prefs -> "Preferences: " <> prefs
+        end
+      ]
+      |> Enum.reject(&is_nil/1)
 
     case parts do
       [] -> ""

@@ -126,6 +126,12 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
     end
   end
 
+  # NOTE: Finding #38 (orphaned entry with deleted workspace) is structurally
+  # prevented by the FK constraint `on_delete: :delete_all` on schedule_entries.
+  # When a workspace is deleted, its entries are cascade-deleted. The defensive
+  # handler in fire_entry/1 is good defense-in-depth but the state is unreachable
+  # in the current schema, so no test is needed.
+
   describe "interval entry scheduling" do
     test "interval entry advances next_run_at after firing" do
       workspace = insert_workspace!()

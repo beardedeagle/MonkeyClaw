@@ -15,7 +15,7 @@ defmodule MonkeyClaw.AssistantsTest do
     context_prompt: "Working on Elixir.",
     cwd: "/home/user",
     max_thinking_tokens: 1000,
-    permission_mode: :auto,
+    permission_mode: :default,
     description: "A complete assistant"
   }
 
@@ -38,7 +38,7 @@ defmodule MonkeyClaw.AssistantsTest do
       assert assistant.context_prompt == "Working on Elixir."
       assert assistant.cwd == "/home/user"
       assert assistant.max_thinking_tokens == 1000
-      assert assistant.permission_mode == :auto
+      assert assistant.permission_mode == :default
       assert assistant.description == "A complete assistant"
     end
 
@@ -264,7 +264,7 @@ defmodule MonkeyClaw.AssistantsTest do
       assert opts.model == "opus"
       assert opts.cwd == "/home/user"
       assert opts.max_thinking_tokens == 1000
-      assert opts.permission_mode == :auto
+      assert opts.permission_mode == :default
 
       # Prompt composed from all three layers
       assert opts.system_prompt =~ "You are helpful."

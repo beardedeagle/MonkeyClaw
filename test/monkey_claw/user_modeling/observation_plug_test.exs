@@ -37,7 +37,7 @@ defmodule MonkeyClaw.UserModeling.ObservationPlugTest do
 
       ctx =
         Context.new!(:query_post, %{
-          session_id: workspace.id,
+          workspace_id: workspace.id,
           prompt: "test prompt",
           messages: messages
         })
@@ -59,7 +59,7 @@ defmodule MonkeyClaw.UserModeling.ObservationPlugTest do
 
       ctx =
         Context.new!(:query_post, %{
-          session_id: workspace.id,
+          workspace_id: workspace.id,
           prompt: "test prompt",
           messages: messages
         })
@@ -89,7 +89,7 @@ defmodule MonkeyClaw.UserModeling.ObservationPlugTest do
 
       ctx =
         Context.new!(:query_post, %{
-          session_id: workspace.id,
+          workspace_id: workspace.id,
           prompt: "",
           messages: []
         })
@@ -104,7 +104,7 @@ defmodule MonkeyClaw.UserModeling.ObservationPlugTest do
 
       ctx =
         Context.new!(:query_post, %{
-          session_id: workspace.id,
+          workspace_id: workspace.id,
           prompt: "test prompt",
           messages: []
         })
@@ -119,7 +119,7 @@ defmodule MonkeyClaw.UserModeling.ObservationPlugTest do
 
       ctx =
         Context.new!(:query_post, %{
-          session_id: workspace.id,
+          workspace_id: workspace.id,
           prompt: "test prompt",
           messages: []
         })

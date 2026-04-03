@@ -55,6 +55,7 @@ defmodule MonkeyClaw.Scheduling.ScheduleEntry do
           interval_ms: pos_integer() | nil,
           next_run_at: DateTime.t() | nil,
           experiment_config: map(),
+          # nil only for unsaved structs; defaults to :active on insert
           status: status() | nil,
           last_run_at: DateTime.t() | nil,
           run_count: non_neg_integer(),
@@ -175,7 +176,6 @@ defmodule MonkeyClaw.Scheduling.ScheduleEntry do
     |> validate_required([:name, :schedule_type, :next_run_at, :experiment_config])
     |> validate_length(:name, min: 1, max: 200)
     |> validate_length(:description, max: 1000)
-    |> validate_inclusion(:schedule_type, @schedule_types)
     |> validate_interval_ms()
     |> validate_experiment_config()
     |> validate_max_runs()
@@ -192,12 +192,24 @@ defmodule MonkeyClaw.Scheduling.ScheduleEntry do
     entry
     |> cast(attrs, @update_fields)
     |> validate_length(:name, min: 1, max: 200)
+    |> validate_name_if_changed()
     |> validate_length(:description, max: 1000)
     |> validate_interval_ms_for_update(entry.schedule_type)
     |> maybe_validate_experiment_config()
     |> validate_max_runs()
     |> validate_number(:run_count, greater_than_or_equal_to: 0)
     |> validate_status_transition(entry.status)
+  end
+
+  # Reject explicit nil/blank name on update (DB has NOT NULL).
+  defp validate_name_if_changed(changeset) do
+    case fetch_change(changeset, :name) do
+      {:ok, name} when is_nil(name) or name == "" ->
+        add_error(changeset, :name, "can't be blank")
+
+      _ ->
+        changeset
+    end
   end
 
   # Interval type requires interval_ms > 0.
@@ -266,8 +278,10 @@ defmodule MonkeyClaw.Scheduling.ScheduleEntry do
         if missing == [] do
           changeset
         else
-          add_error(changeset, :experiment_config, "missing required keys: %{keys}",
-            keys: Enum.join(missing, ", ")
+          add_error(
+            changeset,
+            :experiment_config,
+            "missing required keys: #{Enum.join(missing, ", ")}"
           )
         end
 

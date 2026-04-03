@@ -123,10 +123,10 @@ defmodule MonkeyClaw.Extensions.PipelineTest do
           {TestPlugs.PassThrough, []}
         ])
 
-      ctx = Context.new!(:query_pre, %{prompt: "Hello", session_id: "ws-1"})
+      ctx = Context.new!(:query_pre, %{prompt: "Hello", workspace_id: "ws-1"})
       {:ok, result} = Pipeline.execute(pipeline, ctx)
 
-      assert result.data == %{prompt: "Hello", session_id: "ws-1"}
+      assert result.data == %{prompt: "Hello", workspace_id: "ws-1"}
     end
 
     test "event is preserved through pipeline" do

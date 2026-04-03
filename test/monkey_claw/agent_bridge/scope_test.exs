@@ -97,11 +97,16 @@ defmodule MonkeyClaw.AgentBridge.ScopeTest do
     end
 
     test "maps valid :permission_mode values" do
-      assert Scope.session_opts(%{permission_mode: :auto}) == %{permission_mode: :auto}
-      assert Scope.session_opts(%{permission_mode: :manual}) == %{permission_mode: :manual}
+      assert Scope.session_opts(%{permission_mode: :default}) == %{permission_mode: :default}
 
       assert Scope.session_opts(%{permission_mode: :accept_edits}) ==
                %{permission_mode: :accept_edits}
+
+      assert Scope.session_opts(%{permission_mode: :bypass_permissions}) ==
+               %{permission_mode: :bypass_permissions}
+
+      assert Scope.session_opts(%{permission_mode: :plan}) == %{permission_mode: :plan}
+      assert Scope.session_opts(%{permission_mode: :dont_ask}) == %{permission_mode: :dont_ask}
     end
 
     test "maps multiple options" do
