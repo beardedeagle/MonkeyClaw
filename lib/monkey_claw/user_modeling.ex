@@ -270,12 +270,12 @@ defmodule MonkeyClaw.UserModeling do
         0.0
       end
 
-    existing_hours = Map.get(existing, "active_hours", %{})
-    new_hours = Map.get(new, "active_hours", %{})
+    existing_hours = safe_hours(Map.get(existing, "active_hours", %{}))
+    new_hours = safe_hours(Map.get(new, "active_hours", %{}))
 
     merged_hours =
       Map.merge(existing_hours, new_hours, fn _key, v1, v2 ->
-        min(v1 + v2, @max_hour_count)
+        min(safe_count(v1, @max_hour_count) + safe_count(v2, @max_hour_count), @max_hour_count)
       end)
 
     %{
@@ -447,6 +447,12 @@ defmodule MonkeyClaw.UserModeling do
 
   defp safe_float(value) when is_number(value), do: value * 1.0
   defp safe_float(_), do: 0.0
+
+  # Defensive coercion for active_hours from JSON round-trip.
+  # Returns an empty map for non-map values to prevent MatchError
+  # on corrupted or manually-edited records.
+  defp safe_hours(value) when is_map(value), do: value
+  defp safe_hours(_), do: %{}
 
   # Return the top N entries from a map by value (descending).
   defp top_n_by_value(map, n) when map_size(map) <= n, do: map

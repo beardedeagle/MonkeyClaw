@@ -297,7 +297,10 @@ defmodule MonkeyClaw.Scheduling.ScheduleEntry do
 
   # Normalize map keys to strings for consistent JSON storage.
   defp stringify_keys(map) when is_map(map) do
-    Map.new(map, fn {k, v} -> {to_string(k), v} end)
+    Map.new(map, fn
+      {k, v} when is_atom(k) -> {Atom.to_string(k), v}
+      {k, v} when is_binary(k) -> {k, v}
+    end)
   end
 
   # Status transitions must follow the defined state machine.

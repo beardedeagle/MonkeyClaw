@@ -21,9 +21,11 @@ defmodule MonkeyClaw.UserModeling.Observer do
       %{workspace_id => [observation, ...]}
 
   On flush, observations for each workspace are merged into a single
-  observation and passed to `UserModeling.record_observation/2`. The
-  buffer is cleared after each flush regardless of individual workspace
-  success or failure.
+  observation and passed to `UserModeling.record_observation/2`.
+  Successfully flushed workspaces are removed from the buffer;
+  failed workspaces are retained for retry on the next flush cycle.
+  On terminate, flush is best-effort — any observations that fail
+  to persist are lost (acceptable for non-critical telemetry data).
 
   ## Configuration
 
@@ -175,7 +177,19 @@ defmodule MonkeyClaw.UserModeling.Observer do
 
   @impl true
   def terminate(_reason, %__MODULE__{} = state) do
-    _state = do_flush(state)
+    # Best-effort flush on shutdown. If any workspace flush fails,
+    # those observations are lost — acceptable for non-critical
+    # telemetry data. We log failures in flush_workspace/2.
+    remaining = do_flush(state)
+
+    if map_size(remaining.buffer) > 0 do
+      count = buffer_count(remaining.buffer)
+
+      Logger.warning(
+        "Observer terminating with #{count} unflushed observation(s) across #{map_size(remaining.buffer)} workspace(s)"
+      )
+    end
+
     cancel_timer(state.timer_ref)
     :ok
   end
