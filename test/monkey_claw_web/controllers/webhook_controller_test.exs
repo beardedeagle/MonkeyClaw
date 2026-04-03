@@ -362,4 +362,104 @@ defmodule MonkeyClawWeb.WebhookControllerTest do
       refute Map.has_key?(resp, "details")
     end
   end
+
+  # ──────────────────────────────────────────────
+  # Rejected Delivery Audit Trail
+  # ──────────────────────────────────────────────
+
+  describe "POST /api/webhooks/:endpoint_id — rejected delivery audit" do
+    test "records rejected delivery for invalid signature", %{conn: conn} do
+      workspace = insert_workspace!()
+      endpoint = insert_webhook_endpoint!(workspace)
+
+      signed_request(conn, endpoint, %{}, secret: "completely-wrong-secret")
+
+      deliveries = Webhooks.list_deliveries(endpoint.id)
+      assert length(deliveries) == 1
+      delivery = hd(deliveries)
+      assert delivery.status == :rejected
+      assert delivery.rejection_reason == "unauthorized"
+      assert is_binary(delivery.payload_hash)
+      assert is_binary(delivery.remote_ip)
+    end
+
+    test "records rejected delivery for wrong content type", %{conn: conn} do
+      workspace = insert_workspace!()
+      endpoint = insert_webhook_endpoint!(workspace)
+      body = "plain text"
+      timestamp = System.os_time(:second)
+      sig = Security.build_signature_header(endpoint.signing_secret, timestamp, body)
+
+      conn
+      |> put_req_header("content-type", "text/plain")
+      |> put_req_header("x-monkeyclaw-signature", sig)
+      |> post(~p"/api/webhooks/#{endpoint.id}", body)
+
+      deliveries = Webhooks.list_deliveries(endpoint.id)
+      assert length(deliveries) == 1
+      assert hd(deliveries).status == :rejected
+      assert hd(deliveries).rejection_reason == "invalid_content_type"
+    end
+
+    test "records rejected delivery for disallowed event type", %{conn: conn} do
+      workspace = insert_workspace!()
+
+      endpoint =
+        insert_webhook_endpoint!(workspace, %{
+          allowed_events: %{"push" => true}
+        })
+
+      signed_request(conn, endpoint, %{}, event_type: "issue")
+
+      deliveries = Webhooks.list_deliveries(endpoint.id)
+      assert length(deliveries) == 1
+      assert hd(deliveries).status == :rejected
+      assert hd(deliveries).rejection_reason == "event_not_allowed"
+    end
+
+    test "records rejected delivery for rate limit exceeded", %{conn: conn} do
+      workspace = insert_workspace!()
+      endpoint = insert_webhook_endpoint!(workspace, %{rate_limit_per_minute: 1})
+
+      # First request succeeds (accepted)
+      signed_request(conn, endpoint, %{})
+
+      # Second request rate-limited (rejected)
+      signed_request(conn, endpoint, %{})
+
+      deliveries = Webhooks.list_deliveries(endpoint.id)
+      assert length(deliveries) == 2
+      rejected = Enum.find(deliveries, &(&1.status == :rejected))
+      assert rejected != nil
+      assert rejected.rejection_reason == "rate_limited"
+    end
+
+    test "does not record delivery for non-existent endpoint", %{conn: conn} do
+      fake_id = Ecto.UUID.generate()
+      body = Jason.encode!(%{})
+
+      conn
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("x-monkeyclaw-signature", "t=123,v1=#{String.duplicate("a", 64)}")
+      |> post(~p"/api/webhooks/#{fake_id}", body)
+
+      assert Webhooks.list_deliveries(fake_id) == []
+    end
+
+    test "replay does not create additional delivery", %{conn: conn} do
+      workspace = insert_workspace!()
+      endpoint = insert_webhook_endpoint!(workspace)
+
+      # First request
+      signed_request(conn, endpoint, %{}, idempotency_key: "replay-audit-001")
+
+      # Replay with same key
+      signed_request(conn, endpoint, %{}, idempotency_key: "replay-audit-001")
+
+      # Only the original delivery exists
+      deliveries = Webhooks.list_deliveries(endpoint.id)
+      assert length(deliveries) == 1
+      assert hd(deliveries).status in [:accepted, :processed, :failed]
+    end
+  end
 end

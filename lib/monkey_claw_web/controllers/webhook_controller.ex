@@ -64,39 +64,59 @@ defmodule MonkeyClawWeb.WebhookController do
   """
   @spec receive(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def receive(conn, %{"endpoint_id" => endpoint_id}) do
-    with {:ok, endpoint} <- lookup_endpoint(endpoint_id),
-         :ok <- verify_content_type(conn),
-         raw_body = CacheBodyReader.get_raw_body(conn),
-         verifier = Security.verifier_for(endpoint.source),
+    case lookup_endpoint(endpoint_id) do
+      {:ok, endpoint} ->
+        process_webhook(conn, endpoint)
+
+      {:error, :not_found} ->
+        # No delivery recorded — cannot associate with an endpoint.
+        send_error(conn, 404)
+    end
+  end
+
+  # ── Private — Security Pipeline ────────────────────────────
+
+  # Run the full security pipeline for an active endpoint.
+  # Records a delivery (accepted or rejected) for every request,
+  # providing a complete audit trail per the WebhookDelivery contract.
+  @spec process_webhook(Plug.Conn.t(), Webhooks.WebhookEndpoint.t()) :: Plug.Conn.t()
+  defp process_webhook(conn, endpoint) do
+    raw_body = CacheBodyReader.get_raw_body(conn)
+    verifier = Security.verifier_for(endpoint.source)
+
+    # Audit context computed once — shared by accepted and rejected paths.
+    audit = %{
+      payload_hash: Security.hash_payload(raw_body),
+      remote_ip: format_remote_ip(conn)
+    }
+
+    with :ok <- verify_content_type(conn),
          :ok <- verifier.verify(endpoint.signing_secret, conn, raw_body),
          {:ok, delivery_id} <- verifier.extract_delivery_id(conn),
          :ok <- check_replay(endpoint, delivery_id),
          :ok <- Webhooks.check_rate_limit(endpoint),
          {:ok, event_type} <- verifier.extract_event_type(conn),
          :ok <- verify_event_allowed(endpoint, event_type) do
-      payload_hash = Security.hash_payload(raw_body)
       payload = conn.body_params
 
       emit_received_telemetry(endpoint, event_type)
 
-      delivery_attrs = %{
-        idempotency_key: delivery_id,
-        event_type: event_type,
-        status: :accepted,
-        payload_hash: payload_hash,
-        remote_ip: format_remote_ip(conn)
-      }
+      delivery_attrs =
+        Map.merge(audit, %{
+          idempotency_key: delivery_id,
+          event_type: event_type,
+          status: :accepted
+        })
 
       record_and_dispatch(conn, endpoint, event_type, payload, delivery_attrs)
     else
-      {:error, :not_found} -> send_error(conn, 404)
-      {:error, :unauthorized} -> send_error(conn, 401)
-      {:error, :invalid_delivery_id} -> send_error(conn, 401)
-      {:error, :invalid_event_type} -> send_error(conn, 422)
-      {:error, :invalid_content_type} -> send_error(conn, 415)
-      {:error, :event_not_allowed} -> send_error(conn, 422)
-      {:error, :rate_limited} -> send_rate_limited(conn)
-      {:error, :replay_detected} -> send_accepted_replay(conn)
+      {:error, :replay_detected} ->
+        # Replay — the original delivery record already exists.
+        send_accepted_replay(conn)
+
+      {:error, reason} ->
+        record_rejected_delivery(endpoint, audit, reason)
+        send_pipeline_error(conn, reason)
     end
   end
 
@@ -121,6 +141,31 @@ defmodule MonkeyClawWeb.WebhookController do
           Logger.warning("Failed to record webhook delivery: #{inspect(changeset.errors)}")
           send_error(conn, 500)
         end
+    end
+  end
+
+  # Record a rejected delivery for audit logging.
+  # Failures to record are logged but do not affect the HTTP response —
+  # the caller's error response takes priority.
+  @spec record_rejected_delivery(
+          Webhooks.WebhookEndpoint.t(),
+          %{payload_hash: String.t(), remote_ip: String.t()},
+          atom()
+        ) :: :ok
+  defp record_rejected_delivery(endpoint, audit, reason) do
+    attrs =
+      Map.merge(audit, %{
+        status: :rejected,
+        rejection_reason: Atom.to_string(reason)
+      })
+
+    case Webhooks.record_delivery(endpoint, attrs) do
+      {:ok, _delivery} ->
+        :ok
+
+      {:error, changeset} ->
+        Logger.warning("Failed to record rejected delivery: #{inspect(changeset.errors)}")
+        :ok
     end
   end
 
@@ -210,6 +255,15 @@ defmodule MonkeyClawWeb.WebhookController do
     |> put_status(status)
     |> json(%{error: message})
   end
+
+  # Map pipeline error reasons to HTTP responses.
+  @spec send_pipeline_error(Plug.Conn.t(), atom()) :: Plug.Conn.t()
+  defp send_pipeline_error(conn, :unauthorized), do: send_error(conn, 401)
+  defp send_pipeline_error(conn, :invalid_delivery_id), do: send_error(conn, 401)
+  defp send_pipeline_error(conn, :invalid_content_type), do: send_error(conn, 415)
+  defp send_pipeline_error(conn, :invalid_event_type), do: send_error(conn, 422)
+  defp send_pipeline_error(conn, :event_not_allowed), do: send_error(conn, 422)
+  defp send_pipeline_error(conn, :rate_limited), do: send_rate_limited(conn)
 
   # ── Private — Telemetry ─────────────────────────────────────
 
