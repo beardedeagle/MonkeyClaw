@@ -171,9 +171,11 @@ defmodule MonkeyClawWeb.Markdown do
     output |> Enum.reverse() |> Enum.join("\n")
   end
 
-  defp finalize_fenced_output({output, _fence_state, code_acc}) do
-    # Unclosed fence — treat accumulated code lines as plain text.
-    all_lines = Enum.reverse(code_acc) ++ Enum.reverse(output)
+  defp finalize_fenced_output({output, %{indent: indent, ticks: ticks}, code_acc}) do
+    # Unclosed fence — treat accumulated lines as plain text in original order,
+    # including the opening fence line that started code accumulation.
+    opening_fence_line = indent <> ticks
+    all_lines = Enum.reverse(output) ++ [opening_fence_line] ++ Enum.reverse(code_acc)
     Enum.join(all_lines, "\n")
   end
 

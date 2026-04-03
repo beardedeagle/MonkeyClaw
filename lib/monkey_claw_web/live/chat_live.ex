@@ -773,8 +773,8 @@ defmodule MonkeyClawWeb.ChatLive do
 
     socket
     |> update(:messages, fn messages ->
-      updated = [message | messages]
-      if length(updated) > @max_display_messages, do: List.delete_at(updated, -1), else: updated
+      updated = messages ++ [message]
+      if length(updated) > @max_display_messages, do: tl(updated), else: updated
     end)
     |> update(:session_stats, fn stats ->
       %{
@@ -805,8 +805,8 @@ defmodule MonkeyClawWeb.ChatLive do
     }
 
     update(socket, :messages, fn messages ->
-      updated = [message | messages]
-      if length(updated) > @max_display_messages, do: List.delete_at(updated, -1), else: updated
+      updated = messages ++ [message]
+      if length(updated) > @max_display_messages, do: tl(updated), else: updated
     end)
   end
 
