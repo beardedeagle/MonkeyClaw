@@ -25,7 +25,8 @@ defmodule MonkeyClaw.Repo.Migrations.CreateNotifications do
     create index(:notifications, [:workspace_id])
     create index(:notifications, [:workspace_id, :status])
     create index(:notifications, [:workspace_id, :category])
-    create index(:notifications, [:inserted_at])
+    create index(:notifications, [:workspace_id, :inserted_at])
+    create index(:notifications, [:workspace_id, :status, :inserted_at])
 
     # ── Notification Rules ───────────────────────────────────────
     create table(:notification_rules, primary_key: false, options: "STRICT, WITHOUT ROWID") do
