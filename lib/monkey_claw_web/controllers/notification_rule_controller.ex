@@ -144,8 +144,14 @@ defmodule MonkeyClawWeb.NotificationRuleController do
   defp format_errors(%Ecto.Changeset{} = changeset) do
     Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
       Regex.replace(~r"%{(\w+)}", msg, fn _, key ->
-        opts |> Keyword.get(String.to_existing_atom(key), key) |> to_string()
+        opts |> placeholder_value(key) |> to_string()
       end)
+    end)
+  end
+
+  defp placeholder_value(opts, key) do
+    Enum.find_value(opts, key, fn {opt_key, value} ->
+      if to_string(opt_key) == key, do: value
     end)
   end
 end

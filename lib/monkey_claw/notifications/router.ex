@@ -157,6 +157,7 @@ defmodule MonkeyClaw.Notifications.Router do
       attached_events: []
     }
 
+    init_cache()
     state = attach_all_handlers(state)
     refresh_cache_from_db()
     {:ok, schedule_refresh(state)}
@@ -228,12 +229,22 @@ defmodule MonkeyClaw.Notifications.Router do
   end
 
   defp update_ets_cache(rules_by_pattern) do
-    # Clear and repopulate atomically (ETS ops are per-key atomic).
-    :ets.delete_all_objects(@ets_table)
+    # Reconcile in place so readers never observe a transient empty table.
+    # Insert/update current entries first, then remove stale patterns.
+    existing_patterns =
+      @ets_table
+      |> :ets.tab2list()
+      |> MapSet.new(fn {pattern, _rules} -> pattern end)
+
+    incoming_patterns = MapSet.new(Map.keys(rules_by_pattern))
 
     Enum.each(rules_by_pattern, fn {pattern, rules} ->
       :ets.insert(@ets_table, {pattern, rules})
     end)
+
+    existing_patterns
+    |> MapSet.difference(incoming_patterns)
+    |> Enum.each(fn pattern -> :ets.delete(@ets_table, pattern) end)
   end
 
   @spec detach_all(t()) :: t()
@@ -362,21 +373,41 @@ defmodule MonkeyClaw.Notifications.Router do
   defp deliver_in_app(_notification, _channel), do: :ok
 
   defp deliver_email(notification, channel) when channel in [:email, :all] do
-    _ =
-      Task.Supervisor.start_child(MonkeyClaw.TaskSupervisor, fn ->
-        case Email.build(notification) do
-          {:ok, email} ->
-            send_email(email, notification)
+    case Task.Supervisor.start_child(
+           MonkeyClaw.TaskSupervisor,
+           fn -> build_and_send_email(notification) end
+         ) do
+      {:ok, _pid} ->
+        :ok
 
-          {:error, :not_configured} ->
-            Logger.debug("NotificationRouter email not configured — skipping email delivery")
-        end
-      end)
+      {:error, reason} ->
+        Logger.warning(
+          "NotificationRouter failed to start email delivery task: #{inspect(reason)}"
+        )
 
-    :ok
+        NotifTelemetry.delivery_failed(
+          notification.id,
+          notification.workspace_id,
+          notification.category,
+          notification.severity,
+          :email
+        )
+
+        :ok
+    end
   end
 
   defp deliver_email(_notification, _channel), do: :ok
+
+  defp build_and_send_email(notification) do
+    case Email.build(notification) do
+      {:ok, email} ->
+        send_email(email, notification)
+
+      {:error, :not_configured} ->
+        Logger.debug("NotificationRouter email not configured — skipping email delivery")
+    end
+  end
 
   defp send_email(email, notification) do
     case Mailer.deliver(email) do

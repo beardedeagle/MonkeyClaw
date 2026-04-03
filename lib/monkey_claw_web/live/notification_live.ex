@@ -42,33 +42,43 @@ defmodule MonkeyClawWeb.NotificationLive do
 
   @impl true
   def mount(socket) do
-    {:ok, assign(socket, open: false, notifications: [], unread_count: 0)}
+    {:ok,
+     assign(socket,
+       open: false,
+       notifications: [],
+       unread_count: 0,
+       subscribed_workspace_id: nil
+     )}
   end
 
   @impl true
   def update(%{workspace_id: workspace_id} = assigns, socket) do
-    # Subscribe on first update (when workspace_id is first available).
+    # Subscribe when workspace_id becomes available or changes.
     # LiveComponent update runs in the parent LiveView's process,
     # so PubSub messages arrive there.
-    already_subscribed = Map.get(socket.assigns, :subscribed, false)
+    previous_workspace_id = Map.get(socket.assigns, :subscribed_workspace_id)
+    workspace_changed = previous_workspace_id != workspace_id
 
-    subscribed =
-      if connected?(socket) do
-        _ =
-          unless already_subscribed do
-            Notifications.subscribe(workspace_id)
-          end
-
-        true
+    subscribed_workspace_id =
+      if connected?(socket) and workspace_changed do
+        _ = Notifications.subscribe(workspace_id)
+        workspace_id
       else
-        already_subscribed
+        previous_workspace_id
       end
 
     socket =
       socket
       |> assign(assigns)
-      |> assign(:subscribed, subscribed)
-      |> load_notifications()
+      |> assign(:subscribed_workspace_id, subscribed_workspace_id)
+
+    # Only load from DB on first mount or workspace change to avoid query churn.
+    socket =
+      if workspace_changed do
+        load_notifications(socket)
+      else
+        socket
+      end
 
     {:ok, socket}
   end

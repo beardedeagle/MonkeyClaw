@@ -128,7 +128,7 @@ defmodule MonkeyClawWeb.NotificationController do
     value = Map.get(params, to_string(key))
 
     if is_binary(value) and value in allowed do
-      Map.put(filters, key, String.to_existing_atom(value))
+      Map.put(filters, key, String.to_atom(value))
     else
       filters
     end

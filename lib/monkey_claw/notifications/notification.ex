@@ -172,10 +172,10 @@ defmodule MonkeyClaw.Notifications.Notification do
   # Ecto's :map type handles JSON encoding, but we validate the
   # Elixir-side value to catch programming errors early.
   defp validate_metadata(changeset) do
-    case get_change(changeset, :metadata) do
-      nil -> changeset
-      value when is_map(value) -> changeset
-      _ -> add_error(changeset, :metadata, "must be a map")
+    case fetch_change(changeset, :metadata) do
+      :error -> changeset
+      {:ok, value} when is_map(value) -> changeset
+      {:ok, _} -> add_error(changeset, :metadata, "must be a map")
     end
   end
 end
