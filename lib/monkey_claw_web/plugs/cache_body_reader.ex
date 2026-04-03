@@ -7,6 +7,17 @@ defmodule MonkeyClawWeb.CacheBodyReader do
   verification requires the exact raw bytes that were signed, so
   this reader preserves them in `conn.private[:raw_body_chunks]`.
 
+  ## Scoping
+
+  Body caching is scoped to webhook routes (`/api/webhooks/*`).
+  All other routes delegate to `Plug.Conn.read_body/2` without
+  accumulating chunks, avoiding unnecessary memory overhead for
+  non-webhook requests.
+
+  Because `body_reader` is configured at the endpoint level in
+  `Plug.Parsers` (before routing), the reader checks
+  `conn.path_info` to determine whether to cache.
+
   ## Usage
 
   Configured as the `:body_reader` option for `Plug.Parsers` in
@@ -32,9 +43,11 @@ defmodule MonkeyClawWeb.CacheBodyReader do
   @doc """
   Read the request body and cache raw bytes in conn.private.
 
-  Delegates to `Plug.Conn.read_body/2` and accumulates the result
-  in `conn.private[:raw_body]`. Handles both complete reads
-  (`{:ok, body, conn}`) and partial reads (`{:more, chunk, conn}`).
+  Delegates to `Plug.Conn.read_body/2` and, for webhook routes,
+  accumulates the result in `conn.private[:raw_body_chunks]`.
+  Non-webhook routes pass through without caching. Handles both
+  complete reads (`{:ok, body, conn}`) and partial reads
+  (`{:more, chunk, conn}`).
   """
   @spec read_body(Plug.Conn.t(), keyword()) ::
           {:ok, binary(), Plug.Conn.t()}
@@ -72,9 +85,23 @@ defmodule MonkeyClawWeb.CacheBodyReader do
   # Prepend a chunk to the accumulated list in conn.private.
   # Chunks are prepended (O(1)) and reversed once in get_raw_body/1
   # to produce a flat iodata list without nested structures.
+  #
+  # Only caches for webhook routes — all other routes pass through
+  # without accumulating chunks.
   @spec accumulate_body(Plug.Conn.t(), binary()) :: Plug.Conn.t()
   defp accumulate_body(conn, chunk) do
-    existing = conn.private[:raw_body_chunks] || []
-    Plug.Conn.put_private(conn, :raw_body_chunks, [chunk | existing])
+    if webhook_path?(conn) do
+      existing = conn.private[:raw_body_chunks] || []
+      Plug.Conn.put_private(conn, :raw_body_chunks, [chunk | existing])
+    else
+      conn
+    end
   end
+
+  # Check whether the request targets a webhook ingress route.
+  # path_info is populated by Plug before body parsing, so it is
+  # available at this point in the pipeline.
+  @spec webhook_path?(Plug.Conn.t()) :: boolean()
+  defp webhook_path?(%Plug.Conn{path_info: ["api", "webhooks" | _]}), do: true
+  defp webhook_path?(_conn), do: false
 end
