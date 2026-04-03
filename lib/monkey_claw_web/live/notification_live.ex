@@ -56,7 +56,14 @@ defmodule MonkeyClawWeb.NotificationLive do
     # Gracefully handle nil workspace_id — pages that haven't resolved
     # a workspace yet will see an empty notification bell.
     if is_nil(workspace_id) do
-      {:ok, assign(socket, assigns)}
+      {:ok,
+       socket
+       |> assign(assigns)
+       |> assign(
+         notifications: [],
+         unread_count: 0,
+         subscribed_workspace_id: nil
+       )}
     else
       update_with_workspace(assigns, workspace_id, socket)
     end

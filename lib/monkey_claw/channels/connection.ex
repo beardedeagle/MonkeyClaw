@@ -76,8 +76,10 @@ defmodule MonkeyClaw.Channels.Connection do
   end
 
   @impl true
-  def handle_info({:channel_message, :outbound, _message}, state) do
-    # Outbound messages from other sources — already handled by dispatcher
+  def handle_info({:channel_message, _direction, _message}, state) do
+    # PubSub channel broadcasts (inbound and outbound) — already handled
+    # by the dispatcher. Ignore here to prevent them from reaching the
+    # adapter's handle_connection_message/2 callback.
     {:noreply, state}
   end
 
