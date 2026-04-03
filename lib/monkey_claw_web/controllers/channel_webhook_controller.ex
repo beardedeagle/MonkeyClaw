@@ -39,8 +39,41 @@ defmodule MonkeyClawWeb.ChannelWebhookController do
   require Logger
 
   alias MonkeyClaw.Channels
-  alias MonkeyClaw.Channels.Dispatcher
+  alias MonkeyClaw.Channels.{Adapter, Dispatcher}
   alias MonkeyClawWeb.Plugs.CacheBodyReader
+
+  @doc """
+  Verify a webhook subscription challenge (GET).
+
+  Some platforms (e.g., WhatsApp) verify webhook ownership by sending
+  a GET request with a challenge token. The adapter validates the token
+  and we echo the challenge back as plain text.
+  """
+  @spec verify(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def verify(conn, %{"channel_config_id" => config_id} = params) do
+    with {:config, {:ok, config}} <- {:config, Channels.get_config(config_id)},
+         {:enabled, true} <- {:enabled, config.enabled},
+         {:ok, adapter_mod} <- Adapter.for_type(config.adapter_type),
+         true <- function_exported?(adapter_mod, :verify_webhook, 2),
+         {:ok, challenge} <- adapter_mod.verify_webhook(config.config, params) do
+      conn
+      |> put_resp_content_type("text/plain")
+      |> send_resp(200, challenge)
+    else
+      {:config, {:error, :not_found}} ->
+        conn |> put_status(:not_found) |> json(%{error: "not_found"})
+
+      {:enabled, false} ->
+        conn |> put_status(:not_found) |> json(%{error: "not_found"})
+
+      false ->
+        # Adapter doesn't support GET verification
+        conn |> put_status(:not_found) |> json(%{error: "not_found"})
+
+      {:error, _reason} ->
+        conn |> put_status(:forbidden) |> json(%{error: "forbidden"})
+    end
+  end
 
   @doc """
   Receive and process an inbound channel webhook delivery.

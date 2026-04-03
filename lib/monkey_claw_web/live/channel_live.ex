@@ -335,6 +335,7 @@ defmodule MonkeyClawWeb.ChannelLive do
       "slack" -> render_slack_fields(assigns)
       "discord" -> render_discord_fields(assigns)
       "telegram" -> render_telegram_fields(assigns)
+      "whatsapp" -> render_whatsapp_fields(assigns)
       "web" -> render_web_fields(assigns)
       _ -> render_web_fields(assigns)
     end
@@ -460,6 +461,65 @@ defmodule MonkeyClawWeb.ChannelLive do
     """
   end
 
+  defp render_whatsapp_fields(assigns) do
+    ~H"""
+    <div class="space-y-3">
+      <div class="form-control">
+        <label class="label"><span class="label-text">Access Token</span></label>
+        <input
+          type="password"
+          name="channel[access_token]"
+          value={get_in(@form[:config].value, ["access_token"]) || ""}
+          class="input input-bordered input-sm w-full"
+          autocomplete="off"
+          placeholder="WhatsApp Business API token"
+        />
+      </div>
+      <div class="form-control">
+        <label class="label"><span class="label-text">Phone Number ID</span></label>
+        <input
+          type="text"
+          name="channel[phone_number_id]"
+          value={get_in(@form[:config].value, ["phone_number_id"]) || ""}
+          class="input input-bordered input-sm w-full"
+          placeholder="From Meta Business Suite"
+        />
+      </div>
+      <div class="form-control">
+        <label class="label"><span class="label-text">Recipient Phone</span></label>
+        <input
+          type="text"
+          name="channel[recipient_phone]"
+          value={get_in(@form[:config].value, ["recipient_phone"]) || ""}
+          class="input input-bordered input-sm w-full"
+          placeholder="E.164 format: +1234567890"
+        />
+      </div>
+      <div class="form-control">
+        <label class="label"><span class="label-text">App Secret</span></label>
+        <input
+          type="password"
+          name="channel[app_secret]"
+          value={get_in(@form[:config].value, ["app_secret"]) || ""}
+          class="input input-bordered input-sm w-full"
+          autocomplete="off"
+          placeholder="Meta app secret for signature verification"
+        />
+      </div>
+      <div class="form-control">
+        <label class="label"><span class="label-text">Verify Token</span></label>
+        <input
+          type="text"
+          name="channel[verify_token]"
+          value={get_in(@form[:config].value, ["verify_token"]) || ""}
+          class="input input-bordered input-sm w-full"
+          placeholder="Token for webhook verification challenge"
+        />
+      </div>
+    </div>
+    """
+  end
+
   defp render_web_fields(assigns) do
     ~H"""
     <p class="text-sm text-base-content/60">
@@ -550,6 +610,13 @@ defmodule MonkeyClawWeb.ChannelLive do
 
   defp build_adapter_config(:telegram, params) do
     extract_params(params, ~w(bot_token chat_id secret_token))
+  end
+
+  defp build_adapter_config(:whatsapp, params) do
+    extract_params(
+      params,
+      ~w(access_token phone_number_id recipient_phone app_secret verify_token)
+    )
   end
 
   defp build_adapter_config(:web, _params), do: %{}

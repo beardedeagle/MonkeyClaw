@@ -67,7 +67,16 @@ defmodule MonkeyClaw.Channels.Adapter do
   @doc "Tear down the persistent connection."
   @callback disconnect(connection_state()) :: :ok
 
-  @optional_callbacks [connect: 1, handle_connection_message: 2, disconnect: 1]
+  @doc """
+  Verify a webhook subscription challenge (GET request).
+
+  Some platforms (e.g., WhatsApp) verify webhook URLs by sending a GET
+  request with a challenge token. The adapter must validate the token
+  and return the challenge to confirm ownership.
+  """
+  @callback verify_webhook(config(), map()) :: {:ok, binary()} | {:error, term()}
+
+  @optional_callbacks [verify_webhook: 2, connect: 1, handle_connection_message: 2, disconnect: 1]
 
   @doc """
   Resolve the adapter module for a given adapter type atom.
@@ -78,6 +87,7 @@ defmodule MonkeyClaw.Channels.Adapter do
   def for_type(:slack), do: {:ok, MonkeyClaw.Channels.Adapters.Slack}
   def for_type(:discord), do: {:ok, MonkeyClaw.Channels.Adapters.Discord}
   def for_type(:telegram), do: {:ok, MonkeyClaw.Channels.Adapters.Telegram}
+  def for_type(:whatsapp), do: {:ok, MonkeyClaw.Channels.Adapters.WhatsApp}
   def for_type(:web), do: {:ok, MonkeyClaw.Channels.Adapters.Web}
   def for_type(_), do: {:error, :unknown_adapter}
 end

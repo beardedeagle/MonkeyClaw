@@ -21,13 +21,14 @@ defmodule MonkeyClaw.Channels.ChannelConfig do
     * **Slack**: `bot_token`, `signing_secret`, `channel_id`
     * **Discord**: `bot_token`, `application_id`, `public_key`, `channel_id`
     * **Telegram**: `bot_token`, `chat_id`, `secret_token`
+    * **WhatsApp**: `access_token`, `phone_number_id`, `recipient_phone`, `app_secret`, `verify_token`
     * **Web**: empty (uses PubSub internally)
   """
 
   use Ecto.Schema
   import Ecto.Changeset
 
-  @type adapter_type :: :slack | :discord | :telegram | :web
+  @type adapter_type :: :slack | :discord | :telegram | :whatsapp | :web
   @type status :: :disconnected | :connected | :error
 
   @type t :: %__MODULE__{
@@ -42,7 +43,7 @@ defmodule MonkeyClaw.Channels.ChannelConfig do
           updated_at: DateTime.t() | nil
         }
 
-  @adapter_types ~w(slack discord telegram web)a
+  @adapter_types ~w(slack discord telegram whatsapp web)a
   @statuses ~w(disconnected connected error)a
   @max_name_length 100
 

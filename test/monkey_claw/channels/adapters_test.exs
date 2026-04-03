@@ -5,6 +5,7 @@ defmodule MonkeyClaw.Channels.AdaptersTest do
   alias MonkeyClaw.Channels.Adapters.Slack
   alias MonkeyClaw.Channels.Adapters.Telegram
   alias MonkeyClaw.Channels.Adapters.Web
+  alias MonkeyClaw.Channels.Adapters.WhatsApp
 
   # ──────────────────────────────────────────────
   # Adapter.for_type/1
@@ -17,6 +18,7 @@ defmodule MonkeyClaw.Channels.AdaptersTest do
       assert {:ok, Slack} = Adapter.for_type(:slack)
       assert {:ok, Discord} = Adapter.for_type(:discord)
       assert {:ok, Telegram} = Adapter.for_type(:telegram)
+      assert {:ok, WhatsApp} = Adapter.for_type(:whatsapp)
       assert {:ok, Web} = Adapter.for_type(:web)
     end
 
@@ -302,6 +304,248 @@ defmodule MonkeyClaw.Channels.AdaptersTest do
   describe "Telegram persistent?/0" do
     test "returns false (webhook-based)" do
       refute Telegram.persistent?()
+    end
+  end
+
+  # ──────────────────────────────────────────────
+  # WhatsApp Adapter — validate_config
+  # ──────────────────────────────────────────────
+
+  describe "WhatsApp validate_config/1" do
+    test "accepts valid config" do
+      config = %{
+        "access_token" => "EAABx...",
+        "phone_number_id" => "123456789",
+        "recipient_phone" => "+1234567890",
+        "app_secret" => "abc123secret",
+        "verify_token" => "my_verify_token"
+      }
+
+      assert :ok = WhatsApp.validate_config(config)
+    end
+
+    test "rejects missing required fields" do
+      config = %{
+        "access_token" => "EAABx...",
+        "phone_number_id" => "123456789"
+      }
+
+      assert {:error, "missing required config: " <> missing} = WhatsApp.validate_config(config)
+      assert missing =~ "recipient_phone"
+      assert missing =~ "app_secret"
+      assert missing =~ "verify_token"
+    end
+
+    test "rejects empty string values" do
+      config = %{
+        "access_token" => "",
+        "phone_number_id" => "123456789",
+        "recipient_phone" => "+1234567890",
+        "app_secret" => "secret",
+        "verify_token" => "token"
+      }
+
+      assert {:error, "missing required config: access_token"} = WhatsApp.validate_config(config)
+    end
+  end
+
+  # ──────────────────────────────────────────────
+  # WhatsApp Adapter — verify_request
+  # ──────────────────────────────────────────────
+
+  describe "WhatsApp verify_request/3" do
+    @whatsapp_config %{
+      "app_secret" => "test_app_secret",
+      "access_token" => "token",
+      "phone_number_id" => "123",
+      "recipient_phone" => "+1234567890",
+      "verify_token" => "vtoken"
+    }
+
+    test "accepts valid HMAC-SHA256 signature" do
+      body = ~s({"object":"whatsapp_business_account"})
+
+      signature =
+        :crypto.mac(:hmac, :sha256, "test_app_secret", body)
+        |> Base.encode16(case: :lower)
+
+      conn = %Plug.Conn{
+        req_headers: [{"x-hub-signature-256", "sha256=#{signature}"}]
+      }
+
+      assert :ok = WhatsApp.verify_request(@whatsapp_config, conn, body)
+    end
+
+    test "rejects invalid signature" do
+      body = ~s({"object":"whatsapp_business_account"})
+
+      conn = %Plug.Conn{
+        req_headers: [{"x-hub-signature-256", "sha256=deadbeef"}]
+      }
+
+      assert {:error, :invalid_signature} = WhatsApp.verify_request(@whatsapp_config, conn, body)
+    end
+
+    test "rejects missing signature header" do
+      conn = %Plug.Conn{req_headers: []}
+
+      assert {:error, :missing_signature} =
+               WhatsApp.verify_request(@whatsapp_config, conn, "body")
+    end
+  end
+
+  # ──────────────────────────────────────────────
+  # WhatsApp Adapter — parse_inbound
+  # ──────────────────────────────────────────────
+
+  describe "WhatsApp parse_inbound/2" do
+    test "parses text message" do
+      body =
+        Jason.encode!(%{
+          "object" => "whatsapp_business_account",
+          "entry" => [
+            %{
+              "changes" => [
+                %{
+                  "value" => %{
+                    "messaging_product" => "whatsapp",
+                    "metadata" => %{
+                      "display_phone_number" => "+1987654321",
+                      "phone_number_id" => "999"
+                    },
+                    "messages" => [
+                      %{
+                        "from" => "+1234567890",
+                        "id" => "wamid.abc123",
+                        "timestamp" => "1700000000",
+                        "type" => "text",
+                        "text" => %{"body" => "Hello from WhatsApp"}
+                      }
+                    ]
+                  },
+                  "field" => "messages"
+                }
+              ]
+            }
+          ]
+        })
+
+      assert {:ok, message} = WhatsApp.parse_inbound(%Plug.Conn{}, body)
+      assert message.content == "Hello from WhatsApp"
+      assert message.external_id == "wamid.abc123"
+      assert message.metadata.from == "+1234567890"
+      assert message.metadata.phone_number_id == "999"
+    end
+
+    test "returns status_update for delivery receipts" do
+      body =
+        Jason.encode!(%{
+          "object" => "whatsapp_business_account",
+          "entry" => [
+            %{
+              "changes" => [
+                %{
+                  "value" => %{
+                    "statuses" => [%{"id" => "wamid.xyz", "status" => "delivered"}]
+                  },
+                  "field" => "messages"
+                }
+              ]
+            }
+          ]
+        })
+
+      assert {:error, :status_update} = WhatsApp.parse_inbound(%Plug.Conn{}, body)
+    end
+
+    test "rejects non-text message types" do
+      body =
+        Jason.encode!(%{
+          "object" => "whatsapp_business_account",
+          "entry" => [
+            %{
+              "changes" => [
+                %{
+                  "value" => %{
+                    "messages" => [
+                      %{"type" => "image", "from" => "+1234567890", "id" => "wamid.img"}
+                    ]
+                  },
+                  "field" => "messages"
+                }
+              ]
+            }
+          ]
+        })
+
+      assert {:error, :unsupported_message_type} = WhatsApp.parse_inbound(%Plug.Conn{}, body)
+    end
+
+    test "rejects unrecognized payload" do
+      body = Jason.encode!(%{"object" => "page"})
+      assert {:error, :unrecognized_payload} = WhatsApp.parse_inbound(%Plug.Conn{}, body)
+    end
+
+    test "rejects invalid JSON" do
+      assert {:error, :invalid_json} = WhatsApp.parse_inbound(%Plug.Conn{}, "not json")
+    end
+  end
+
+  # ──────────────────────────────────────────────
+  # WhatsApp Adapter — verify_webhook
+  # ──────────────────────────────────────────────
+
+  describe "WhatsApp verify_webhook/2" do
+    @webhook_config %{
+      "verify_token" => "my_secret_token",
+      "app_secret" => "secret",
+      "access_token" => "token",
+      "phone_number_id" => "123",
+      "recipient_phone" => "+1234567890"
+    }
+
+    test "accepts valid verification challenge" do
+      params = %{
+        "hub.mode" => "subscribe",
+        "hub.verify_token" => "my_secret_token",
+        "hub.challenge" => "challenge_string_123"
+      }
+
+      assert {:ok, "challenge_string_123"} = WhatsApp.verify_webhook(@webhook_config, params)
+    end
+
+    test "rejects invalid verify token" do
+      params = %{
+        "hub.mode" => "subscribe",
+        "hub.verify_token" => "wrong_token",
+        "hub.challenge" => "challenge_string_123"
+      }
+
+      assert {:error, :invalid_verify_token} = WhatsApp.verify_webhook(@webhook_config, params)
+    end
+
+    test "rejects missing params" do
+      assert {:error, :invalid_params} = WhatsApp.verify_webhook(@webhook_config, %{})
+    end
+
+    test "rejects non-subscribe mode" do
+      params = %{
+        "hub.mode" => "unsubscribe",
+        "hub.verify_token" => "my_secret_token",
+        "hub.challenge" => "challenge"
+      }
+
+      assert {:error, :invalid_params} = WhatsApp.verify_webhook(@webhook_config, params)
+    end
+  end
+
+  # ──────────────────────────────────────────────
+  # WhatsApp Adapter — persistent?
+  # ──────────────────────────────────────────────
+
+  describe "WhatsApp persistent?/0" do
+    test "returns false (webhook-based)" do
+      refute WhatsApp.persistent?()
     end
   end
 end

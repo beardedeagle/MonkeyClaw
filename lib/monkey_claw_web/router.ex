@@ -44,6 +44,9 @@ defmodule MonkeyClawWeb.Router do
   scope "/api/channels", MonkeyClawWeb do
     pipe_through :api
 
+    # Webhook verification challenge (GET) — used by platforms like
+    # WhatsApp that verify ownership via a GET with a challenge token.
+    get "/:channel_config_id/webhook", ChannelWebhookController, :verify
     post "/:channel_config_id/webhook", ChannelWebhookController, :receive
   end
 
