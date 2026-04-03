@@ -31,9 +31,7 @@ config :monkey_claw, MonkeyClawWeb.Endpoint,
     formats: [html: MonkeyClawWeb.ErrorHTML, json: MonkeyClawWeb.ErrorJSON],
     layout: false
   ],
-  pubsub_server: MonkeyClaw.PubSub,
-  # Greenfield, zero users — no existing sessions to invalidate.
-  live_view: [signing_salt: "+zqFzRJszI2u/fRngg/usTH2EWOjb0QI"]
+  pubsub_server: MonkeyClaw.PubSub
 
 # Configure the mailer
 #

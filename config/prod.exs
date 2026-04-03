@@ -6,7 +6,13 @@ import Config
 # which you should run after static files are built and
 # before starting your production server.
 config :monkey_claw, MonkeyClawWeb.Endpoint,
-  cache_static_manifest: "priv/static/cache_manifest.json"
+  cache_static_manifest: "priv/static/cache_manifest.json",
+  # Session signing salt is a key-derivation namespace, not a secret.
+  # It prevents cookie signatures from one application being valid for
+  # another. The actual security comes from secret_key_base. This must
+  # be a compile-time constant because @session_options is a module
+  # attribute expanded at compile time by plug Plug.Session.
+  session_signing_salt: "mC_prd_sess_8kLm"
 
 # Force using SSL in production. This also sets the "strict-security-transport" header,
 # known as HSTS. If you have a health check endpoint, you may want to exclude it below.

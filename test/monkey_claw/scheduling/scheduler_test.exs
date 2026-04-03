@@ -3,6 +3,8 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
 
   import MonkeyClaw.Factory
 
+  alias Ecto.Adapters.SQL
+  alias MonkeyClaw.Repo
   alias MonkeyClaw.Scheduling
   alias MonkeyClaw.Scheduling.Scheduler
 
@@ -27,7 +29,7 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
       assert entry.run_count == 0
       assert entry.status == :active
 
-      Scheduler.trigger_poll()
+      assert :ok = Scheduler.trigger_poll()
 
       {:ok, updated} = Scheduling.get_schedule_entry(entry.id)
       assert updated.run_count == 1
@@ -44,7 +46,7 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
 
       assert is_nil(entry.last_run_at)
 
-      Scheduler.trigger_poll()
+      assert :ok = Scheduler.trigger_poll()
 
       {:ok, updated} = Scheduling.get_schedule_entry(entry.id)
       refute is_nil(updated.last_run_at)
@@ -58,7 +60,7 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
       entry_a = insert_schedule_entry!(workspace, %{next_run_at: past})
       entry_b = insert_schedule_entry!(workspace, %{next_run_at: past})
 
-      Scheduler.trigger_poll()
+      assert :ok = Scheduler.trigger_poll()
 
       {:ok, updated_a} = Scheduling.get_schedule_entry(entry_a.id)
       {:ok, updated_b} = Scheduling.get_schedule_entry(entry_b.id)
@@ -77,7 +79,7 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
           next_run_at: DateTime.add(DateTime.utc_now(), 3600, :second)
         })
 
-      Scheduler.trigger_poll()
+      assert :ok = Scheduler.trigger_poll()
 
       {:ok, unchanged} = Scheduling.get_schedule_entry(entry.id)
       assert unchanged.run_count == 0
@@ -98,7 +100,7 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
       {:ok, paused} = Scheduling.pause_entry(entry)
       assert paused.status == :paused
 
-      Scheduler.trigger_poll()
+      assert :ok = Scheduler.trigger_poll()
 
       {:ok, unchanged} = Scheduling.get_schedule_entry(entry.id)
       assert unchanged.run_count == 0
@@ -118,7 +120,7 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
       {:ok, completed} = Scheduling.update_schedule_entry(entry, %{status: :completed})
       assert completed.status == :completed
 
-      Scheduler.trigger_poll()
+      assert :ok = Scheduler.trigger_poll()
 
       {:ok, unchanged} = Scheduling.get_schedule_entry(entry.id)
       assert unchanged.run_count == 0
@@ -126,11 +128,71 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
     end
   end
 
-  # NOTE: Finding #38 (orphaned entry with deleted workspace) is structurally
-  # prevented by the FK constraint `on_delete: :delete_all` on schedule_entries.
-  # When a workspace is deleted, its entries are cascade-deleted. The defensive
-  # handler in fire_entry/1 is good defense-in-depth but the state is unreachable
-  # in the current schema, so no test is needed.
+  describe "entry failure isolation" do
+    test "scheduler marks entry failed when experiment creation fails, without crashing" do
+      workspace = insert_workspace!()
+
+      # Create a due entry with an invalid experiment_config that will
+      # cause Experiments.create_experiment/2 to return {:error, changeset}.
+      # This exercises the error-handling branch in fire_entry/1 and verifies
+      # the Scheduler marks the entry as :failed to prevent infinite re-firing.
+      entry =
+        insert_schedule_entry!(workspace, %{
+          next_run_at: DateTime.add(DateTime.utc_now(), -60, :second)
+        })
+
+      # Corrupt experiment_config directly in the DB to an empty map so it
+      # fails validation in Experiments.create_experiment/2. The create
+      # changeset requires title, type, and max_iterations.
+      # Raw SQL bypasses Ecto's schema-level type casting.
+      SQL.query!(
+        Repo,
+        "UPDATE schedule_entries SET experiment_config = ? WHERE id = ?",
+        ["{}", entry.id]
+      )
+
+      {:ok, corrupted} = Scheduling.get_schedule_entry(entry.id)
+      assert corrupted.experiment_config == %{}
+
+      # Trigger poll — should not crash
+      assert :ok = Scheduler.trigger_poll()
+
+      # The entry should be marked :failed because experiment creation
+      # failed, and the Scheduler prevents infinite re-firing.
+      {:ok, updated} = Scheduling.get_schedule_entry(entry.id)
+      assert updated.status == :failed
+    end
+
+    test "one failing entry does not prevent other due entries from firing" do
+      workspace = insert_workspace!()
+      past = DateTime.add(DateTime.utc_now(), -60, :second)
+
+      # Good entry that should fire normally
+      good_entry = insert_schedule_entry!(workspace, %{next_run_at: past})
+
+      # Bad entry with corrupted experiment_config
+      bad_entry = insert_schedule_entry!(workspace, %{next_run_at: past})
+
+      # Raw SQL bypasses Ecto's schema-level type casting.
+      SQL.query!(
+        Repo,
+        "UPDATE schedule_entries SET experiment_config = ? WHERE id = ?",
+        ["{}", bad_entry.id]
+      )
+
+      # Trigger poll — should fire both entries without crashing
+      assert :ok = Scheduler.trigger_poll()
+
+      # Good entry should have fired successfully
+      {:ok, updated_good} = Scheduling.get_schedule_entry(good_entry.id)
+      assert updated_good.run_count == 1
+      assert updated_good.status == :completed
+
+      # Bad entry should be marked :failed
+      {:ok, updated_bad} = Scheduling.get_schedule_entry(bad_entry.id)
+      assert updated_bad.status == :failed
+    end
+  end
 
   describe "interval entry scheduling" do
     test "interval entry advances next_run_at after firing" do
@@ -143,7 +205,7 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
           next_run_at: DateTime.add(DateTime.utc_now(), -60, :second)
         })
 
-      Scheduler.trigger_poll()
+      assert :ok = Scheduler.trigger_poll()
 
       {:ok, updated} = Scheduling.get_schedule_entry(entry.id)
       assert updated.run_count == 1
@@ -164,11 +226,55 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
           next_run_at: DateTime.add(DateTime.utc_now(), -60, :second)
         })
 
-      Scheduler.trigger_poll()
+      assert :ok = Scheduler.trigger_poll()
 
       {:ok, updated} = Scheduling.get_schedule_entry(entry.id)
       assert updated.run_count == 1
       assert updated.status == :completed
+    end
+  end
+
+  describe "deleted workspace handling" do
+    # NOTE: fire_entry/1 handles {:error, :not_found} from get_workspace
+    # (scheduler.ex:204) for the TOCTOU race where a workspace is deleted
+    # between due_entries query and fire_entry execution. This race
+    # condition cannot be exercised in integration tests because:
+    #   1. SQLite PRAGMA foreign_keys cannot be toggled mid-transaction
+    #   2. Ecto sandbox wraps all test ops in a transaction for isolation
+    #   3. ON DELETE CASCADE removes entries when the workspace is deleted
+    # The handler is verified correct by code review. The tests below
+    # prove the system is safe by design: CASCADE prevents persistent
+    # orphans, and the scheduler handles the resulting state gracefully.
+
+    test "workspace deletion cascade-deletes its schedule entries" do
+      workspace = insert_workspace!()
+
+      entry =
+        insert_schedule_entry!(workspace, %{
+          next_run_at: DateTime.add(DateTime.utc_now(), -60, :second)
+        })
+
+      assert entry.status == :active
+
+      # Delete workspace — CASCADE should remove the entry
+      Repo.delete!(workspace)
+
+      assert {:error, :not_found} = Scheduling.get_schedule_entry(entry.id)
+    end
+
+    test "scheduler handles poll after workspace and entries are cascade-deleted" do
+      workspace = insert_workspace!()
+
+      _entry =
+        insert_schedule_entry!(workspace, %{
+          next_run_at: DateTime.add(DateTime.utc_now(), -60, :second)
+        })
+
+      # Delete workspace (cascades entry deletion)
+      Repo.delete!(workspace)
+
+      # Poll finds no due entries — must not crash
+      assert :ok = Scheduler.trigger_poll()
     end
   end
 end

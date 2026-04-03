@@ -573,15 +573,10 @@ defmodule MonkeyClawWeb.ChatLive do
   defp maybe_set_backend_model(nil, _model), do: :ok
 
   defp maybe_set_backend_model(workspace, model) do
-    Task.start(fn ->
-      try do
-        case AgentBridge.set_model(workspace.id, model) do
-          {:ok, _} -> :ok
-          {:error, reason} -> Logger.warning("set_model failed: #{inspect(reason)}")
-        end
-      rescue
-        error ->
-          Logger.warning("set_model crashed: #{Exception.format(:error, error, __STACKTRACE__)}")
+    Task.Supervisor.start_child(MonkeyClaw.TaskSupervisor, fn ->
+      case AgentBridge.set_model(workspace.id, model) do
+        {:ok, _} -> :ok
+        {:error, reason} -> Logger.warning("set_model failed: #{inspect(reason)}")
       end
     end)
   end
@@ -590,7 +585,7 @@ defmodule MonkeyClawWeb.ChatLive do
     lv = self()
 
     {:ok, pid} =
-      Task.start(fn ->
+      Task.Supervisor.start_child(MonkeyClaw.TaskSupervisor, fn ->
         result =
           Conversation.stream_message(
             workspace_id,
@@ -779,7 +774,7 @@ defmodule MonkeyClawWeb.ChatLive do
     socket
     |> update(:messages, fn messages ->
       updated = messages ++ [message]
-      if length(updated) > @max_display_messages, do: Enum.drop(updated, 1), else: updated
+      if length(updated) > @max_display_messages, do: tl(updated), else: updated
     end)
     |> update(:session_stats, fn stats ->
       %{
@@ -811,7 +806,7 @@ defmodule MonkeyClawWeb.ChatLive do
 
     update(socket, :messages, fn messages ->
       updated = messages ++ [message]
-      if length(updated) > @max_display_messages, do: Enum.drop(updated, 1), else: updated
+      if length(updated) > @max_display_messages, do: tl(updated), else: updated
     end)
   end
 

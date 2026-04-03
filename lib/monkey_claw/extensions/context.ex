@@ -23,6 +23,7 @@ defmodule MonkeyClaw.Extensions.Context do
   Each hook point defines its own data shape:
 
     * `:query_pre` — `%{workspace_id: String.t(), prompt: String.t()}`
+    * `:query_post` — `%{workspace_id: String.t(), prompt: String.t(), messages: list()}`
     * `:session_starting` — `%{session_id: String.t(), config: map()}`
     * `:workspace_created` — `%{workspace: Workspace.t()}`
 

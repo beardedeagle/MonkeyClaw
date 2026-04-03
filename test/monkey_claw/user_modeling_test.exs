@@ -219,6 +219,36 @@ defmodule MonkeyClaw.UserModelingTest do
       assert length(new_only_surviving) == 40
     end
 
+    test "trims to 100 when existing already has 100 and new topics arrive" do
+      # Start with exactly 100 topics, each with count 5
+      existing =
+        for i <- 1..100, into: %{}, do: {"topic_#{String.pad_leading("#{i}", 3, "0")}", 5}
+
+      assert map_size(existing) == 100
+
+      # Add 20 new topics that don't overlap — total would be 120 without trimming
+      new = for i <- 101..120, into: %{}, do: {"topic_#{String.pad_leading("#{i}", 3, "0")}", 1}
+
+      result = UserModeling.merge_topics(existing, new)
+
+      # Must stay at 100 — the 20 new topics (count 1) should be dropped
+      # because all 100 existing topics (count 5) outrank them.
+      assert map_size(result) == 100
+
+      # All original topics should survive (they have higher counts)
+      for i <- 1..100 do
+        key = "topic_#{String.pad_leading("#{i}", 3, "0")}"
+        assert Map.has_key?(result, key), "expected #{key} in result"
+        assert result[key] == 5
+      end
+
+      # None of the new low-count topics should survive
+      for i <- 101..120 do
+        key = "topic_#{String.pad_leading("#{i}", 3, "0")}"
+        refute Map.has_key?(result, key), "expected #{key} NOT in result"
+      end
+    end
+
     test "caps individual topic counts at 1000" do
       existing = %{"elixir" => 999}
       new = %{"elixir" => 5}
@@ -389,6 +419,23 @@ defmodule MonkeyClaw.UserModelingTest do
 
       assert {:ok, updated} = UserModeling.toggle_injection(profile, true)
       assert updated.injection_enabled == true
+    end
+
+    test "toggling to the same state is idempotent" do
+      workspace = insert_workspace!()
+      profile = insert_user_profile!(workspace, %{injection_enabled: true})
+
+      # Toggle to true when already true — should succeed without error
+      assert {:ok, still_on} = UserModeling.toggle_injection(profile, true)
+      assert still_on.injection_enabled == true
+
+      # Toggle to false
+      {:ok, off} = UserModeling.toggle_injection(still_on, false)
+      assert off.injection_enabled == false
+
+      # Toggle to false again when already false — should succeed without error
+      assert {:ok, still_off} = UserModeling.toggle_injection(off, false)
+      assert still_off.injection_enabled == false
     end
 
     test "disabling injection causes get_injectable_context to return empty string" do

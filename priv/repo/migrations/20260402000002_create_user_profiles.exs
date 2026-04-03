@@ -13,10 +13,12 @@ defmodule MonkeyClaw.Repo.Migrations.CreateUserProfiles do
 
   ## Privacy Levels
 
-    * `"full"` — All observations recorded and injected
-    * `"limited"` — Only topic observations, no behavioral patterns
-    * `"none"` — No passive observations recorded. Injection is controlled
-      separately by the `injection_enabled` column.
+  Controls what observations are recorded. Injection into the assistant
+  context is governed separately by the `injection_enabled` column.
+
+    * `"full"` — All observations recorded (topics and behavioral patterns)
+    * `"limited"` — Only topic observations recorded; behavioral patterns skipped
+    * `"none"` — No passive observations recorded
   """
 
   use Ecto.Migration

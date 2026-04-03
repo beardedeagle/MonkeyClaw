@@ -38,7 +38,11 @@ defmodule MonkeyClaw.Application do
         # and use TaskSupervisor for async agent queries.
         {Registry, keys: :unique, name: MonkeyClaw.Experiments.RunnerRegistry},
         {Task.Supervisor, name: MonkeyClaw.Experiments.TaskSupervisor},
-        MonkeyClaw.Experiments.Supervisor
+        MonkeyClaw.Experiments.Supervisor,
+        # LiveView async task supervisor for fire-and-forget operations
+        # (e.g. set_model calls from ChatLive) that need crash isolation
+        # without silently swallowing errors.
+        {Task.Supervisor, name: MonkeyClaw.TaskSupervisor}
       ] ++
         maybe_child(MonkeyClaw.Scheduling.Scheduler, :start_scheduler) ++
         maybe_child(MonkeyClaw.UserModeling.Observer, :start_observer) ++

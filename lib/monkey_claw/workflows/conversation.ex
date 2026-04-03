@@ -272,7 +272,7 @@ defmodule MonkeyClaw.Workflows.Conversation do
 
       {:error, {:session_not_found, _}} ->
         case AgentBridge.start_session(config) do
-          {:ok, _result} -> :ok
+          {:ok, _session_result} -> :ok
           {:error, reason} -> {:error, {:session_start_failed, reason}}
         end
 

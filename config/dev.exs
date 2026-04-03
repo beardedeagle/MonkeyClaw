@@ -21,6 +21,8 @@ config :monkey_claw, MonkeyClawWeb.Endpoint,
   code_reloader: true,
   debug_errors: true,
   secret_key_base: "sU1pjiz2thsMCeCNN3H509MEH2DTLGSMwHnqIzKfM4BwgJKL1g10+i5cG/bLMl1n",
+  live_view: [signing_salt: "monkey_claw_dev_salt"],
+  session_signing_salt: "monkey_claw_dev_session_salt",
   watchers: [
     esbuild: {Esbuild, :install_and_run, [:monkey_claw, ~w(--sourcemap=inline --watch)]},
     tailwind: {Tailwind, :install_and_run, [:monkey_claw, ~w(--watch)]}

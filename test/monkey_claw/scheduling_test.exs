@@ -285,6 +285,30 @@ defmodule MonkeyClaw.SchedulingTest do
       assert again.run_count == 2
     end
 
+    test "record_run on completed :interval entry (max_runs reached) keeps status completed" do
+      workspace = insert_workspace!()
+
+      entry =
+        insert_schedule_entry!(workspace, %{
+          schedule_type: :interval,
+          interval_ms: 60_000,
+          next_run_at: DateTime.add(DateTime.utc_now(), -60, :second),
+          max_runs: 1
+        })
+
+      # First run hits max_runs and completes the entry
+      {:ok, completed} = Scheduling.record_run(entry)
+      assert completed.status == :completed
+      assert completed.run_count == 1
+
+      # Second record_run on an already-completed interval entry:
+      # status stays :completed, run_count still increments (same
+      # behaviour as :once entries — documented for safety).
+      {:ok, again} = Scheduling.record_run(completed)
+      assert again.status == :completed
+      assert again.run_count == 2
+    end
+
     test "record_run on :interval entry with invalid interval_ms marks entry failed" do
       workspace = insert_workspace!()
 
@@ -306,6 +330,34 @@ defmodule MonkeyClaw.SchedulingTest do
 
       {:ok, corrupted} = Scheduling.get_schedule_entry(entry.id)
       assert is_nil(corrupted.interval_ms)
+
+      {:ok, updated} = Scheduling.record_run(corrupted)
+      assert updated.status == :failed
+      assert updated.run_count == 1
+    end
+
+    test "record_run on :interval entry with interval_ms=0 marks entry failed" do
+      workspace = insert_workspace!()
+
+      entry =
+        insert_schedule_entry!(workspace, %{
+          schedule_type: :interval,
+          interval_ms: 60_000,
+          next_run_at: DateTime.add(DateTime.utc_now(), -60, :second)
+        })
+
+      # Corrupt interval_ms to zero directly in the DB to simulate a broken record.
+      # Zero does not satisfy the `is_integer(interval_ms) and interval_ms > 0` guard,
+      # so the fallback clause fires.
+      import Ecto.Query
+
+      MonkeyClaw.Repo.update_all(
+        from(e in ScheduleEntry, where: e.id == ^entry.id),
+        set: [interval_ms: 0]
+      )
+
+      {:ok, corrupted} = Scheduling.get_schedule_entry(entry.id)
+      assert corrupted.interval_ms == 0
 
       {:ok, updated} = Scheduling.record_run(corrupted)
       assert updated.status == :failed

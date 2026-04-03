@@ -55,11 +55,11 @@ defmodule MonkeyClaw.Scheduling.ScheduleEntry do
           interval_ms: pos_integer() | nil,
           next_run_at: DateTime.t() | nil,
           experiment_config: map(),
-          # nil only for unsaved structs; defaults to :active on insert
-          status: status() | nil,
+          status: status(),
           last_run_at: DateTime.t() | nil,
           run_count: non_neg_integer(),
           max_runs: pos_integer() | nil,
+          lock_version: non_neg_integer(),
           workspace_id: Ecto.UUID.t() | nil,
           inserted_at: DateTime.t() | nil,
           updated_at: DateTime.t() | nil
@@ -113,6 +113,7 @@ defmodule MonkeyClaw.Scheduling.ScheduleEntry do
     field :last_run_at, :utc_datetime_usec
     field :run_count, :integer, default: 0
     field :max_runs, :integer
+    field :lock_version, :integer, default: 0
 
     belongs_to :workspace, Workspace
 
