@@ -90,7 +90,7 @@ defmodule MonkeyClawWeb.ChannelWebhookController do
       case Dispatcher.handle_inbound(config, conn, raw_body) do
         {:ok, :accepted} ->
           conn
-          |> put_status(:accepted)
+          |> put_status(:ok)
           |> json(%{status: "accepted"})
 
         {:ok, :challenge, challenge_response} ->

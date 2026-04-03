@@ -107,7 +107,7 @@ defmodule MonkeyClaw.Channels do
     end)
   end
 
-  # ── Channel Messages ──���───────────────────────────────────────
+  # ── Channel Messages ────────────────────────────────────────
 
   @doc "Record a channel message (inbound or outbound)."
   @spec record_message(ChannelConfig.t(), map()) ::
@@ -169,7 +169,7 @@ defmodule MonkeyClaw.Channels do
     "channels:#{workspace_id}"
   end
 
-  # ── Private ────���────────────────────────────────��─────────────
+  # ── Private ──────────────────────────────────────────────────
 
   defp broadcast_message(workspace_id, %ChannelMessage{} = message) do
     Phoenix.PubSub.broadcast(

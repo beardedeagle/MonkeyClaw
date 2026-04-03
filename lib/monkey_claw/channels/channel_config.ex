@@ -95,9 +95,15 @@ defmodule MonkeyClaw.Channels.ChannelConfig do
   end
 
   @doc "Changeset for updating connection status only."
-  @spec status_changeset(t(), status()) :: Ecto.Changeset.t()
+  @spec status_changeset(t(), term()) :: Ecto.Changeset.t()
   def status_changeset(%__MODULE__{} = config, status) when status in @statuses do
     change(config, status: status)
+  end
+
+  def status_changeset(%__MODULE__{} = config, _status) do
+    config
+    |> change()
+    |> add_error(:status, "is invalid")
   end
 
   defp validate_config_map(changeset) do

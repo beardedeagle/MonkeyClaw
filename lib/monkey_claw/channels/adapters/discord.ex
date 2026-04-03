@@ -32,6 +32,7 @@ defmodule MonkeyClaw.Channels.Adapters.Discord do
   require Logger
 
   @discord_api_base "https://discord.com/api/v10"
+  @timestamp_tolerance 300
 
   @impl true
   def validate_config(config) when is_map(config) do
@@ -83,8 +84,9 @@ defmodule MonkeyClaw.Channels.Adapters.Discord do
         # {"type": 1} per Discord Interactions spec.
         {:ok, %{challenge: %{"type" => 1}}}
 
-      {:ok, %{"type" => 2, "data" => %{"options" => options}} = interaction} ->
+      {:ok, %{"type" => 2, "data" => data} = interaction} ->
         # APPLICATION_COMMAND — slash command
+        options = Map.get(data, "options", [])
         content = extract_command_content(options)
 
         {:ok,
@@ -132,7 +134,8 @@ defmodule MonkeyClaw.Channels.Adapters.Discord do
 
     with {:ok, public_key} <- decode_hex(public_key_hex, :public_key),
          {:ok, signature} <- decode_hex(signature_hex, :signature),
-         {:ok, _ts} <- require_present(timestamp, :timestamp) do
+         {:ok, ts} <- require_present(timestamp, :timestamp),
+         :ok <- check_timestamp_freshness(ts) do
       message = timestamp <> raw_body
 
       case :crypto.verify(:eddsa, :none, message, signature, [public_key, :ed25519]) do
@@ -197,4 +200,20 @@ defmodule MonkeyClaw.Channels.Adapters.Discord do
   end
 
   defp extract_command_content(_), do: "/ask"
+
+  defp check_timestamp_freshness(ts) when is_binary(ts) do
+    case Integer.parse(ts) do
+      {int, ""} ->
+        now = System.system_time(:second)
+
+        if abs(now - int) <= @timestamp_tolerance do
+          :ok
+        else
+          {:error, :expired_timestamp}
+        end
+
+      _ ->
+        {:error, :invalid_timestamp}
+    end
+  end
 end

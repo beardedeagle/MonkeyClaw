@@ -137,7 +137,7 @@ defmodule MonkeyClaw.Channels.Adapters.Telegram do
   @impl true
   def persistent?, do: false
 
-  # ── Private ──────────��────────────────────────────────────────
+  # ── Private ──────────────────────────────────────────────────
 
   defp config_value(config, key) do
     Map.get(config, to_string(key)) || Map.get(config, key)
