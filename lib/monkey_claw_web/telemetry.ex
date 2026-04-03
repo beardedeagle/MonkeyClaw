@@ -115,6 +115,20 @@ defmodule MonkeyClawWeb.Telemetry do
         description: "Webhook events dispatched to agent workflow"
       ),
 
+      # Notification Metrics
+      counter("monkey_claw.notification.created.count",
+        tags: [:category, :severity],
+        description: "Notifications created from telemetry events"
+      ),
+      counter("monkey_claw.notification.delivered.count",
+        tags: [:channel],
+        description: "Notifications delivered via channel (in_app or email)"
+      ),
+      counter("monkey_claw.notification.delivery_failed.count",
+        tags: [:channel],
+        description: "Notification delivery failures"
+      ),
+
       # VM Metrics
       summary("vm.memory.total", unit: {:byte, :kilobyte}),
       summary("vm.total_run_queue_lengths.total"),

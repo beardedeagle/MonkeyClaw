@@ -457,6 +457,19 @@ defmodule MonkeyClawWeb.ChatLive do
     {:noreply, socket}
   end
 
+  # Forward PubSub notification to the NotificationLive component.
+  # The component subscribes via Notifications.subscribe/1, but PubSub
+  # messages arrive in the parent LiveView's process. We forward them
+  # using send_update/3 so the component can refresh its state.
+  def handle_info({:notification_created, notification}, socket) do
+    send_update(MonkeyClawWeb.NotificationLive,
+      id: "notifications",
+      notification_created: notification
+    )
+
+    {:noreply, socket}
+  end
+
   # Normal task exit — no action needed.
   def handle_info({:DOWN, _ref, :process, _pid, :normal}, socket), do: {:noreply, socket}
 

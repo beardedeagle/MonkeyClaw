@@ -37,6 +37,8 @@ defmodule MonkeyClaw.Workspaces.Workspace do
 
   alias MonkeyClaw.Assistants.Assistant
   alias MonkeyClaw.Experiments.Experiment
+  alias MonkeyClaw.Notifications.Notification
+  alias MonkeyClaw.Notifications.NotificationRule
   alias MonkeyClaw.Scheduling.ScheduleEntry
   alias MonkeyClaw.Sessions.Session
   alias MonkeyClaw.Skills.Skill
@@ -71,6 +73,8 @@ defmodule MonkeyClaw.Workspaces.Workspace do
     belongs_to :assistant, Assistant
     has_many :channels, Channel
     has_many :experiments, Experiment
+    has_many :notifications, Notification
+    has_many :notification_rules, NotificationRule
     has_many :schedule_entries, ScheduleEntry
     has_many :sessions, Session
     has_many :skills, Skill

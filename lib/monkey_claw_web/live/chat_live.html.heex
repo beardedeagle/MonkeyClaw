@@ -92,6 +92,24 @@
 
   <%!-- Main chat area --%>
   <div class="flex flex-col flex-1 min-w-0">
+    <%!-- Header toolbar --%>
+    <div class="flex items-center justify-between px-4 py-2 border-b border-base-300 flex-none">
+      <button
+        phx-click="toggle_sidebar"
+        class="btn btn-ghost btn-sm btn-square"
+        aria-label="Toggle sidebar"
+      >
+        <.icon name="hero-bars-3" class="size-5" />
+      </button>
+      <div :if={@workspace} class="flex items-center gap-2">
+        <.live_component
+          module={MonkeyClawWeb.NotificationLive}
+          id="notifications"
+          workspace_id={@workspace.id}
+        />
+      </div>
+    </div>
+
     <%!-- History banner --%>
     <div
       :if={@viewing_history_id}

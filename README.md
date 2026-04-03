@@ -37,7 +37,7 @@ capabilities with security built into the platform, not patched on top.
 ├─────────────────────────────────────────────────────┤
 │  Product Layer                                       │
 │  MonkeyClaw — assistants · workspaces · experiments  │
-│  scheduling · user modeling · webhooks               │
+│  scheduling · user modeling · webhooks · notifs      │
 ├─────────────────────────────────────────────────────┤
 │  Extension Layer                                    │
 │  Plug pipelines — hooks · contexts · pipelines      │
@@ -77,8 +77,9 @@ Clean separation of concerns, connected through a public Elixir API.
 | **Scheduling**| `MonkeyClaw.Scheduling`              | Timed experiment runs — once or recurring — with status lifecycle and run tracking |
 | **UserModeling**| `MonkeyClaw.UserModeling`          | Privacy-aware observation of user interactions, topic extraction, and injectable context for personalized queries |
 | **Webhooks**  | `MonkeyClaw.Webhooks`                | Multi-source webhook ingress (16 built-in sources) with source-specific signature verification, replay detection, rate limiting, and async agent dispatch |
+| **Notifications** | `MonkeyClaw.Notifications`       | Event-driven notification system — routes telemetry events to user-facing alerts via PubSub (real-time) and email (async), with workspace-scoped rules, severity thresholds, and ETS-cached routing |
 
-Contexts (`MonkeyClaw.Assistants`, `MonkeyClaw.Workspaces`, `MonkeyClaw.Webhooks`) provide the
+Contexts (`MonkeyClaw.Assistants`, `MonkeyClaw.Workspaces`, `MonkeyClaw.Webhooks`, `MonkeyClaw.Notifications`) provide the
 public CRUD API. `MonkeyClaw.AgentBridge` translates domain objects into
 BeamAgent session and thread configurations. `MonkeyClaw.Workflows`
 composes these into user-facing operations.
@@ -378,6 +379,55 @@ channel.
 All error responses are deliberately opaque — no endpoint IDs, stack
 traces, or distinguishing details. Telemetry counters track received,
 rejected, rate-limited, and dispatched events.
+
+### Notifications
+
+Event-driven notification system that routes telemetry events to
+user-facing alerts. Connects the existing instrumentation pipeline
+(webhooks, experiments, agent sessions) to real-time and email
+delivery surfaces.
+
+Four-layer architecture:
+
+| Layer | Module | Owns |
+|-------|--------|------|
+| **Notifications** | `MonkeyClaw.Notifications` | Notification and rule CRUD, status transitions, PubSub, query helpers |
+| **Router** | `MonkeyClaw.Notifications.Router` | GenServer — telemetry handler attachment, ETS rule cache, event → notification pipeline |
+| **EventMapper** | `MonkeyClaw.Notifications.EventMapper` | Pure event → notification attribute translation with workspace resolution |
+| **Email** | `MonkeyClaw.Notifications.Email` | Pure Swoosh email builder for notification delivery |
+
+Notification categories:
+
+- **`:webhook`** — Webhook received, rejected, or dispatched events
+- **`:experiment`** — Experiment completed or rolled back
+- **`:session`** — Agent session or query exceptions
+- **`:system`** — System-level events
+
+Each workspace configures notification rules that map telemetry event
+patterns to delivery channels (`:in_app`, `:email`, or `:all`) with a
+minimum severity threshold (`:info` < `:warning` < `:error`). Rules
+are cached in an application-owned ETS table for zero-overhead lookups
+on every telemetry event, with periodic refresh and on-demand refresh
+after rule mutations.
+
+The Router GenServer attaches to telemetry events on startup. Handlers
+run in the caller's process and immediately cast to the GenServer to
+avoid blocking webhook requests, experiment runners, or agent sessions.
+The GenServer then maps the event, matches rules, checks severity, and
+creates the notification with delivery:
+
+- **In-app** — PubSub broadcast to `"notifications:{workspace_id}"`.
+  The ChatLive LiveView subscribes and forwards to the NotificationLive
+  component, which renders a real-time notification bell with unread
+  count badge and dropdown panel.
+- **Email** — Async delivery via `Task.Supervisor` using Swoosh. Email
+  subjects include severity prefixes (`[MonkeyClaw ERROR]`,
+  `[MonkeyClaw Warning]`).
+
+REST API endpoints provide programmatic access for listing
+notifications, marking read/dismissed, bulk mark-all-read, and full
+CRUD for notification rules. All endpoints are workspace-scoped with
+opaque 404s on workspace mismatch to prevent enumeration.
 
 ### Dashboard
 
