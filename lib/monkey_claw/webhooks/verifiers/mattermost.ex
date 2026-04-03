@@ -71,11 +71,17 @@ defmodule MonkeyClaw.Webhooks.Verifiers.Mattermost do
   # ── extract_delivery_id ────────────────────────────────────
 
   @impl true
-  @spec extract_delivery_id(Plug.Conn.t()) :: {:ok, String.t() | nil}
+  @spec extract_delivery_id(Plug.Conn.t()) ::
+          {:ok, String.t() | nil} | {:error, :invalid_delivery_id}
   def extract_delivery_id(conn) do
     case conn.body_params do
-      %{"post_id" => id} when is_binary(id) and byte_size(id) > 0 ->
+      %{"post_id" => id}
+      when is_binary(id) and byte_size(id) > 0 and
+             byte_size(id) <= @max_field_length ->
         {:ok, id}
+
+      %{"post_id" => _} ->
+        {:error, :invalid_delivery_id}
 
       _ ->
         {:ok, nil}

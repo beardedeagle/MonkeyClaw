@@ -134,14 +134,14 @@ defmodule MonkeyClaw.Webhooks.Verifiers.CircleCITest do
       assert {:ok, nil} = CircleCI.extract_delivery_id(conn)
     end
 
-    test "returns nil when id is not a string" do
+    test "returns error when id is not a string" do
       conn = conn_with_body_params(%{"id" => 12_345})
-      assert {:ok, nil} = CircleCI.extract_delivery_id(conn)
+      assert {:error, :invalid_delivery_id} = CircleCI.extract_delivery_id(conn)
     end
 
-    test "returns nil when id is an empty string" do
+    test "returns error when id is an empty string" do
       conn = conn_with_body_params(%{"id" => ""})
-      assert {:ok, nil} = CircleCI.extract_delivery_id(conn)
+      assert {:error, :invalid_delivery_id} = CircleCI.extract_delivery_id(conn)
     end
   end
 end

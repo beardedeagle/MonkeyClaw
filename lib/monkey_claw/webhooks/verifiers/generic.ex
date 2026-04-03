@@ -90,8 +90,11 @@ defmodule MonkeyClaw.Webhooks.Verifiers.Generic do
           {:ok, integer(), String.t()} | {:error, :missing_signature}
   defp parse_signature_header(conn) do
     case Plug.Conn.get_req_header(conn, @signature_header) do
-      [header] when is_binary(header) -> parse_signature_value(header)
-      _ -> {:error, :missing_signature}
+      [header] when is_binary(header) and byte_size(header) <= @max_header_length ->
+        parse_signature_value(header)
+
+      _ ->
+        {:error, :missing_signature}
     end
   end
 

@@ -76,11 +76,17 @@ defmodule MonkeyClaw.Webhooks.Verifiers.CircleCI do
   # ── extract_delivery_id ────────────────────────────────────
 
   @impl true
-  @spec extract_delivery_id(Plug.Conn.t()) :: {:ok, String.t() | nil}
+  @spec extract_delivery_id(Plug.Conn.t()) ::
+          {:ok, String.t() | nil} | {:error, :invalid_delivery_id}
   def extract_delivery_id(conn) do
     case conn.body_params do
-      %{"id" => id} when is_binary(id) and byte_size(id) > 0 ->
+      %{"id" => id}
+      when is_binary(id) and byte_size(id) > 0 and
+             byte_size(id) <= @max_header_length ->
         {:ok, id}
+
+      %{"id" => _} ->
+        {:error, :invalid_delivery_id}
 
       _ ->
         {:ok, nil}

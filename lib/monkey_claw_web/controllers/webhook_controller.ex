@@ -53,7 +53,7 @@ defmodule MonkeyClawWeb.WebhookController do
   alias MonkeyClaw.Webhooks
   alias MonkeyClaw.Webhooks.Dispatcher
   alias MonkeyClaw.Webhooks.Security
-  alias MonkeyClawWeb.CacheBodyReader
+  alias MonkeyClawWeb.Plugs.CacheBodyReader
 
   @doc """
   Receive and process an incoming webhook delivery.

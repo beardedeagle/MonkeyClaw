@@ -1,4 +1,4 @@
-defmodule MonkeyClawWeb.CacheBodyReader do
+defmodule MonkeyClawWeb.Plugs.CacheBodyReader do
   @moduledoc """
   Custom body reader that caches the raw request body in `conn.private`.
 
@@ -24,7 +24,7 @@ defmodule MonkeyClawWeb.CacheBodyReader do
   the endpoint:
 
       plug Plug.Parsers,
-        body_reader: {MonkeyClawWeb.CacheBodyReader, :read_body, []},
+        body_reader: {MonkeyClawWeb.Plugs.CacheBodyReader, :read_body, []},
         ...
 
   ## Chunked Reads

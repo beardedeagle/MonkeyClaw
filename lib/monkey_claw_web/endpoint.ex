@@ -59,7 +59,7 @@ defmodule MonkeyClawWeb.Endpoint do
     pass: ["*/*"],
     json_decoder: Phoenix.json_library(),
     length: 1_000_000,
-    body_reader: {MonkeyClawWeb.CacheBodyReader, :read_body, []}
+    body_reader: {MonkeyClawWeb.Plugs.CacheBodyReader, :read_body, []}
 
   plug Plug.MethodOverride
   plug Plug.Head

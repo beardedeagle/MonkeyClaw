@@ -82,9 +82,9 @@ defmodule MonkeyClaw.Webhooks.Verifiers.MattermostTest do
       assert {:ok, nil} = Mattermost.extract_delivery_id(conn)
     end
 
-    test "returns nil when post_id is empty string" do
+    test "returns error when post_id is empty string" do
       conn = conn_with_body(%{"post_id" => ""})
-      assert {:ok, nil} = Mattermost.extract_delivery_id(conn)
+      assert {:error, :invalid_delivery_id} = Mattermost.extract_delivery_id(conn)
     end
   end
 end
