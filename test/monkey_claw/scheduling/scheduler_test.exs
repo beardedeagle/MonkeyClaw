@@ -3,6 +3,8 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
 
   import MonkeyClaw.Factory
 
+  alias Ecto.Adapters.SQL
+  alias MonkeyClaw.Repo
   alias MonkeyClaw.Scheduling
   alias MonkeyClaw.Scheduling.Scheduler
 
@@ -143,8 +145,8 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
       # fails validation in Experiments.create_experiment/2. The create
       # changeset requires title, type, and max_iterations.
       # Raw SQL bypasses Ecto's schema-level type casting.
-      Ecto.Adapters.SQL.query!(
-        MonkeyClaw.Repo,
+      SQL.query!(
+        Repo,
         "UPDATE schedule_entries SET experiment_config = ? WHERE id = ?",
         ["{}", entry.id]
       )
@@ -172,8 +174,8 @@ defmodule MonkeyClaw.Scheduling.SchedulerTest do
       bad_entry = insert_schedule_entry!(workspace, %{next_run_at: past})
 
       # Raw SQL bypasses Ecto's schema-level type casting.
-      Ecto.Adapters.SQL.query!(
-        MonkeyClaw.Repo,
+      SQL.query!(
+        Repo,
         "UPDATE schedule_entries SET experiment_config = ? WHERE id = ?",
         ["{}", bad_entry.id]
       )
