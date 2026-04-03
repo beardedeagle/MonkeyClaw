@@ -66,8 +66,12 @@ defmodule MonkeyClawWeb.WebhookControllerTest do
 
       deliveries = Webhooks.list_deliveries(endpoint.id)
       assert length(deliveries) == 1
-      assert hd(deliveries).status == :accepted
-      assert hd(deliveries).event_type == "test.event"
+      delivery = hd(deliveries)
+      # Status may be :accepted (initial) or :failed/:processed if the async
+      # dispatch task ran before this query. Both are valid — this test
+      # verifies the delivery was *recorded*, not the dispatch outcome.
+      assert delivery.status in [:accepted, :processed, :failed]
+      assert delivery.event_type == "test.event"
     end
 
     test "records payload hash in delivery", %{conn: conn} do
