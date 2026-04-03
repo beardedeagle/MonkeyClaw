@@ -83,6 +83,7 @@ defmodule MonkeyClaw.Channels do
   def update_config(%ChannelConfig{} = config, attrs) when is_map(attrs) do
     config
     |> ChannelConfig.update_changeset(attrs)
+    |> validate_adapter_config(attrs)
     |> Repo.update()
   end
 
@@ -187,13 +188,19 @@ defmodule MonkeyClaw.Channels do
   end
 
   defp validate_adapter_config(changeset, attrs) do
-    case Ecto.Changeset.get_change(changeset, :adapter_type) do
-      nil ->
-        changeset
+    # Validate adapter config whenever adapter_type or config changes.
+    # On create, adapter_type is always a change. On update, adapter_type
+    # is not cast (immutable), so we use get_field to read the existing
+    # value and validate whenever the config map changes.
+    adapter_type = Ecto.Changeset.get_field(changeset, :adapter_type)
+    has_config_change = Ecto.Changeset.get_change(changeset, :config) != nil
+    has_type_change = Ecto.Changeset.get_change(changeset, :adapter_type) != nil
 
-      adapter_type ->
-        config = Map.get(attrs, :config, Map.get(attrs, "config", %{}))
-        do_validate_adapter_config(changeset, adapter_type, config)
+    if adapter_type && (has_type_change || has_config_change) do
+      config = Map.get(attrs, :config, Map.get(attrs, "config", %{}))
+      do_validate_adapter_config(changeset, adapter_type, config)
+    else
+      changeset
     end
   end
 

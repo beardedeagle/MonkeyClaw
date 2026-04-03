@@ -100,7 +100,7 @@ defmodule MonkeyClaw.Channels.Connection do
   end
 
   @impl true
-  def terminate(_reason, %{adapter_mod: adapter_mod, connection_state: conn_state} = state) do
+  def terminate(reason, %{adapter_mod: adapter_mod, connection_state: conn_state} = state) do
     if function_exported?(adapter_mod, :disconnect, 1) do
       adapter_mod.disconnect(conn_state)
     end
@@ -108,7 +108,7 @@ defmodule MonkeyClaw.Channels.Connection do
     Telemetry.connection_down(%{
       adapter_type: state.config.adapter_type,
       channel_config_id: state.config.id,
-      reason: :shutdown
+      reason: reason
     })
 
     _ = Channels.update_status(state.config, :disconnected)

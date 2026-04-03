@@ -44,9 +44,14 @@ defmodule MonkeyClaw.Channels.Dispatcher do
   def handle_inbound(%ChannelConfig{} = config, conn, raw_body)
       when is_binary(raw_body) do
     with {:ok, adapter_mod} <- Adapter.for_type(config.adapter_type),
-         :ok <- adapter_mod.verify_request(config.config, conn, raw_body),
-         {:ok, message} <- adapter_mod.parse_inbound(conn, raw_body) do
+         {:verify, :ok} <- {:verify, adapter_mod.verify_request(config.config, conn, raw_body)},
+         {:parse, {:ok, message}} <-
+           {:parse, adapter_mod.parse_inbound(conn, raw_body)} do
       handle_parsed_inbound(config, adapter_mod, message)
+    else
+      {:verify, {:error, _reason}} -> {:error, :verification_failed}
+      {:parse, {:error, _reason}} -> {:error, :parse_failed}
+      {:error, _} = error -> error
     end
   end
 

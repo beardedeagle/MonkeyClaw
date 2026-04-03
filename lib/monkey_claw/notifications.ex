@@ -343,21 +343,15 @@ defmodule MonkeyClaw.Notifications do
   """
   @spec broadcast_created(Notification.t()) :: :ok | {:error, term()}
   def broadcast_created(%Notification{} = notification) do
-    message = {:notification_created, notification}
-
-    # Broadcast to workspace-specific topic (for workspace-scoped views)
-    _ =
-      Phoenix.PubSub.broadcast(
-        MonkeyClaw.PubSub,
-        topic(notification.workspace_id),
-        message
-      )
-
-    # Broadcast to global topic (for cross-workspace views like dashboard)
+    # Broadcast only to the global topic. The NotificationHook (mounted on
+    # every page) subscribes to the global topic and forwards the event to
+    # the NotificationLive component via send_update/3. Broadcasting to
+    # both the workspace topic AND the global topic would cause duplicate
+    # delivery in LiveViews that carry both subscriptions.
     Phoenix.PubSub.broadcast(
       MonkeyClaw.PubSub,
       @global_topic,
-      message
+      {:notification_created, notification}
     )
   end
 

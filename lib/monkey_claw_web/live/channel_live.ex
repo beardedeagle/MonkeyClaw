@@ -30,6 +30,7 @@ defmodule MonkeyClawWeb.ChannelLive do
   use MonkeyClawWeb, :live_view
 
   alias MonkeyClaw.Channels
+  alias MonkeyClaw.Channels.ChannelConfig
   alias MonkeyClaw.Workspaces
 
   @adapter_types [:slack, :discord, :telegram, :web]
@@ -90,21 +91,25 @@ defmodule MonkeyClawWeb.ChannelLive do
   def handle_event("save_channel", %{"channel" => params}, socket) do
     workspace = socket.assigns.workspace
 
-    adapter_type = String.to_existing_atom(params["adapter_type"])
-
-    attrs = %{
-      name: params["name"],
-      adapter_type: adapter_type,
-      enabled: params["enabled"] == "true",
-      config: build_adapter_config(adapter_type, params)
-    }
-
-    case socket.assigns.editing_config do
+    case parse_adapter_type(params["adapter_type"]) do
       nil ->
-        handle_create(socket, workspace, attrs)
+        {:noreply, put_flash(socket, :error, "Invalid adapter type")}
 
-      config ->
-        handle_update(socket, config, attrs)
+      adapter_type ->
+        attrs = %{
+          name: params["name"],
+          adapter_type: adapter_type,
+          enabled: params["enabled"] == "true",
+          config: build_adapter_config(adapter_type, params)
+        }
+
+        case socket.assigns.editing_config do
+          nil ->
+            handle_create(socket, workspace, attrs)
+
+          config ->
+            handle_update(socket, config, attrs)
+        end
     end
   end
 
@@ -524,6 +529,16 @@ defmodule MonkeyClawWeb.ChannelLive do
         {:noreply, assign(socket, :form_errors, format_changeset_errors(changeset))}
     end
   end
+
+  # Safe adapter type parsing — matches against the known allow-list
+  # instead of String.to_existing_atom on client-provided input.
+  @adapter_types ChannelConfig.adapter_types()
+
+  defp parse_adapter_type(type_string) when is_binary(type_string) do
+    Enum.find(@adapter_types, fn type -> Atom.to_string(type) == type_string end)
+  end
+
+  defp parse_adapter_type(_), do: nil
 
   defp build_adapter_config(:slack, params) do
     extract_params(params, ~w(bot_token signing_secret channel_id))

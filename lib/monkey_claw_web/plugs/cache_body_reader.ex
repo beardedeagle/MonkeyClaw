@@ -104,6 +104,9 @@ defmodule MonkeyClawWeb.Plugs.CacheBodyReader do
   # before body parsing, so it is available at this point.
   @spec signature_verified_path?(Plug.Conn.t()) :: boolean()
   defp signature_verified_path?(%Plug.Conn{path_info: ["api", "webhooks" | _]}), do: true
-  defp signature_verified_path?(%Plug.Conn{path_info: ["api", "channels" | _]}), do: true
+
+  defp signature_verified_path?(%Plug.Conn{path_info: ["api", "channels", _, "webhook" | _]}),
+    do: true
+
   defp signature_verified_path?(_conn), do: false
 end
