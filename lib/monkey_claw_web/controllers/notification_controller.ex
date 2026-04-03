@@ -102,11 +102,17 @@ defmodule MonkeyClawWeb.NotificationController do
   """
   @spec mark_all_read(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def mark_all_read(conn, %{"workspace_id" => workspace_id}) do
-    {count, _} = Notifications.mark_all_read(workspace_id)
+    case MonkeyClaw.Workspaces.get_workspace(workspace_id) do
+      {:ok, _workspace} ->
+        {count, _} = Notifications.mark_all_read(workspace_id)
 
-    conn
-    |> put_status(200)
-    |> json(%{marked_read: count})
+        conn
+        |> put_status(200)
+        |> json(%{marked_read: count})
+
+      {:error, :not_found} ->
+        conn |> put_status(404) |> json(%{error: "not found"})
+    end
   end
 
   # ── Private ─────────────────────────────────────────────────

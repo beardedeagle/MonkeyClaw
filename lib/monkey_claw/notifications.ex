@@ -326,6 +326,15 @@ defmodule MonkeyClaw.Notifications do
   end
 
   @doc """
+  Unsubscribe the calling process from a workspace's notification topic.
+  """
+  @spec unsubscribe(Ecto.UUID.t()) :: :ok
+  def unsubscribe(workspace_id)
+      when is_binary(workspace_id) and byte_size(workspace_id) > 0 do
+    Phoenix.PubSub.unsubscribe(MonkeyClaw.PubSub, topic(workspace_id))
+  end
+
+  @doc """
   Broadcast a notification event to subscribers.
 
   Called by the NotificationRouter after creating a notification.

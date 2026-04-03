@@ -61,6 +61,10 @@ defmodule MonkeyClawWeb.NotificationLive do
 
     subscribed_workspace_id =
       if connected?(socket) and workspace_changed do
+        if is_binary(previous_workspace_id) do
+          _ = Notifications.unsubscribe(previous_workspace_id)
+        end
+
         _ = Notifications.subscribe(workspace_id)
         workspace_id
       else
