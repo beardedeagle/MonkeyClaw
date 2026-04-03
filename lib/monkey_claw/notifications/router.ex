@@ -394,13 +394,16 @@ defmodule MonkeyClaw.Notifications.Router do
   defp deliver_in_app(_notification, _channel), do: :ok
 
   defp deliver_email(notification, channel) when channel in [:email, :all] do
-    _ = Task.Supervisor.start_child(MonkeyClaw.TaskSupervisor, fn ->
-      case Email.build(notification) do
-        {:ok, email} -> send_email(email, notification)
-        {:error, :not_configured} ->
-          Logger.debug("NotificationRouter email not configured — skipping email delivery")
-      end
-    end)
+    _ =
+      Task.Supervisor.start_child(MonkeyClaw.TaskSupervisor, fn ->
+        case Email.build(notification) do
+          {:ok, email} ->
+            send_email(email, notification)
+
+          {:error, :not_configured} ->
+            Logger.debug("NotificationRouter email not configured — skipping email delivery")
+        end
+      end)
 
     :ok
   end
