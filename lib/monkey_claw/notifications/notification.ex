@@ -151,7 +151,7 @@ defmodule MonkeyClaw.Notifications.Notification do
     |> maybe_set_read_at()
   end
 
-  # ── Private ───────────���──────────────────────────────────────
+  # ── Private ─────────────────────────────────────────────────
 
   # Automatically set read_at when transitioning to :read status.
   defp maybe_set_read_at(changeset) do

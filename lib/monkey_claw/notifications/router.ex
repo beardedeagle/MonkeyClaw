@@ -157,7 +157,8 @@ defmodule MonkeyClaw.Notifications.Router do
       attached_events: []
     }
 
-    state = load_and_attach(state)
+    state = attach_all_handlers(state)
+    refresh_cache_from_db()
     {:ok, schedule_refresh(state)}
   end
 
@@ -169,14 +170,15 @@ defmodule MonkeyClaw.Notifications.Router do
 
   @impl true
   def handle_call(:refresh_cache, _from, %__MODULE__{} = state) do
-    state = state |> cancel_timer() |> load_and_attach()
+    state = cancel_timer(state)
+    refresh_cache_from_db()
     {:reply, :ok, schedule_refresh(state)}
   end
 
   @impl true
   def handle_info(:refresh_cache, %__MODULE__{} = state) do
-    state = %{state | timer_ref: nil} |> load_and_attach()
-    {:noreply, schedule_refresh(state)}
+    refresh_cache_from_db()
+    {:noreply, schedule_refresh(%{state | timer_ref: nil})}
   end
 
   def handle_info(msg, %__MODULE__{} = state) do
@@ -192,13 +194,25 @@ defmodule MonkeyClaw.Notifications.Router do
 
   # ── Private — Cache and Attachment ──────────────────────────
 
-  # Load rules from DB, update ETS cache, and re-attach telemetry handlers.
-  defp load_and_attach(%__MODULE__{} = state) do
-    state = detach_all(state)
+  # Attach handlers for ALL supported events once. Handlers gate on
+  # the ETS cache, so events without matching rules are no-ops.
+  # This eliminates the gap where events could be missed during refresh.
+  defp attach_all_handlers(%__MODULE__{} = state) do
+    all_events = Map.values(@event_registry) |> Enum.uniq()
 
+    Enum.each(all_events, fn event ->
+      handler_id = "#{@handler_id}_#{Enum.join(event, ".")}"
+      :telemetry.attach(handler_id, event, &telemetry_handler/4, nil)
+    end)
+
+    %{state | attached_events: all_events}
+  end
+
+  # Load rules from DB and refresh the ETS cache. Handlers remain
+  # attached — no gap where telemetry events could be missed.
+  defp refresh_cache_from_db do
     rules_by_pattern = load_rules()
     update_ets_cache(rules_by_pattern)
-    attach_handlers(state, rules_by_pattern)
   end
 
   @spec load_rules() :: %{String.t() => [NotificationRule.t()]}
@@ -220,37 +234,6 @@ defmodule MonkeyClaw.Notifications.Router do
     Enum.each(rules_by_pattern, fn {pattern, rules} ->
       :ets.insert(@ets_table, {pattern, rules})
     end)
-  end
-
-  @spec attach_handlers(t(), %{String.t() => [NotificationRule.t()]}) :: t()
-  defp attach_handlers(%__MODULE__{} = state, rules_by_pattern) do
-    events_to_attach =
-      rules_by_pattern
-      |> Map.keys()
-      |> Enum.flat_map(fn pattern ->
-        case Map.get(@event_registry, pattern) do
-          nil ->
-            Logger.warning("NotificationRouter: unknown event pattern #{inspect(pattern)}")
-            []
-
-          event ->
-            [event]
-        end
-      end)
-      |> Enum.uniq()
-
-    Enum.each(events_to_attach, fn event ->
-      handler_id = "#{@handler_id}_#{Enum.join(event, ".")}"
-
-      :telemetry.attach(
-        handler_id,
-        event,
-        &telemetry_handler/4,
-        nil
-      )
-    end)
-
-    %{state | attached_events: events_to_attach}
   end
 
   @spec detach_all(t()) :: t()
