@@ -28,6 +28,8 @@ defmodule MonkeyClaw.Notifications do
   alias MonkeyClaw.Repo
   alias MonkeyClaw.Workspaces.Workspace
 
+  @global_topic "notifications:global"
+
   # Maximum number of notifications returned by list queries.
   # Prevents unbounded result sets on workspaces with heavy activity.
   @default_limit 50
@@ -341,11 +343,42 @@ defmodule MonkeyClaw.Notifications do
   """
   @spec broadcast_created(Notification.t()) :: :ok | {:error, term()}
   def broadcast_created(%Notification{} = notification) do
+    message = {:notification_created, notification}
+
+    # Broadcast to workspace-specific topic (for workspace-scoped views)
+    _ =
+      Phoenix.PubSub.broadcast(
+        MonkeyClaw.PubSub,
+        topic(notification.workspace_id),
+        message
+      )
+
+    # Broadcast to global topic (for cross-workspace views like dashboard)
     Phoenix.PubSub.broadcast(
       MonkeyClaw.PubSub,
-      topic(notification.workspace_id),
-      {:notification_created, notification}
+      @global_topic,
+      message
     )
+  end
+
+  @doc """
+  Subscribe to the global notification topic.
+
+  The global topic receives ALL notifications across all workspaces.
+  Used by the NotificationHook to provide notifications on every page
+  regardless of workspace context.
+  """
+  @spec subscribe_global() :: :ok | {:error, {:already_registered, pid()}}
+  def subscribe_global do
+    Phoenix.PubSub.subscribe(MonkeyClaw.PubSub, @global_topic)
+  end
+
+  @doc """
+  Unsubscribe from the global notification topic.
+  """
+  @spec unsubscribe_global() :: :ok
+  def unsubscribe_global do
+    Phoenix.PubSub.unsubscribe(MonkeyClaw.PubSub, @global_topic)
   end
 
   @doc """

@@ -37,7 +37,8 @@ capabilities with security built into the platform, not patched on top.
 ├─────────────────────────────────────────────────────┤
 │  Product Layer                                       │
 │  MonkeyClaw — assistants · workspaces · experiments  │
-│  scheduling · user modeling · webhooks · notifs      │
+│  scheduling · user modeling · webhooks · notifs ·    │
+│  channels                                            │
 ├─────────────────────────────────────────────────────┤
 │  Extension Layer                                    │
 │  Plug pipelines — hooks · contexts · pipelines      │
@@ -78,8 +79,9 @@ Clean separation of concerns, connected through a public Elixir API.
 | **UserModeling**| `MonkeyClaw.UserModeling`          | Privacy-aware observation of user interactions, topic extraction, and injectable context for personalized queries |
 | **Webhooks**  | `MonkeyClaw.Webhooks`                | Multi-source webhook ingress (16 built-in sources) with source-specific signature verification, replay detection, rate limiting, and async agent dispatch |
 | **Notifications** | `MonkeyClaw.Notifications`       | Event-driven notification system — routes telemetry events to user-facing alerts via PubSub (real-time) and email (async), with workspace-scoped rules, severity thresholds, and ETS-cached routing |
+| **Channels** | `MonkeyClaw.Channels`                    | Bi-directional platform adapters — Slack, Discord, Telegram, Web — with adapter behaviour, message recording, webhook verification, and async agent dispatch |
 
-Contexts (`MonkeyClaw.Assistants`, `MonkeyClaw.Workspaces`, `MonkeyClaw.Webhooks`, `MonkeyClaw.Notifications`) provide the
+Contexts (`MonkeyClaw.Assistants`, `MonkeyClaw.Workspaces`, `MonkeyClaw.Webhooks`, `MonkeyClaw.Notifications`, `MonkeyClaw.Channels`) provide the
 public CRUD API. `MonkeyClaw.AgentBridge` translates domain objects into
 BeamAgent session and thread configurations. `MonkeyClaw.Workflows`
 composes these into user-facing operations.
@@ -428,6 +430,52 @@ REST API endpoints provide programmatic access for listing
 notifications, marking read/dismissed, bulk mark-all-read, and full
 CRUD for notification rules. All endpoints are workspace-scoped with
 opaque 404s on workspace mismatch to prevent enumeration.
+
+### Channel Adapters
+
+Bi-directional messaging between external platforms (Slack, Discord,
+Telegram) and BeamAgent-backed workflows. Each platform is a stateless
+adapter implementing a common behaviour — no persistent WebSocket
+connections required.
+
+Four-layer architecture:
+
+| Layer | Module | Owns |
+|-------|--------|------|
+| **Channels** | `MonkeyClaw.Channels` | Channel config CRUD, message recording, PubSub events |
+| **Adapter** | `MonkeyClaw.Channels.Adapter` | Behaviour contract — `validate_config/1`, `send_message/2`, `verify_request/3`, `parse_inbound/2` |
+| **Adapters** | `MonkeyClaw.Channels.Adapters.*` | Platform-specific implementations (Slack, Discord, Telegram, Web) |
+| **Dispatcher** | `MonkeyClaw.Channels.Dispatcher` | Inbound routing (platform to agent) and outbound delivery (agent to platform) |
+
+Supported adapters:
+
+| Adapter | Inbound | Outbound | Verification |
+|---------|---------|----------|--------------|
+| **Slack** | Events API webhook | `chat.postMessage` | HMAC-SHA256 signing secret |
+| **Discord** | Interactions endpoint | REST API | Ed25519 public key |
+| **Telegram** | Webhook updates | Bot API `sendMessage` | Secret token header |
+| **Web** | LiveView events | PubSub broadcast | Session authentication |
+
+Inbound flow: webhook controller receives HTTP POST, adapter verifies
+request signature, adapter parses platform-specific payload, dispatcher
+records the message and dispatches to BeamAgent, agent response is sent
+back through the adapter. Challenge/verification handshakes (Slack URL
+verification, Discord PING) are handled transparently.
+
+Outbound flow: agent produces output, dispatcher resolves enabled
+channels for the workspace, each adapter sends the message to its
+platform via supervised async tasks.
+
+Global notifications ensure the user sees agent activity regardless of
+current page — a dedicated PubSub topic broadcasts all channel events
+to the notification system, visible from both the chat interface and the
+dashboard.
+
+Channel configurations are workspace-scoped with adapter-specific config
+maps (API tokens, channel IDs, signing secrets). The web adapter is the
+default channel for every workspace, requiring no external credentials.
+A LiveView management interface provides CRUD for channel configs with
+adapter-specific form fields and enable/disable toggling.
 
 ### Dashboard
 

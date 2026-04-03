@@ -25,14 +25,25 @@ defmodule MonkeyClawWeb.Layouts do
   def app(assigns) do
     ~H"""
     <header class="navbar px-4 sm:px-6 lg:px-8">
-      <div class="flex-1">
-        <a href="/" class="flex-1 flex w-fit items-center gap-2">
+      <div class="flex-1 flex items-center gap-4">
+        <a href="/" class="flex w-fit items-center gap-2">
           <span class="text-2xl leading-none">🐒</span>
           <span class="text-lg font-bold">MonkeyClaw</span>
         </a>
+        <nav class="flex items-center gap-2 text-sm">
+          <a href="/chat" class="btn btn-ghost btn-sm">Chat</a>
+          <a href="/channels" class="btn btn-ghost btn-sm">Channels</a>
+        </nav>
       </div>
       <div class="flex-none">
         <ul class="flex flex-column px-1 space-x-4 items-center">
+          <li>
+            <.live_component
+              module={MonkeyClawWeb.NotificationLive}
+              id="notifications"
+              workspace_id={assigns[:workspace_id] || assigns[:default_workspace_id]}
+            />
+          </li>
           <li>
             <.theme_toggle />
           </li>

@@ -25,6 +25,7 @@ defmodule MonkeyClaw.Factory do
   """
 
   alias MonkeyClaw.Assistants
+  alias MonkeyClaw.Channels
   alias MonkeyClaw.Experiments
   alias MonkeyClaw.Notifications
   alias MonkeyClaw.Scheduling
@@ -379,6 +380,42 @@ defmodule MonkeyClaw.Factory do
   def insert_webhook_delivery!(endpoint, overrides \\ %{}) do
     {:ok, delivery} = Webhooks.record_delivery(endpoint, webhook_delivery_attrs(overrides))
     delivery
+  end
+
+  # ──────────────────────────────────────────────
+  # Channel Config Builders
+  # ──────────────────────────────────────────────
+
+  @doc """
+  Build a map of valid channel config attributes.
+
+  Generates a unique name and defaults to `:web` adapter type
+  (no external config required for testing).
+  """
+  @spec channel_config_attrs(Enumerable.t()) :: map()
+  def channel_config_attrs(overrides \\ %{}) do
+    Map.merge(
+      %{
+        name: "channel-config-#{System.unique_integer([:positive])}",
+        adapter_type: :web,
+        enabled: true,
+        config: %{}
+      },
+      Map.new(overrides)
+    )
+  end
+
+  @doc """
+  Insert a channel config into the database within a workspace.
+
+  Delegates to `MonkeyClaw.Channels.create_config/2`.
+  Raises on validation failure.
+  """
+  @spec insert_channel_config!(MonkeyClaw.Workspaces.Workspace.t(), Enumerable.t()) ::
+          MonkeyClaw.Channels.ChannelConfig.t()
+  def insert_channel_config!(workspace, overrides \\ %{}) do
+    {:ok, config} = Channels.create_config(workspace, channel_config_attrs(overrides))
+    config
   end
 
   # ──────────────────────────────────────────────

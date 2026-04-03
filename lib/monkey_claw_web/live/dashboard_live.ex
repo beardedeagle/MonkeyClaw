@@ -34,6 +34,15 @@ defmodule MonkeyClawWeb.DashboardLive do
 
   defp refresh_data(socket) do
     sessions = fetch_sessions()
+    workspaces = recent_workspaces()
+
+    # Provide a default workspace ID for the NotificationLive component
+    # in the app layout header. Single-user model — first workspace is fine.
+    default_workspace_id =
+      case workspaces do
+        [%{id: id} | _] -> id
+        [] -> nil
+      end
 
     socket
     |> assign(:page_title, "Dashboard")
@@ -42,7 +51,8 @@ defmodule MonkeyClawWeb.DashboardLive do
     |> assign(:session_count, length(sessions))
     |> assign(:backends, AgentBridge.backends())
     |> assign(:extensions, extension_info())
-    |> assign(:workspaces, recent_workspaces())
+    |> assign(:workspaces, workspaces)
+    |> assign(:default_workspace_id, default_workspace_id)
   end
 
   # --- Data Fetching ---

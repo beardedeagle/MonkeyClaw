@@ -61,11 +61,11 @@ defmodule MonkeyClaw.Notifications.Notification do
           updated_at: DateTime.t() | nil
         }
 
-  @type category :: :webhook | :experiment | :session | :system
+  @type category :: :webhook | :experiment | :session | :system | :channel
   @type severity :: :info | :warning | :error
   @type status :: :unread | :read | :dismissed
 
-  @categories [:webhook, :experiment, :session, :system]
+  @categories [:webhook, :experiment, :session, :system, :channel]
   @severities [:info, :warning, :error]
   @statuses [:unread, :read, :dismissed]
 
@@ -87,7 +87,7 @@ defmodule MonkeyClaw.Notifications.Notification do
   @max_source_type_length 100
 
   # Allowed source types — prevents arbitrary strings from being stored.
-  @valid_source_types ~w(webhook_delivery webhook_endpoint experiment session)
+  @valid_source_types ~w(webhook_delivery webhook_endpoint experiment session channel)
 
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id

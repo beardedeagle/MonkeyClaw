@@ -231,6 +231,114 @@ defmodule MonkeyClaw.Notifications.EventMapper do
      }}
   end
 
+  # ── Agent Activity Events (user should see these everywhere) ─
+
+  def map_event(
+        [:monkey_claw, :agent_bridge, :query, :stop],
+        %{duration: duration},
+        %{session_id: session_id}
+      ) do
+    duration_ms = System.convert_time_unit(duration, :native, :millisecond)
+
+    {:ok,
+     %{
+       workspace_id: session_id,
+       title: "Agent query completed",
+       body: "Query finished in #{duration_ms}ms.",
+       category: :session,
+       severity: :info,
+       metadata: %{"session_id" => session_id, "duration_ms" => duration_ms},
+       source_id: session_id,
+       source_type: "session"
+     }}
+  end
+
+  def map_event(
+        [:monkey_claw, :agent_bridge, :stream, :stop],
+        %{duration: duration},
+        %{session_id: session_id}
+      ) do
+    duration_ms = System.convert_time_unit(duration, :native, :millisecond)
+
+    {:ok,
+     %{
+       workspace_id: session_id,
+       title: "Agent response complete",
+       body: "Streaming response finished in #{duration_ms}ms.",
+       category: :session,
+       severity: :info,
+       metadata: %{"session_id" => session_id, "duration_ms" => duration_ms},
+       source_id: session_id,
+       source_type: "session"
+     }}
+  end
+
+  # ── Channel Events ────────────────────────────────────────────
+
+  def map_event(
+        [:monkey_claw, :channel, :message, :inbound],
+        _measurements,
+        %{adapter_type: adapter_type, workspace_id: workspace_id, channel_config_id: config_id}
+      ) do
+    {:ok,
+     %{
+       workspace_id: workspace_id,
+       title: "Message received via #{adapter_type}",
+       body: "A new message arrived from the #{adapter_type} channel.",
+       category: :channel,
+       severity: :info,
+       metadata: %{
+         "adapter_type" => to_string(adapter_type),
+         "channel_config_id" => config_id
+       },
+       source_id: config_id,
+       source_type: "channel"
+     }}
+  end
+
+  def map_event(
+        [:monkey_claw, :channel, :message, :outbound],
+        _measurements,
+        %{adapter_type: adapter_type, workspace_id: workspace_id, channel_config_id: config_id}
+      ) do
+    {:ok,
+     %{
+       workspace_id: workspace_id,
+       title: "Message sent via #{adapter_type}",
+       body: "A response was delivered to the #{adapter_type} channel.",
+       category: :channel,
+       severity: :info,
+       metadata: %{
+         "adapter_type" => to_string(adapter_type),
+         "channel_config_id" => config_id
+       },
+       source_id: config_id,
+       source_type: "channel"
+     }}
+  end
+
+  def map_event(
+        [:monkey_claw, :channel, :delivery, :failed],
+        _measurements,
+        %{adapter_type: adapter_type, workspace_id: workspace_id} = metadata
+      ) do
+    {:ok,
+     %{
+       workspace_id: workspace_id,
+       title: "Channel delivery failed: #{adapter_type}",
+       body:
+         "Failed to deliver message via #{adapter_type}: #{inspect(Map.get(metadata, :reason))}",
+       category: :channel,
+       severity: :error,
+       metadata: %{
+         "adapter_type" => to_string(adapter_type),
+         "reason" => inspect(Map.get(metadata, :reason))
+       },
+       source_id: nil,
+       source_type: "channel"
+     }}
+  end
+
   # ── Catch-all ───────────────────────────────────────────────
 
   def map_event(_event, _measurements, _metadata), do: :skip

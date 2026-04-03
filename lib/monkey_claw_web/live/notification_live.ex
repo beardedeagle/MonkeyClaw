@@ -53,6 +53,41 @@ defmodule MonkeyClawWeb.NotificationLive do
 
   @impl true
   def update(%{workspace_id: workspace_id} = assigns, socket) do
+    # Gracefully handle nil workspace_id — pages that haven't resolved
+    # a workspace yet will see an empty notification bell.
+    if is_nil(workspace_id) do
+      {:ok, assign(socket, assigns)}
+    else
+      update_with_workspace(assigns, workspace_id, socket)
+    end
+  end
+
+  # Handle incoming notification from PubSub (forwarded by NotificationHook).
+  # Single-user model: accept all notifications regardless of workspace
+  # when the component has no workspace filter set.
+  def update(%{notification_created: notification}, socket) do
+    workspace_id = socket.assigns[:workspace_id]
+
+    show? =
+      is_nil(workspace_id) or notification.workspace_id == workspace_id
+
+    if show? do
+      notifications = [notification | socket.assigns.notifications] |> Enum.take(@max_displayed)
+      unread_count = socket.assigns.unread_count + 1
+
+      {:ok, assign(socket, notifications: notifications, unread_count: unread_count)}
+    else
+      {:ok, socket}
+    end
+  end
+
+  def update(assigns, socket) do
+    {:ok, assign(socket, assigns)}
+  end
+
+  # ── Workspace-scoped update logic ─────────────────────────────
+
+  defp update_with_workspace(assigns, workspace_id, socket) do
     # Subscribe when workspace_id becomes available or changes.
     # LiveComponent update runs in the parent LiveView's process,
     # so PubSub messages arrive there.
@@ -85,23 +120,6 @@ defmodule MonkeyClawWeb.NotificationLive do
       end
 
     {:ok, socket}
-  end
-
-  # Handle incoming notification from PubSub (forwarded by parent).
-  # Guard: only display if the notification belongs to the current workspace.
-  def update(%{notification_created: notification}, socket) do
-    if notification.workspace_id == socket.assigns.workspace_id do
-      notifications = [notification | socket.assigns.notifications] |> Enum.take(@max_displayed)
-      unread_count = socket.assigns.unread_count + 1
-
-      {:ok, assign(socket, notifications: notifications, unread_count: unread_count)}
-    else
-      {:ok, socket}
-    end
-  end
-
-  def update(assigns, socket) do
-    {:ok, assign(socket, assigns)}
   end
 
   @impl true
