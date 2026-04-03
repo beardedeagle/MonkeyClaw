@@ -14,7 +14,8 @@ defmodule MonkeyClaw.Scheduling.Scheduler do
     * **Stateful** — holds the poll timer reference
     * **Lifecycle-bound** — timer cancellation on terminate
     * **Periodic** — must wake and check for due entries on interval
-    * **Single instance** — one scheduler per application
+    * **Single instance** — one scheduler per node; MonkeyClaw is a
+      single-user, single-instance application (no multi-node deployment)
 
   ## Configuration
 

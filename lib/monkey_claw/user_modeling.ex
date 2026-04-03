@@ -440,7 +440,6 @@ defmodule MonkeyClaw.UserModeling do
   defp format_preferences(_), do: ""
 
   # Defensive coercion for numeric values from JSON round-trip through SQLite.
-  # Defensive coercion for numeric values from JSON round-trip through SQLite.
   # Clamps to [0, max] for non-negative fields. Returns 0 for non-numeric
   # values to prevent ArithmeticError on corrupted or manually-edited records.
   defp safe_count(value, max) when is_number(value), do: value |> max(0) |> min(max)

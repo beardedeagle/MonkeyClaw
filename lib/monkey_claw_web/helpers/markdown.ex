@@ -92,7 +92,7 @@ defmodule MonkeyClawWeb.Markdown do
   # --- Fenced code blocks (``` ... ```) ---
   # Must be processed first to protect code content from inline parsing.
 
-  @fenced_code_re ~r/^```(\w*)\n(.*?)^```[ \t]*$/ms
+  @fenced_code_re ~r/^[ \t]*```(\w*)\n(.*?)^[ \t]*```[ \t]*$/ms
 
   defp render_fenced_code_blocks(text) do
     Regex.replace(@fenced_code_re, text, fn _full, _lang, code ->

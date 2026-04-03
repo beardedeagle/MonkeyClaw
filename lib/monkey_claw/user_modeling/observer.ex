@@ -85,12 +85,21 @@ defmodule MonkeyClaw.UserModeling.Observer do
       Observer.observe(workspace_id, %{prompt: "How do I deploy?", response: "Use mix release..."})
   """
   @spec observe(Ecto.UUID.t(), observation()) :: :ok
-  def observe(workspace_id, %{prompt: _} = observation)
-      when is_binary(workspace_id) and byte_size(workspace_id) > 0 do
+  def observe(workspace_id, %{prompt: prompt} = observation)
+      when is_binary(workspace_id) and byte_size(workspace_id) > 0 and
+             is_binary(prompt) and byte_size(prompt) > 0 do
     case Process.whereis(__MODULE__) do
       nil -> :ok
       pid -> GenServer.cast(pid, {:observe, workspace_id, observation})
     end
+  end
+
+  def observe(workspace_id, observation) do
+    Logger.warning(
+      "Observer dropping invalid observation for workspace #{inspect(workspace_id)}: #{inspect(observation)}"
+    )
+
+    :ok
   end
 
   @doc """
