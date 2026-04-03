@@ -104,7 +104,8 @@ defmodule MonkeyClawWeb.Telemetry do
       ),
       counter("monkey_claw.webhook.rejected.count",
         tags: [:status],
-        description: "Webhook requests rejected (auth, content-type, event filter, or server error)"
+        description:
+          "Webhook requests rejected (auth, content-type, event filter, or server error)"
       ),
       counter("monkey_claw.webhook.rate_limited.count",
         description: "Webhook requests rejected by rate limiting"
