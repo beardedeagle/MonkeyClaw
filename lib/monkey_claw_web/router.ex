@@ -37,6 +37,26 @@ defmodule MonkeyClawWeb.Router do
     post "/:endpoint_id", WebhookController, :receive
   end
 
+  # Notification API — workspace-scoped notification management.
+  scope "/api/workspaces/:workspace_id/notifications", MonkeyClawWeb do
+    pipe_through :api
+
+    get "/", NotificationController, :index
+    patch "/:id/read", NotificationController, :mark_read
+    patch "/:id/dismiss", NotificationController, :dismiss
+    post "/read_all", NotificationController, :mark_all_read
+  end
+
+  # Notification rules API — workspace-scoped rule management.
+  scope "/api/workspaces/:workspace_id/notification_rules", MonkeyClawWeb do
+    pipe_through :api
+
+    get "/", NotificationRuleController, :index
+    post "/", NotificationRuleController, :create
+    patch "/:id", NotificationRuleController, :update
+    delete "/:id", NotificationRuleController, :delete
+  end
+
   scope "/", MonkeyClawWeb do
     pipe_through :browser
 

@@ -27,6 +27,7 @@ config :swoosh, :api_client, false
 
 # Disable background GenServers that interfere with sandbox isolation.
 # Tests that need these use start_supervised! explicitly.
+config :monkey_claw, :start_notification_router, false
 config :monkey_claw, :start_scheduler, false
 config :monkey_claw, :start_observer, false
 

@@ -26,6 +26,7 @@ defmodule MonkeyClaw.Factory do
 
   alias MonkeyClaw.Assistants
   alias MonkeyClaw.Experiments
+  alias MonkeyClaw.Notifications
   alias MonkeyClaw.Scheduling
   alias MonkeyClaw.Sessions
   alias MonkeyClaw.Skills
@@ -378,6 +379,75 @@ defmodule MonkeyClaw.Factory do
   def insert_webhook_delivery!(endpoint, overrides \\ %{}) do
     {:ok, delivery} = Webhooks.record_delivery(endpoint, webhook_delivery_attrs(overrides))
     delivery
+  end
+
+  # ──────────────────────────────────────────────
+  # Notification Builders
+  # ──────────────────────────────────────────────
+
+  @doc """
+  Build a map of valid notification attributes.
+
+  Generates a unique title and defaults to `:webhook` category
+  with `:info` severity.
+  """
+  @spec notification_attrs(Enumerable.t()) :: map()
+  def notification_attrs(overrides \\ %{}) do
+    Map.merge(
+      %{
+        title: "notification-#{System.unique_integer([:positive])}",
+        category: :webhook,
+        severity: :info
+      },
+      Map.new(overrides)
+    )
+  end
+
+  @doc """
+  Build a map of valid notification rule attributes.
+
+  Generates a unique name and defaults to the
+  `"monkey_claw.webhook.received"` event pattern.
+  """
+  @spec notification_rule_attrs(Enumerable.t()) :: map()
+  def notification_rule_attrs(overrides \\ %{}) do
+    Map.merge(
+      %{
+        name: "rule-#{System.unique_integer([:positive])}",
+        event_pattern: "monkey_claw.webhook.received",
+        channel: :in_app,
+        min_severity: :info
+      },
+      Map.new(overrides)
+    )
+  end
+
+  @doc """
+  Insert a notification into the database within a workspace.
+
+  Delegates to `MonkeyClaw.Notifications.create_notification/2`.
+  Raises on validation failure.
+  """
+  @spec insert_notification!(MonkeyClaw.Workspaces.Workspace.t(), Enumerable.t()) ::
+          MonkeyClaw.Notifications.Notification.t()
+  def insert_notification!(workspace, overrides \\ %{}) do
+    {:ok, notification} =
+      Notifications.create_notification(workspace, notification_attrs(overrides))
+
+    notification
+  end
+
+  @doc """
+  Insert a notification rule into the database within a workspace.
+
+  Delegates to `MonkeyClaw.Notifications.create_rule/2`.
+  Raises on validation failure.
+  """
+  @spec insert_notification_rule!(MonkeyClaw.Workspaces.Workspace.t(), Enumerable.t()) ::
+          MonkeyClaw.Notifications.NotificationRule.t()
+  def insert_notification_rule!(workspace, overrides \\ %{}) do
+    {:ok, rule} = Notifications.create_rule(workspace, notification_rule_attrs(overrides))
+    rule
   end
 
   # ──────────────────────────────────────────────

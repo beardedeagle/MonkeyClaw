@@ -5,6 +5,7 @@ defmodule MonkeyClaw.Application do
 
   use Application
 
+  alias MonkeyClaw.Notifications.Router, as: NotificationRouter
   alias MonkeyClaw.Skills.Cache, as: SkillsCache
   alias MonkeyClaw.Webhooks.RateLimiter
 
@@ -25,6 +26,10 @@ defmodule MonkeyClaw.Application do
     # Initialize webhook rate limiter ETS table before supervision tree
     # starts. Uses atomic counters for lock-free concurrent rate checking.
     :ok = RateLimiter.init()
+
+    # Initialize notification rule cache ETS table before supervision tree
+    # starts. Application-owned table survives NotificationRouter restarts.
+    :ok = NotificationRouter.init_cache()
 
     children =
       [
@@ -49,6 +54,7 @@ defmodule MonkeyClaw.Application do
         # without silently swallowing errors.
         {Task.Supervisor, name: MonkeyClaw.TaskSupervisor}
       ] ++
+        maybe_child(MonkeyClaw.Notifications.Router, :start_notification_router) ++
         maybe_child(MonkeyClaw.Scheduling.Scheduler, :start_scheduler) ++
         maybe_child(MonkeyClaw.UserModeling.Observer, :start_observer) ++
         [
