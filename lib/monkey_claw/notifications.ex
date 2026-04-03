@@ -127,7 +127,7 @@ defmodule MonkeyClaw.Notifications do
       when is_binary(workspace_id) and byte_size(workspace_id) > 0 do
     Notification
     |> where([n], n.workspace_id == ^workspace_id and n.status == :unread)
-    |> Repo.aggregate(:count)
+    |> Repo.aggregate(:count, :id)
   end
 
   @doc """
@@ -136,14 +136,18 @@ defmodule MonkeyClaw.Notifications do
   Sets status to `:read` and `read_at` to the current time.
   Returns `{:error, :not_found}` if the notification doesn't exist.
   """
-  @spec mark_read(Ecto.UUID.t()) ::
+  @spec mark_read(Ecto.UUID.t() | Notification.t()) ::
           {:ok, Notification.t()} | {:error, :not_found | Ecto.Changeset.t()}
+  def mark_read(%Notification{} = notification) do
+    notification
+    |> Notification.update_changeset(%{status: :read})
+    |> Repo.update()
+  end
+
   def mark_read(notification_id)
       when is_binary(notification_id) and byte_size(notification_id) > 0 do
     with {:ok, notification} <- get_notification(notification_id) do
-      notification
-      |> Notification.update_changeset(%{status: :read})
-      |> Repo.update()
+      mark_read(notification)
     end
   end
 
@@ -165,17 +169,20 @@ defmodule MonkeyClaw.Notifications do
   @doc """
   Dismiss a notification.
 
-  Sets status to `:dismissed`. Dismissed notifications are excluded
-  from default listings.
+  Sets status to `:dismissed`.
   """
-  @spec dismiss(Ecto.UUID.t()) ::
+  @spec dismiss(Ecto.UUID.t() | Notification.t()) ::
           {:ok, Notification.t()} | {:error, :not_found | Ecto.Changeset.t()}
+  def dismiss(%Notification{} = notification) do
+    notification
+    |> Notification.update_changeset(%{status: :dismissed})
+    |> Repo.update()
+  end
+
   def dismiss(notification_id)
       when is_binary(notification_id) and byte_size(notification_id) > 0 do
     with {:ok, notification} <- get_notification(notification_id) do
-      notification
-      |> Notification.update_changeset(%{status: :dismissed})
-      |> Repo.update()
+      dismiss(notification)
     end
   end
 

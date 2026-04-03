@@ -77,28 +77,13 @@ defmodule MonkeyClaw.Notifications.Router do
   defstruct [:timer_ref, :cache_refresh_ms, attached_events: []]
 
   # ── Telemetry Event Registry ─────────────────────────────────
-  # Maps dot-separated pattern strings to telemetry event names.
-  # Only events listed here can be subscribed to via rules.
+  # Derived from NotificationRule.valid_event_patterns/0 to maintain
+  # a single source of truth. Maps dot-separated pattern strings to
+  # telemetry event name atom lists.
 
-  @event_registry %{
-    "monkey_claw.webhook.received" => [:monkey_claw, :webhook, :received],
-    "monkey_claw.webhook.rejected" => [:monkey_claw, :webhook, :rejected],
-    "monkey_claw.webhook.dispatched" => [:monkey_claw, :webhook, :dispatched],
-    "monkey_claw.experiment.completed" => [:monkey_claw, :experiment, :completed],
-    "monkey_claw.experiment.rollback" => [:monkey_claw, :experiment, :rollback],
-    "monkey_claw.agent_bridge.session.exception" => [
-      :monkey_claw,
-      :agent_bridge,
-      :session,
-      :exception
-    ],
-    "monkey_claw.agent_bridge.query.exception" => [
-      :monkey_claw,
-      :agent_bridge,
-      :query,
-      :exception
-    ]
-  }
+  @event_registry Map.new(NotificationRule.valid_event_patterns(), fn pattern ->
+                    {pattern, pattern |> String.split(".") |> Enum.map(&String.to_atom/1)}
+                  end)
 
   # ── Client API ───────────────────────────────────────────────
 

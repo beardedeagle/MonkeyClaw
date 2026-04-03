@@ -50,15 +50,24 @@ defmodule MonkeyClawWeb.NotificationLive do
     # Subscribe on first update (when workspace_id is first available).
     # LiveComponent update runs in the parent LiveView's process,
     # so PubSub messages arrive there.
-    _ =
-      if connected?(socket) and not Map.get(socket.assigns, :subscribed, false) do
-        Notifications.subscribe(workspace_id)
+    already_subscribed = Map.get(socket.assigns, :subscribed, false)
+
+    subscribed =
+      if connected?(socket) do
+        _ =
+          unless already_subscribed do
+            Notifications.subscribe(workspace_id)
+          end
+
+        true
+      else
+        already_subscribed
       end
 
     socket =
       socket
       |> assign(assigns)
-      |> assign(:subscribed, true)
+      |> assign(:subscribed, subscribed)
       |> load_notifications()
 
     {:ok, socket}
@@ -82,22 +91,26 @@ defmodule MonkeyClawWeb.NotificationLive do
   end
 
   def handle_event("mark_read", %{"id" => id}, socket) do
-    case Notifications.mark_read(id) do
-      {:ok, _} ->
-        {:noreply, load_notifications(socket)}
+    workspace_id = socket.assigns.workspace_id
 
-      {:error, _} ->
-        {:noreply, socket}
+    with {:ok, notification} <- Notifications.get_notification(id),
+         true <- notification.workspace_id == workspace_id,
+         {:ok, _} <- Notifications.mark_read(notification) do
+      {:noreply, load_notifications(socket)}
+    else
+      _ -> {:noreply, socket}
     end
   end
 
   def handle_event("dismiss", %{"id" => id}, socket) do
-    case Notifications.dismiss(id) do
-      {:ok, _} ->
-        {:noreply, load_notifications(socket)}
+    workspace_id = socket.assigns.workspace_id
 
-      {:error, _} ->
-        {:noreply, socket}
+    with {:ok, notification} <- Notifications.get_notification(id),
+         true <- notification.workspace_id == workspace_id,
+         {:ok, _} <- Notifications.dismiss(notification) do
+      {:noreply, load_notifications(socket)}
+    else
+      _ -> {:noreply, socket}
     end
   end
 

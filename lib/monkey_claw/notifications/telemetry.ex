@@ -18,9 +18,9 @@ defmodule MonkeyClaw.Notifications.Telemetry do
       %{
         notification_id: String.t(),
         workspace_id: String.t(),
-        category: String.t(),
-        severity: String.t(),
-        channel: String.t() | nil
+        category: atom(),
+        severity: atom(),
+        channel: atom() | nil
       }
 
   The `:channel` field is nil for `:created` events (delivery

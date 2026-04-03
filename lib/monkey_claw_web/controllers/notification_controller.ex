@@ -52,7 +52,7 @@ defmodule MonkeyClawWeb.NotificationController do
   def mark_read(conn, %{"workspace_id" => workspace_id, "id" => id}) do
     with {:ok, notification} <- Notifications.get_notification(id),
          :ok <- verify_workspace(notification, workspace_id),
-         {:ok, updated} <- Notifications.mark_read(id) do
+         {:ok, updated} <- Notifications.mark_read(notification) do
       conn
       |> put_status(200)
       |> json(%{notification: serialize_notification(updated)})
@@ -75,7 +75,7 @@ defmodule MonkeyClawWeb.NotificationController do
   def dismiss(conn, %{"workspace_id" => workspace_id, "id" => id}) do
     with {:ok, notification} <- Notifications.get_notification(id),
          :ok <- verify_workspace(notification, workspace_id),
-         {:ok, updated} <- Notifications.dismiss(id) do
+         {:ok, updated} <- Notifications.dismiss(notification) do
       conn
       |> put_status(200)
       |> json(%{notification: serialize_notification(updated)})

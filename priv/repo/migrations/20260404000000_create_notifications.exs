@@ -3,7 +3,7 @@ defmodule MonkeyClaw.Repo.Migrations.CreateNotifications do
 
   def change do
     # ── Notifications ────────────────────────────────────────────
-    create table(:notifications, primary_key: false) do
+    create table(:notifications, primary_key: false, options: "STRICT, WITHOUT ROWID") do
       add :id, :binary_id, primary_key: true
 
       add :workspace_id, references(:workspaces, type: :binary_id, on_delete: :delete_all),
@@ -14,7 +14,7 @@ defmodule MonkeyClaw.Repo.Migrations.CreateNotifications do
       add :category, :string, null: false
       add :severity, :string, null: false, default: "info"
       add :status, :string, null: false, default: "unread"
-      add :metadata, :map, default: %{}
+      add :metadata, :text, null: false, default: "{}"
       add :source_id, :string
       add :source_type, :string
       add :read_at, :utc_datetime_usec
@@ -27,8 +27,8 @@ defmodule MonkeyClaw.Repo.Migrations.CreateNotifications do
     create index(:notifications, [:workspace_id, :category])
     create index(:notifications, [:inserted_at])
 
-    # ── Notification Rules ──────���────────────────────────────────
-    create table(:notification_rules, primary_key: false) do
+    # ── Notification Rules ───────────────────────────────────────
+    create table(:notification_rules, primary_key: false, options: "STRICT, WITHOUT ROWID") do
       add :id, :binary_id, primary_key: true
 
       add :workspace_id, references(:workspaces, type: :binary_id, on_delete: :delete_all),
