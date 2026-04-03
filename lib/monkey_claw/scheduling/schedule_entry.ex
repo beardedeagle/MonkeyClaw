@@ -238,6 +238,9 @@ defmodule MonkeyClaw.Scheduling.ScheduleEntry do
   # On update, validate interval_ms based on the entry's existing schedule_type.
   defp validate_interval_ms_for_update(changeset, schedule_type) do
     case fetch_change(changeset, :interval_ms) do
+      {:ok, nil} when schedule_type == :interval ->
+        add_error(changeset, :interval_ms, "can't be blank for interval schedule type")
+
       {:ok, _} ->
         case schedule_type do
           :interval ->
@@ -300,6 +303,7 @@ defmodule MonkeyClaw.Scheduling.ScheduleEntry do
     Map.new(map, fn
       {k, v} when is_atom(k) -> {Atom.to_string(k), v}
       {k, v} when is_binary(k) -> {k, v}
+      {k, v} -> {inspect(k), v}
     end)
   end
 

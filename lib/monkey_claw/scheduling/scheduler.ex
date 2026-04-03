@@ -103,6 +103,11 @@ defmodule MonkeyClaw.Scheduling.Scheduler do
 
     initial_delay = Keyword.get(opts, :initial_delay, 0)
 
+    if not is_integer(initial_delay) or initial_delay < 0 do
+      raise ArgumentError,
+            "initial_delay must be a non-negative integer, got: #{inspect(initial_delay)}"
+    end
+
     state = %__MODULE__{
       timer_ref: nil,
       poll_interval: poll_interval

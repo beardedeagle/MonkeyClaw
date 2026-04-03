@@ -52,10 +52,11 @@ defmodule MonkeyClaw.UserModeling.Observer do
   @type t :: %__MODULE__{
           timer_ref: reference() | nil,
           flush_interval: pos_integer(),
-          buffer: %{Ecto.UUID.t() => [observation()]}
+          buffer: %{Ecto.UUID.t() => [observation()]},
+          buffer_count: non_neg_integer()
         }
 
-  defstruct [:timer_ref, :flush_interval, buffer: %{}]
+  defstruct [:timer_ref, :flush_interval, buffer: %{}, buffer_count: 0]
 
   # ──────────────────────────────────────────────
   # Public API
@@ -139,11 +140,9 @@ defmodule MonkeyClaw.UserModeling.Observer do
 
   @impl true
   def handle_cast({:observe, workspace_id, observation}, %__MODULE__{} = state) do
-    current_size = buffer_count(state.buffer)
-
-    if current_size >= @max_buffer_size do
+    if state.buffer_count >= @max_buffer_size do
       Logger.warning(
-        "Observer buffer full (#{current_size}/#{@max_buffer_size}), dropping observation"
+        "Observer buffer full (#{state.buffer_count}/#{@max_buffer_size}), dropping observation"
       )
 
       {:noreply, state}
@@ -153,7 +152,7 @@ defmodule MonkeyClaw.UserModeling.Observer do
           [observation | existing]
         end)
 
-      {:noreply, %{state | buffer: updated_buffer}}
+      {:noreply, %{state | buffer: updated_buffer, buffer_count: state.buffer_count + 1}}
     end
   end
 
@@ -172,7 +171,7 @@ defmodule MonkeyClaw.UserModeling.Observer do
 
   @impl true
   def handle_call(:buffer_size, _from, %__MODULE__{} = state) do
-    {:reply, buffer_count(state.buffer), state}
+    {:reply, state.buffer_count, state}
   end
 
   @impl true
@@ -182,11 +181,9 @@ defmodule MonkeyClaw.UserModeling.Observer do
     # telemetry data. We log failures in flush_workspace/2.
     remaining = do_flush(state)
 
-    if map_size(remaining.buffer) > 0 do
-      count = buffer_count(remaining.buffer)
-
+    if remaining.buffer_count > 0 do
       Logger.warning(
-        "Observer terminating with #{count} unflushed observation(s) across #{map_size(remaining.buffer)} workspace(s)"
+        "Observer terminating with #{remaining.buffer_count} unflushed observation(s) across #{map_size(remaining.buffer)} workspace(s)"
       )
     end
 
@@ -223,7 +220,7 @@ defmodule MonkeyClaw.UserModeling.Observer do
         end
       end)
 
-    %{state | buffer: failed}
+    %{state | buffer: failed, buffer_count: buffer_count(failed)}
   end
 
   defp flush_workspace(workspace_id, observation) do
