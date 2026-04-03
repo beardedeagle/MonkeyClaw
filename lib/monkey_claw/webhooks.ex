@@ -72,8 +72,9 @@ defmodule MonkeyClaw.Webhooks do
 
   Generates a signing secret automatically if not provided in attrs.
   The plaintext secret is included in the returned endpoint struct
-  (decrypted on load). Show it to the user once — it cannot be
-  retrieved after this response.
+  (decrypted on load). Show it to the user once — the application
+  can decrypt it for verification, but it should never be displayed
+  to the user again after initial creation.
 
   ## Examples
 

@@ -365,8 +365,8 @@ Security pipeline (in order):
 Signing secrets are encrypted at rest with AES-256-GCM using a key
 derived from `secret_key_base` with a domain-specific separator.
 Each encryption uses a random 96-bit IV, so ciphertext differs even
-for identical secrets. Secrets can be rotated but never retrieved
-after creation.
+for identical secrets. Secrets can be rotated but are never shown to
+the user again after creation.
 
 The `CacheBodyReader` preserves raw request bytes in `conn.private`
 for HMAC verification, since `Plug.Parsers` consumes the body during

@@ -95,7 +95,9 @@ defmodule MonkeyClaw.Webhooks.WebhookDelivery do
     |> validate_length(:rejection_reason, max: 500)
     |> validate_length(:remote_ip, max: 45)
     |> validate_length(:idempotency_key, max: 255)
-    |> unique_constraint([:webhook_endpoint_id, :idempotency_key])
+    |> unique_constraint([:webhook_endpoint_id, :idempotency_key],
+      error_key: :idempotency_key
+    )
   end
 
   @doc """

@@ -5,7 +5,7 @@ defmodule MonkeyClawWeb.CacheBodyReader do
   `Plug.Parsers` consumes the request body during parsing, making
   it unavailable for downstream computations. Webhook HMAC
   verification requires the exact raw bytes that were signed, so
-  this reader preserves them in `conn.private[:raw_body]`.
+  this reader preserves them in `conn.private[:raw_body_chunks]`.
 
   ## Usage
 
@@ -65,17 +65,16 @@ defmodule MonkeyClawWeb.CacheBodyReader do
   def get_raw_body(conn) do
     case conn.private[:raw_body_chunks] do
       nil -> ""
-      chunks -> IO.iodata_to_binary(chunks)
+      chunks -> chunks |> :lists.reverse() |> IO.iodata_to_binary()
     end
   end
 
-  # Append a chunk to the accumulated iodata in conn.private.
-  # Accumulated as a list of binaries (iodata) to avoid O(n^2)
-  # binary copying when the body arrives in many chunks.
-  # Converted to a flat binary once in get_raw_body/1.
+  # Prepend a chunk to the accumulated list in conn.private.
+  # Chunks are prepended (O(1)) and reversed once in get_raw_body/1
+  # to produce a flat iodata list without nested structures.
   @spec accumulate_body(Plug.Conn.t(), binary()) :: Plug.Conn.t()
   defp accumulate_body(conn, chunk) do
     existing = conn.private[:raw_body_chunks] || []
-    Plug.Conn.put_private(conn, :raw_body_chunks, [existing | [chunk]])
+    Plug.Conn.put_private(conn, :raw_body_chunks, [chunk | existing])
   end
 end
