@@ -7,6 +7,30 @@ defmodule MonkeyClawWeb.WebhookControllerTest do
   alias MonkeyClaw.Webhooks.RateLimiter
   alias MonkeyClaw.Webhooks.Security
 
+  # Drain async dispatch tasks before sandbox teardown to prevent
+  # SQLite3 write lock contention between tests. on_exit callbacks
+  # run in LIFO order, so this executes before the sandbox owner
+  # is stopped (registered after setup_sandbox in ConnCase).
+  setup do
+    on_exit(fn ->
+      MonkeyClaw.TaskSupervisor
+      |> Supervisor.which_children()
+      |> Enum.each(fn
+        {_, pid, _, _} when is_pid(pid) ->
+          ref = Process.monitor(pid)
+
+          receive do
+            {:DOWN, ^ref, :process, ^pid, _} -> :ok
+          after
+            5_000 -> :ok
+          end
+
+        _ ->
+          :ok
+      end)
+    end)
+  end
+
   # ── Test Helpers ──────────────────────────────
 
   # Build a properly signed webhook request with all required headers.
