@@ -53,44 +53,32 @@ defmodule MonkeyClawWeb.NotificationLive do
 
   @impl true
   def update(%{workspace_id: workspace_id} = assigns, socket) do
-    # Subscribe when workspace_id becomes available or changes.
-    # LiveComponent update runs in the parent LiveView's process,
-    # so PubSub messages arrive there.
-    previous_workspace_id = Map.get(socket.assigns, :subscribed_workspace_id)
-    workspace_changed = previous_workspace_id != workspace_id
-
-    subscribed_workspace_id =
-      if connected?(socket) and workspace_changed do
-        if is_binary(previous_workspace_id) do
-          _ = Notifications.unsubscribe(previous_workspace_id)
-        end
-
-        _ = Notifications.subscribe(workspace_id)
-        workspace_id
-      else
-        previous_workspace_id
-      end
-
-    socket =
-      socket
-      |> assign(assigns)
-      |> assign(:subscribed_workspace_id, subscribed_workspace_id)
-
-    # Only load from DB on first mount or workspace change to avoid query churn.
-    socket =
-      if workspace_changed do
-        load_notifications(socket)
-      else
-        socket
-      end
-
-    {:ok, socket}
+    # Gracefully handle nil workspace_id — pages that haven't resolved
+    # a workspace yet will see an empty notification bell.
+    if is_nil(workspace_id) do
+      {:ok,
+       socket
+       |> assign(assigns)
+       |> assign(
+         notifications: [],
+         unread_count: 0,
+         subscribed_workspace_id: nil
+       )}
+    else
+      update_with_workspace(assigns, workspace_id, socket)
+    end
   end
 
-  # Handle incoming notification from PubSub (forwarded by parent).
-  # Guard: only display if the notification belongs to the current workspace.
+  # Handle incoming notification from PubSub (forwarded by NotificationHook).
+  # Single-user model: accept all notifications regardless of workspace
+  # when the component has no workspace filter set.
   def update(%{notification_created: notification}, socket) do
-    if notification.workspace_id == socket.assigns.workspace_id do
+    workspace_id = socket.assigns[:workspace_id]
+
+    show? =
+      is_nil(workspace_id) or notification.workspace_id == workspace_id
+
+    if show? do
       notifications = [notification | socket.assigns.notifications] |> Enum.take(@max_displayed)
       unread_count = socket.assigns.unread_count + 1
 
@@ -102,6 +90,30 @@ defmodule MonkeyClawWeb.NotificationLive do
 
   def update(assigns, socket) do
     {:ok, assign(socket, assigns)}
+  end
+
+  # ── Workspace-scoped update logic ─────────────────────────────
+
+  defp update_with_workspace(assigns, workspace_id, socket) do
+    # Notification delivery uses the global PubSub topic (via
+    # NotificationHook), so workspace-scoped subscription is not
+    # needed for :notification_created events.
+    workspace_changed = Map.get(socket.assigns, :subscribed_workspace_id) != workspace_id
+
+    socket =
+      socket
+      |> assign(assigns)
+      |> assign(:subscribed_workspace_id, workspace_id)
+
+    # Only load from DB on first mount or workspace change to avoid query churn.
+    socket =
+      if workspace_changed do
+        load_notifications(socket)
+      else
+        socket
+      end
+
+    {:ok, socket}
   end
 
   @impl true

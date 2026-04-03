@@ -451,7 +451,7 @@ defmodule MonkeyClaw.NotificationsTest do
   describe "subscribe/1 and broadcast_created/1" do
     test "subscriber receives {:notification_created, notification}" do
       workspace = insert_workspace!()
-      :ok = Notifications.subscribe(workspace.id)
+      :ok = Notifications.subscribe_global()
 
       notification = insert_notification!(workspace)
       :ok = Notifications.broadcast_created(notification)
@@ -460,12 +460,26 @@ defmodule MonkeyClaw.NotificationsTest do
       assert received.id == notification.id
     end
 
-    test "subscriber on different workspace does not receive message" do
-      w1 = insert_workspace!()
+    test "global subscriber receives notifications from any workspace" do
+      _w1 = insert_workspace!()
       w2 = insert_workspace!()
-      :ok = Notifications.subscribe(w1.id)
+      :ok = Notifications.subscribe_global()
 
       notification = insert_notification!(w2)
+      :ok = Notifications.broadcast_created(notification)
+
+      assert_receive {:notification_created, received}, 1_000
+      assert received.id == notification.id
+      assert received.workspace_id == w2.id
+    end
+
+    test "workspace subscriber does not receive broadcast_created messages" do
+      # broadcast_created publishes only to the global topic.
+      # Workspace-scoped subscribers do not receive these events.
+      workspace = insert_workspace!()
+      :ok = Notifications.subscribe(workspace.id)
+
+      notification = insert_notification!(workspace)
       :ok = Notifications.broadcast_created(notification)
 
       refute_receive {:notification_created, _}, 200

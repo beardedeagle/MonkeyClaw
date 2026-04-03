@@ -52,7 +52,11 @@ defmodule MonkeyClaw.Application do
         # LiveView async task supervisor for fire-and-forget operations
         # (e.g. set_model calls from ChatLive) that need crash isolation
         # without silently swallowing errors.
-        {Task.Supervisor, name: MonkeyClaw.TaskSupervisor}
+        {Task.Supervisor, name: MonkeyClaw.TaskSupervisor},
+        # Channel adapters: registry for connection lookup by config ID,
+        # and DynamicSupervisor for persistent adapter connections.
+        {Registry, keys: :unique, name: MonkeyClaw.Channels.ConnectionRegistry},
+        MonkeyClaw.Channels.Manager
       ] ++
         maybe_child(MonkeyClaw.Notifications.Router, :start_notification_router) ++
         maybe_child(MonkeyClaw.Scheduling.Scheduler, :start_scheduler) ++

@@ -37,6 +37,19 @@ defmodule MonkeyClawWeb.Router do
     post "/:endpoint_id", WebhookController, :receive
   end
 
+  # Channel webhook ingress — receives inbound messages from external
+  # platforms (Slack, Discord, Telegram). Each adapter verifies its
+  # own request signature. The channel_config_id maps to the adapter
+  # configuration used for verification and routing.
+  scope "/api/channels", MonkeyClawWeb do
+    pipe_through :api
+
+    # Webhook verification challenge (GET) — used by platforms like
+    # WhatsApp that verify ownership via a GET with a challenge token.
+    get "/:channel_config_id/webhook", ChannelWebhookController, :verify
+    post "/:channel_config_id/webhook", ChannelWebhookController, :receive
+  end
+
   # Notification API — workspace-scoped notification management.
   scope "/api/workspaces/:workspace_id/notifications", MonkeyClawWeb do
     pipe_through :api
@@ -60,9 +73,13 @@ defmodule MonkeyClawWeb.Router do
   scope "/", MonkeyClawWeb do
     pipe_through :browser
 
-    live "/", DashboardLive
-    live "/chat", ChatLive
-    live "/chat/:workspace_id", ChatLive
+    live_session :default, on_mount: [MonkeyClawWeb.NotificationHook] do
+      live "/", DashboardLive
+      live "/chat", ChatLive
+      live "/chat/:workspace_id", ChatLive
+      live "/channels", ChannelLive
+      live "/channels/:workspace_id", ChannelLive
+    end
   end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development.

@@ -36,6 +36,7 @@ defmodule MonkeyClaw.Workspaces.Workspace do
   import Ecto.Changeset
 
   alias MonkeyClaw.Assistants.Assistant
+  alias MonkeyClaw.Channels.ChannelConfig
   alias MonkeyClaw.Experiments.Experiment
   alias MonkeyClaw.Notifications.Notification
   alias MonkeyClaw.Notifications.NotificationRule
@@ -71,6 +72,7 @@ defmodule MonkeyClaw.Workspaces.Workspace do
     field :status, Ecto.Enum, values: @statuses, default: :active
 
     belongs_to :assistant, Assistant
+    has_many :channel_configs, ChannelConfig
     has_many :channels, Channel
     has_many :experiments, Experiment
     has_many :notifications, Notification

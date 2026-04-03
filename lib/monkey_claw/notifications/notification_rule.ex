@@ -83,7 +83,12 @@ defmodule MonkeyClaw.Notifications.NotificationRule do
     "monkey_claw.experiment.completed",
     "monkey_claw.experiment.rollback",
     "monkey_claw.agent_bridge.session.exception",
-    "monkey_claw.agent_bridge.query.exception"
+    "monkey_claw.agent_bridge.query.exception",
+    "monkey_claw.agent_bridge.query.stop",
+    "monkey_claw.agent_bridge.stream.stop",
+    "monkey_claw.channel.message.inbound",
+    "monkey_claw.channel.message.outbound",
+    "monkey_claw.channel.delivery.failed"
   ]
 
   @primary_key {:id, :binary_id, autogenerate: true}

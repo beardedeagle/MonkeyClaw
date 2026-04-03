@@ -28,6 +28,8 @@ defmodule MonkeyClaw.Notifications do
   alias MonkeyClaw.Repo
   alias MonkeyClaw.Workspaces.Workspace
 
+  @global_topic "notifications:global"
+
   # Maximum number of notifications returned by list queries.
   # Prevents unbounded result sets on workspaces with heavy activity.
   @default_limit 50
@@ -315,7 +317,13 @@ defmodule MonkeyClaw.Notifications do
   @doc """
   Subscribe to notification events for a workspace.
 
-  The subscriber will receive messages of the form:
+  Subscribes the calling process to the workspace-scoped PubSub topic.
+  Notifications are broadcast to the global topic by `NotificationHook`
+  for the LiveView notification bar. This workspace subscription enables
+  additional per-workspace consumers (e.g., workspace-specific dashboards
+  or automation rules) to receive events scoped to their workspace.
+
+  Messages received on this topic:
 
       {:notification_created, %Notification{}}
   """
@@ -341,11 +349,36 @@ defmodule MonkeyClaw.Notifications do
   """
   @spec broadcast_created(Notification.t()) :: :ok | {:error, term()}
   def broadcast_created(%Notification{} = notification) do
+    # Broadcast only to the global topic. The NotificationHook (mounted on
+    # every page) subscribes to the global topic and forwards the event to
+    # the NotificationLive component via send_update/3. Broadcasting to
+    # both the workspace topic AND the global topic would cause duplicate
+    # delivery in LiveViews that carry both subscriptions.
     Phoenix.PubSub.broadcast(
       MonkeyClaw.PubSub,
-      topic(notification.workspace_id),
+      @global_topic,
       {:notification_created, notification}
     )
+  end
+
+  @doc """
+  Subscribe to the global notification topic.
+
+  The global topic receives ALL notifications across all workspaces.
+  Used by the NotificationHook to provide notifications on every page
+  regardless of workspace context.
+  """
+  @spec subscribe_global() :: :ok | {:error, {:already_registered, pid()}}
+  def subscribe_global do
+    Phoenix.PubSub.subscribe(MonkeyClaw.PubSub, @global_topic)
+  end
+
+  @doc """
+  Unsubscribe from the global notification topic.
+  """
+  @spec unsubscribe_global() :: :ok
+  def unsubscribe_global do
+    Phoenix.PubSub.unsubscribe(MonkeyClaw.PubSub, @global_topic)
   end
 
   @doc """

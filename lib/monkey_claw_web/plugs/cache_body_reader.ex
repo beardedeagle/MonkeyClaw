@@ -9,10 +9,11 @@ defmodule MonkeyClawWeb.Plugs.CacheBodyReader do
 
   ## Scoping
 
-  Body caching is scoped to webhook routes (`/api/webhooks/*`).
-  All other routes delegate to `Plug.Conn.read_body/2` without
-  accumulating chunks, avoiding unnecessary memory overhead for
-  non-webhook requests.
+  Body caching is scoped to routes that require signature
+  verification: webhook routes (`/api/webhooks/*`) and channel
+  webhook routes (`/api/channels/*/webhook`). All other routes
+  delegate to `Plug.Conn.read_body/2` without accumulating
+  chunks, avoiding unnecessary memory overhead.
 
   Because `body_reader` is configured at the endpoint level in
   `Plug.Parsers` (before routing), the reader checks
@@ -86,11 +87,11 @@ defmodule MonkeyClawWeb.Plugs.CacheBodyReader do
   # Chunks are prepended (O(1)) and reversed once in get_raw_body/1
   # to produce a flat iodata list without nested structures.
   #
-  # Only caches for webhook routes — all other routes pass through
-  # without accumulating chunks.
+  # Only caches for routes requiring signature verification — all
+  # other routes pass through without accumulating chunks.
   @spec accumulate_body(Plug.Conn.t(), binary()) :: Plug.Conn.t()
   defp accumulate_body(conn, chunk) do
-    if webhook_path?(conn) do
+    if signature_verified_path?(conn) do
       existing = conn.private[:raw_body_chunks] || []
       Plug.Conn.put_private(conn, :raw_body_chunks, [chunk | existing])
     else
@@ -98,10 +99,14 @@ defmodule MonkeyClawWeb.Plugs.CacheBodyReader do
     end
   end
 
-  # Check whether the request targets a webhook ingress route.
-  # path_info is populated by Plug before body parsing, so it is
-  # available at this point in the pipeline.
-  @spec webhook_path?(Plug.Conn.t()) :: boolean()
-  defp webhook_path?(%Plug.Conn{path_info: ["api", "webhooks" | _]}), do: true
-  defp webhook_path?(_conn), do: false
+  # Check whether the request targets a route that needs raw body
+  # for signature verification. path_info is populated by Plug
+  # before body parsing, so it is available at this point.
+  @spec signature_verified_path?(Plug.Conn.t()) :: boolean()
+  defp signature_verified_path?(%Plug.Conn{path_info: ["api", "webhooks" | _]}), do: true
+
+  defp signature_verified_path?(%Plug.Conn{path_info: ["api", "channels", _, "webhook" | _]}),
+    do: true
+
+  defp signature_verified_path?(_conn), do: false
 end

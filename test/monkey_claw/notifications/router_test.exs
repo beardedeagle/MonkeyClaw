@@ -31,8 +31,9 @@ defmodule MonkeyClaw.Notifications.RouterTest do
 
       :ok = NotificationRouter.refresh_cache()
 
-      # Subscribe to PubSub to verify in-app delivery
-      :ok = Notifications.subscribe(workspace.id)
+      # Subscribe to global PubSub topic to verify in-app delivery.
+      # broadcast_created/1 publishes only to the global topic.
+      :ok = Notifications.subscribe_global()
 
       # Fire telemetry event
       :telemetry.execute(
@@ -246,7 +247,7 @@ defmodule MonkeyClaw.Notifications.RouterTest do
       })
 
       :ok = NotificationRouter.refresh_cache()
-      :ok = Notifications.subscribe(workspace.id)
+      :ok = Notifications.subscribe_global()
 
       :telemetry.execute(
         [:monkey_claw, :webhook, :received],
@@ -256,7 +257,7 @@ defmodule MonkeyClaw.Notifications.RouterTest do
 
       _ = :sys.get_state(NotificationRouter)
 
-      # PubSub delivery (in-app channel)
+      # PubSub delivery (global topic, forwarded to components by NotificationHook)
       assert_receive {:notification_created, _}, 1_000
 
       # Notification persisted in DB
