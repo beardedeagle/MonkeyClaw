@@ -47,7 +47,13 @@ defmodule MonkeyClaw.Channels.Dispatcher do
          {:verify, :ok} <- {:verify, adapter_mod.verify_request(config.config, conn, raw_body)},
          {:parse, {:ok, message}} <-
            {:parse, adapter_mod.parse_inbound(conn, raw_body)} do
-      handle_parsed_inbound(config, adapter_mod, message)
+      # Adapters return :ignore for valid but non-actionable events
+      # (bot messages, status updates, unsupported event types).
+      # Acknowledge these with 200 to prevent platform retry storms.
+      case message do
+        :ignore -> {:ok, :accepted}
+        _ -> handle_parsed_inbound(config, adapter_mod, message)
+      end
     else
       {:verify, {:error, _reason}} -> {:error, :verification_failed}
       {:parse, {:error, _reason}} -> {:error, :parse_failed}

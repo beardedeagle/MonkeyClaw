@@ -39,7 +39,7 @@ defmodule MonkeyClaw.Channels.Adapters.Slack do
 
     missing =
       Enum.reject(required, fn key ->
-        value = Map.get(config, key) || Map.get(config, String.to_existing_atom(key))
+        value = Map.get(config, key) || Map.get(config, String.to_atom(key))
         is_binary(value) and byte_size(value) > 0
       end)
 
@@ -47,8 +47,6 @@ defmodule MonkeyClaw.Channels.Adapters.Slack do
       [] -> :ok
       keys -> {:error, "missing required config: #{Enum.join(keys, ", ")}"}
     end
-  rescue
-    ArgumentError -> {:error, "invalid config keys"}
   end
 
   @impl true
@@ -96,7 +94,7 @@ defmodule MonkeyClaw.Channels.Adapters.Slack do
       {:ok, %{"event" => %{"type" => "message", "text" => text} = event}} ->
         # Ignore bot messages to prevent loops
         if Map.has_key?(event, "bot_id") do
-          {:error, :bot_message}
+          {:ok, :ignore}
         else
           {:ok,
            %{
@@ -112,7 +110,7 @@ defmodule MonkeyClaw.Channels.Adapters.Slack do
         end
 
       {:ok, %{"event" => %{"type" => _other}}} ->
-        {:error, :unsupported_event}
+        {:ok, :ignore}
 
       {:ok, _} ->
         {:error, :unrecognized_payload}

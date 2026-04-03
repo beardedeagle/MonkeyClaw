@@ -42,7 +42,7 @@ defmodule MonkeyClaw.Channels.Adapters.WhatsApp do
 
     missing =
       Enum.reject(required, fn key ->
-        value = Map.get(config, key) || Map.get(config, String.to_existing_atom(key))
+        value = Map.get(config, key) || Map.get(config, String.to_atom(key))
         is_binary(value) and byte_size(value) > 0
       end)
 
@@ -50,8 +50,6 @@ defmodule MonkeyClaw.Channels.Adapters.WhatsApp do
       [] -> :ok
       keys -> {:error, "missing required config: #{Enum.join(keys, ", ")}"}
     end
-  rescue
-    ArgumentError -> {:error, "invalid config keys"}
   end
 
   @impl true
@@ -169,7 +167,7 @@ defmodule MonkeyClaw.Channels.Adapters.WhatsApp do
 
   defp parse_messages_value(%{"statuses" => _}) do
     # Delivery/read status updates — not actionable messages
-    {:error, :status_update}
+    {:ok, :ignore}
   end
 
   defp parse_messages_value(_), do: {:error, :unsupported_value}

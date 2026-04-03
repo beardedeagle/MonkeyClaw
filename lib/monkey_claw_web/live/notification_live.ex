@@ -88,28 +88,15 @@ defmodule MonkeyClawWeb.NotificationLive do
   # ── Workspace-scoped update logic ─────────────────────────────
 
   defp update_with_workspace(assigns, workspace_id, socket) do
-    # Subscribe when workspace_id becomes available or changes.
-    # LiveComponent update runs in the parent LiveView's process,
-    # so PubSub messages arrive there.
-    previous_workspace_id = Map.get(socket.assigns, :subscribed_workspace_id)
-    workspace_changed = previous_workspace_id != workspace_id
-
-    subscribed_workspace_id =
-      if connected?(socket) and workspace_changed do
-        if is_binary(previous_workspace_id) do
-          _ = Notifications.unsubscribe(previous_workspace_id)
-        end
-
-        _ = Notifications.subscribe(workspace_id)
-        workspace_id
-      else
-        previous_workspace_id
-      end
+    # Notification delivery uses the global PubSub topic (via
+    # NotificationHook), so workspace-scoped subscription is not
+    # needed for :notification_created events.
+    workspace_changed = Map.get(socket.assigns, :subscribed_workspace_id) != workspace_id
 
     socket =
       socket
       |> assign(assigns)
-      |> assign(:subscribed_workspace_id, subscribed_workspace_id)
+      |> assign(:subscribed_workspace_id, workspace_id)
 
     # Only load from DB on first mount or workspace change to avoid query churn.
     socket =

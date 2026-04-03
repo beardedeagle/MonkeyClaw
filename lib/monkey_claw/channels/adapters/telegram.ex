@@ -37,7 +37,7 @@ defmodule MonkeyClaw.Channels.Adapters.Telegram do
 
     missing =
       Enum.reject(required, fn key ->
-        value = Map.get(config, key) || Map.get(config, String.to_existing_atom(key))
+        value = Map.get(config, key) || Map.get(config, String.to_atom(key))
         is_binary(value) and byte_size(value) > 0
       end)
 
@@ -45,8 +45,6 @@ defmodule MonkeyClaw.Channels.Adapters.Telegram do
       [] -> :ok
       keys -> {:error, "missing required config: #{Enum.join(keys, ", ")}"}
     end
-  rescue
-    ArgumentError -> {:error, "invalid config keys"}
   end
 
   @impl true
@@ -101,13 +99,13 @@ defmodule MonkeyClaw.Channels.Adapters.Telegram do
 
       {:ok, %{"message" => %{}}} ->
         # Non-text message (photo, sticker, etc.)
-        {:error, :unsupported_message_type}
+        {:ok, :ignore}
 
       {:ok, %{"edited_message" => _}} ->
-        {:error, :edited_message}
+        {:ok, :ignore}
 
       {:ok, _} ->
-        {:error, :unsupported_update}
+        {:ok, :ignore}
 
       {:error, _} ->
         {:error, :invalid_json}

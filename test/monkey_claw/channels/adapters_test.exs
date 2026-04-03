@@ -131,7 +131,7 @@ defmodule MonkeyClaw.Channels.AdaptersTest do
       assert message.metadata.user == "U123"
     end
 
-    test "rejects bot messages to prevent loops" do
+    test "ignores bot messages to prevent loops" do
       body =
         Jason.encode!(%{
           "event" => %{
@@ -141,7 +141,7 @@ defmodule MonkeyClaw.Channels.AdaptersTest do
           }
         })
 
-      assert {:error, :bot_message} = Slack.parse_inbound(%Plug.Conn{}, body)
+      assert {:ok, :ignore} = Slack.parse_inbound(%Plug.Conn{}, body)
     end
 
     test "rejects invalid JSON" do
@@ -278,13 +278,13 @@ defmodule MonkeyClaw.Channels.AdaptersTest do
       assert message.external_id == "42"
     end
 
-    test "rejects update without message" do
+    test "ignores update without message" do
       body = Jason.encode!(%{"update_id" => 12_345})
 
-      assert {:error, :unsupported_update} = Telegram.parse_inbound(%Plug.Conn{}, body)
+      assert {:ok, :ignore} = Telegram.parse_inbound(%Plug.Conn{}, body)
     end
 
-    test "rejects message without text" do
+    test "ignores message without text" do
       body =
         Jason.encode!(%{
           "message" => %{
@@ -293,7 +293,7 @@ defmodule MonkeyClaw.Channels.AdaptersTest do
           }
         })
 
-      assert {:error, :unsupported_message_type} = Telegram.parse_inbound(%Plug.Conn{}, body)
+      assert {:ok, :ignore} = Telegram.parse_inbound(%Plug.Conn{}, body)
     end
   end
 
@@ -455,7 +455,7 @@ defmodule MonkeyClaw.Channels.AdaptersTest do
           ]
         })
 
-      assert {:error, :status_update} = WhatsApp.parse_inbound(%Plug.Conn{}, body)
+      assert {:ok, :ignore} = WhatsApp.parse_inbound(%Plug.Conn{}, body)
     end
 
     test "rejects non-text message types" do

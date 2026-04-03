@@ -5,7 +5,7 @@ defmodule MonkeyClawWeb.ChannelLive do
   Provides a UI for creating, editing, enabling/disabling, and
   deleting channel configurations within a workspace. Each channel
   config connects an external platform adapter (Slack, Discord,
-  Telegram, Web) to the workspace's agent.
+  Telegram, WhatsApp, Web) to the workspace's agent.
 
   ## Routes
 
@@ -33,7 +33,7 @@ defmodule MonkeyClawWeb.ChannelLive do
   alias MonkeyClaw.Channels.ChannelConfig
   alias MonkeyClaw.Workspaces
 
-  @adapter_types [:slack, :discord, :telegram, :web]
+  @adapter_types ChannelConfig.adapter_types()
 
   @impl true
   def mount(params, _session, socket) do
@@ -90,20 +90,42 @@ defmodule MonkeyClawWeb.ChannelLive do
 
   def handle_event("save_channel", %{"channel" => params}, socket) do
     workspace = socket.assigns.workspace
+    editing_config = socket.assigns.editing_config
 
-    case parse_adapter_type(params["adapter_type"]) do
+    # When editing, the adapter_type select is disabled (immutable),
+    # so browsers won't submit it. Derive from the existing config.
+    adapter_type =
+      if editing_config do
+        editing_config.adapter_type
+      else
+        parse_adapter_type(params["adapter_type"])
+      end
+
+    case adapter_type do
       nil ->
         {:noreply, put_flash(socket, :error, "Invalid adapter type")}
 
       adapter_type ->
+        config = build_adapter_config(adapter_type, params)
+
+        # When editing, preserve existing secret values for empty form fields.
+        # Password inputs are blank in edit mode to avoid sending secrets to
+        # the browser, so empty strings mean "keep existing value".
+        config =
+          if editing_config do
+            merge_with_existing_config(config, editing_config.config)
+          else
+            config
+          end
+
         attrs = %{
           name: params["name"],
           adapter_type: adapter_type,
           enabled: params["enabled"] == "true",
-          config: build_adapter_config(adapter_type, params)
+          config: config
         }
 
-        case socket.assigns.editing_config do
+        case editing_config do
           nil ->
             handle_create(socket, workspace, attrs)
 
@@ -349,9 +371,9 @@ defmodule MonkeyClawWeb.ChannelLive do
         <input
           type="password"
           name="channel[bot_token]"
-          value={get_in(@form[:config].value, ["bot_token"]) || ""}
+          value={if @editing_config, do: "", else: get_in(@form[:config].value, ["bot_token"]) || ""}
           class="input input-bordered input-sm w-full"
-          placeholder="xoxb-..."
+          placeholder={if @editing_config, do: "Stored (leave blank to keep)", else: "xoxb-..."}
           autocomplete="off"
         />
       </div>
@@ -360,8 +382,11 @@ defmodule MonkeyClawWeb.ChannelLive do
         <input
           type="password"
           name="channel[signing_secret]"
-          value={get_in(@form[:config].value, ["signing_secret"]) || ""}
+          value={
+            if @editing_config, do: "", else: get_in(@form[:config].value, ["signing_secret"]) || ""
+          }
           class="input input-bordered input-sm w-full"
+          placeholder={if @editing_config, do: "Stored (leave blank to keep)", else: ""}
           autocomplete="off"
         />
       </div>
@@ -387,8 +412,9 @@ defmodule MonkeyClawWeb.ChannelLive do
         <input
           type="password"
           name="channel[bot_token]"
-          value={get_in(@form[:config].value, ["bot_token"]) || ""}
+          value={if @editing_config, do: "", else: get_in(@form[:config].value, ["bot_token"]) || ""}
           class="input input-bordered input-sm w-full"
+          placeholder={if @editing_config, do: "Stored (leave blank to keep)", else: ""}
           autocomplete="off"
         />
       </div>
@@ -432,8 +458,9 @@ defmodule MonkeyClawWeb.ChannelLive do
         <input
           type="password"
           name="channel[bot_token]"
-          value={get_in(@form[:config].value, ["bot_token"]) || ""}
+          value={if @editing_config, do: "", else: get_in(@form[:config].value, ["bot_token"]) || ""}
           class="input input-bordered input-sm w-full"
+          placeholder={if @editing_config, do: "Stored (leave blank to keep)", else: ""}
           autocomplete="off"
         />
       </div>
@@ -451,10 +478,16 @@ defmodule MonkeyClawWeb.ChannelLive do
         <input
           type="password"
           name="channel[secret_token]"
-          value={get_in(@form[:config].value, ["secret_token"]) || ""}
+          value={
+            if @editing_config, do: "", else: get_in(@form[:config].value, ["secret_token"]) || ""
+          }
           class="input input-bordered input-sm w-full"
           autocomplete="off"
-          placeholder="X-Telegram-Bot-Api-Secret-Token value"
+          placeholder={
+            if @editing_config,
+              do: "Stored (leave blank to keep)",
+              else: "X-Telegram-Bot-Api-Secret-Token value"
+          }
         />
       </div>
     </div>
@@ -469,10 +502,16 @@ defmodule MonkeyClawWeb.ChannelLive do
         <input
           type="password"
           name="channel[access_token]"
-          value={get_in(@form[:config].value, ["access_token"]) || ""}
+          value={
+            if @editing_config, do: "", else: get_in(@form[:config].value, ["access_token"]) || ""
+          }
           class="input input-bordered input-sm w-full"
           autocomplete="off"
-          placeholder="WhatsApp Business API token"
+          placeholder={
+            if @editing_config,
+              do: "Stored (leave blank to keep)",
+              else: "WhatsApp Business API token"
+          }
         />
       </div>
       <div class="form-control">
@@ -500,10 +539,14 @@ defmodule MonkeyClawWeb.ChannelLive do
         <input
           type="password"
           name="channel[app_secret]"
-          value={get_in(@form[:config].value, ["app_secret"]) || ""}
+          value={if @editing_config, do: "", else: get_in(@form[:config].value, ["app_secret"]) || ""}
           class="input input-bordered input-sm w-full"
           autocomplete="off"
-          placeholder="Meta app secret for signature verification"
+          placeholder={
+            if @editing_config,
+              do: "Stored (leave blank to keep)",
+              else: "Meta app secret for signature verification"
+          }
         />
       </div>
       <div class="form-control">
@@ -592,8 +635,6 @@ defmodule MonkeyClawWeb.ChannelLive do
 
   # Safe adapter type parsing — matches against the known allow-list
   # instead of String.to_existing_atom on client-provided input.
-  @adapter_types ChannelConfig.adapter_types()
-
   defp parse_adapter_type(type_string) when is_binary(type_string) do
     Enum.find(@adapter_types, fn type -> Atom.to_string(type) == type_string end)
   end
@@ -623,6 +664,17 @@ defmodule MonkeyClawWeb.ChannelLive do
 
   defp extract_params(params, keys) do
     Map.new(keys, fn key -> {key, params[key] || ""} end)
+  end
+
+  # Merges a newly-built adapter config with the existing stored config,
+  # preserving existing values for any fields that are blank in the form.
+  # Password inputs are intentionally blanked in edit mode to avoid
+  # sending secrets to the browser; an empty string means "keep existing".
+  defp merge_with_existing_config(new_config, existing_config)
+       when is_map(new_config) and is_map(existing_config) do
+    Map.merge(existing_config, new_config, fn _key, existing_val, new_val ->
+      if new_val == "" or is_nil(new_val), do: existing_val, else: new_val
+    end)
   end
 
   defp status_dot_color(:connected), do: "bg-success"

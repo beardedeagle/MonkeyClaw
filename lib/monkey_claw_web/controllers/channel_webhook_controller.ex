@@ -36,8 +36,6 @@ defmodule MonkeyClawWeb.ChannelWebhookController do
 
   use MonkeyClawWeb, :controller
 
-  require Logger
-
   alias MonkeyClaw.Channels
   alias MonkeyClaw.Channels.{Adapter, Dispatcher}
   alias MonkeyClawWeb.Plugs.CacheBodyReader
@@ -71,7 +69,7 @@ defmodule MonkeyClawWeb.ChannelWebhookController do
         conn |> put_status(:not_found) |> json(%{error: "not_found"})
 
       {:error, _reason} ->
-        conn |> put_status(:forbidden) |> json(%{error: "forbidden"})
+        conn |> put_status(:not_found) |> json(%{error: "not_found"})
     end
   end
 
@@ -111,14 +109,10 @@ defmodule MonkeyClawWeb.ChannelWebhookController do
           |> put_status(:unprocessable_entity)
           |> json(%{error: "unprocessable"})
 
-        {:error, reason} ->
-          Logger.warning(
-            "Channel webhook processing failed for config #{config_id}: #{inspect(reason)}"
-          )
-
+        {:error, :unknown_adapter} ->
           conn
-          |> put_status(:internal_server_error)
-          |> json(%{error: "internal_error"})
+          |> put_status(:not_found)
+          |> json(%{error: "not_found"})
       end
     else
       {:config, {:error, :not_found}} ->
