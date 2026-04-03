@@ -181,9 +181,12 @@ defmodule MonkeyClaw.Scheduling.Scheduler do
           :ok
 
         {:error, :stale} ->
-          # Optimistic lock conflict — another process already updated this entry.
-          # The experiment was already created above, and the other process has
-          # already recorded the run. Do not update using the stale struct.
+          # Optimistic lock conflict — defense-in-depth only. The Scheduler is
+          # a single GenServer that serializes all polling and firing, so
+          # concurrent fire_entry calls cannot happen under normal operation.
+          # This branch guards against external callers (e.g., admin tools)
+          # that might call record_run on the same entry. The experiment was
+          # already created above; do not update using the stale struct.
           Logger.warning(
             "Scheduler hit optimistic lock conflict for entry #{entry.id} — leaving entry unchanged"
           )

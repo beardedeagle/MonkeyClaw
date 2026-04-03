@@ -147,13 +147,20 @@ defmodule MonkeyClawWeb.Markdown do
     end
   end
 
-  # A closing fence must have the same leading indentation and the same number
-  # of backticks as the opening fence, with nothing else on the line.
+  # A closing fence must have the same leading indentation and at least as
+  # many backticks as the opening fence, with nothing else on the line.
+  # This follows the CommonMark spec (e.g., opening ``` can close with ````).
   @spec closing_fence?(String.t(), fence_state()) :: boolean()
   defp closing_fence?(line, %{indent: indent, ticks: ticks}) do
-    expected = indent <> ticks
     stripped = String.trim_trailing(line)
-    stripped == expected
+    min_ticks = byte_size(ticks)
+
+    if String.starts_with?(stripped, indent) do
+      rest = binary_part(stripped, byte_size(indent), byte_size(stripped) - byte_size(indent))
+      byte_size(rest) >= min_ticks and rest == String.duplicate("`", byte_size(rest))
+    else
+      false
+    end
   end
 
   @spec build_code_block([String.t()]) :: String.t()
@@ -293,19 +300,15 @@ defmodule MonkeyClawWeb.Markdown do
   # Inline code must be rendered before bold/italic to prevent
   # backtick content from being processed as emphasis.
   #
-  # The naive regex ``(`[^`\n]+`)`` is ambiguous when there are multiple
-  # backtick-delimited spans on the same line: the regex engine can match
-  # across span boundaries because `[^`\n]+` is not anchored to the shortest
-  # non-backtick run. For example, in:
+  # A simple regex such as `` `([^`\n]+)` `` can handle basic inline-code
+  # spans, but the scanner below keeps the parsing logic explicit and
+  # deterministic: it walks left-to-right, pairs each opening backtick with
+  # the next backtick on the same line, emits one `<code>` span, and then
+  # continues scanning after the closing delimiter.
   #
-  #   `a` and `b`
-  #
-  # a greedy engine could match `` `a` and `b` `` as one span instead of
-  # two. The scanner below processes inline code spans in a single
-  # left-to-right pass: it finds the first opening backtick, then finds the
-  # next backtick on the same line as the closing delimiter, emits one
-  # `<code>` span, and continues scanning from after the closing backtick.
-  # This prevents cross-boundary matches and handles adjacent spans correctly.
+  # This makes the behavior around adjacent spans and unmatched backticks
+  # straightforward and ensures later inline-formatting passes do not touch
+  # code content.
   @spec render_inline_code(String.t()) :: String.t()
   defp render_inline_code(text) do
     scan_inline_code(text, [])
