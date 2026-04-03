@@ -38,7 +38,23 @@ defmodule MonkeyClaw.Channels.Adapter do
           metadata: map(),
           external_id: String.t() | nil
         }
+  @type challenge :: %{challenge: term()}
   @type connection_state :: term()
+
+  @typedoc """
+  Union of all valid `parse_inbound/2` return values.
+
+    * `{:ok, message()}` — Parsed actionable message for agent dispatch
+    * `{:ok, :ignore}` — Valid payload that requires no action (bot messages,
+      status updates, unsupported event types). Returning `:ignore` instead
+      of an error prevents the platform from retrying the delivery.
+    * `{:ok, %{challenge: term()}}` — Platform verification handshake
+      (Slack `url_verification`, Discord `PING`). The controller echoes
+      the challenge back to complete webhook registration.
+    * `{:error, term()}` — Parse failure (invalid JSON, missing fields)
+  """
+  @type parse_result ::
+          {:ok, message()} | {:ok, :ignore} | {:ok, challenge()} | {:error, term()}
 
   @doc "Validate adapter-specific configuration."
   @callback validate_config(config()) :: :ok | {:error, String.t()}
@@ -47,7 +63,7 @@ defmodule MonkeyClaw.Channels.Adapter do
   @callback send_message(config(), message()) :: :ok | {:error, term()}
 
   @doc "Parse an inbound webhook payload into a normalized message."
-  @callback parse_inbound(Plug.Conn.t(), binary()) :: {:ok, message()} | {:error, term()}
+  @callback parse_inbound(Plug.Conn.t(), binary()) :: parse_result()
 
   @doc "Verify the authenticity of an inbound webhook request."
   @callback verify_request(config(), Plug.Conn.t(), binary()) :: :ok | {:error, term()}

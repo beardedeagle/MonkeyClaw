@@ -317,7 +317,13 @@ defmodule MonkeyClaw.Notifications do
   @doc """
   Subscribe to notification events for a workspace.
 
-  The subscriber will receive messages of the form:
+  Subscribes the calling process to the workspace-scoped PubSub topic.
+  Notifications are broadcast to the global topic by `NotificationHook`
+  for the LiveView notification bar. This workspace subscription enables
+  additional per-workspace consumers (e.g., workspace-specific dashboards
+  or automation rules) to receive events scoped to their workspace.
+
+  Messages received on this topic:
 
       {:notification_created, %Notification{}}
   """

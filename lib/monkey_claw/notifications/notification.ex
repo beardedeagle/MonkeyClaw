@@ -13,6 +13,7 @@ defmodule MonkeyClaw.Notifications.Notification do
     * `:experiment` — Experiment lifecycle events
     * `:session` — Agent session errors and exceptions
     * `:system` — System-level events (startup, config changes)
+    * `:channel` — Channel adapter events (inbound messages, delivery failures)
 
   ## Severity
 

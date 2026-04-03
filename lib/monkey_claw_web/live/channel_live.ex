@@ -690,12 +690,17 @@ defmodule MonkeyClawWeb.ChannelLive do
 
   defp format_changeset_errors(%Ecto.Changeset{} = changeset) do
     Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
-      Regex.replace(~r"%{(\w+)}", msg, fn _, key ->
-        opts |> Keyword.get(String.to_existing_atom(key), key) |> to_string()
-      end)
+      Regex.replace(~r"%{(\w+)}", msg, fn _, key -> interpolate_opt(opts, key) end)
     end)
     |> Enum.flat_map(fn {field, messages} ->
       Enum.map(messages, &"#{field}: #{&1}")
     end)
+  end
+
+  defp interpolate_opt(opts, key) do
+    case Enum.find(opts, fn {k, _v} -> Atom.to_string(k) == key end) do
+      {_k, v} -> to_string(v)
+      nil -> key
+    end
   end
 end
