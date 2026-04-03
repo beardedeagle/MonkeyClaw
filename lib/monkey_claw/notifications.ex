@@ -100,7 +100,10 @@ defmodule MonkeyClaw.Notifications do
   @spec list_notifications(Ecto.UUID.t(), map()) :: [Notification.t()]
   def list_notifications(workspace_id, filters \\ %{})
       when is_binary(workspace_id) and byte_size(workspace_id) > 0 and is_map(filters) do
-    limit = filters |> Map.get(:limit, @default_limit) |> min(@max_limit) |> max(1)
+    raw_limit = Map.get(filters, :limit, @default_limit)
+
+    limit =
+      if is_integer(raw_limit), do: raw_limit |> min(@max_limit) |> max(1), else: @default_limit
 
     Notification
     |> where([n], n.workspace_id == ^workspace_id)

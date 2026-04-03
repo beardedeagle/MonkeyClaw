@@ -104,8 +104,8 @@ defmodule MonkeyClaw.Notifications.Router do
   @doc """
   Force a synchronous cache refresh.
 
-  Reloads all enabled rules from the database and re-attaches
-  telemetry handlers. Useful after creating or modifying rules.
+  Reloads all enabled rules from the database into the ETS cache.
+  Useful after creating or modifying rules.
   """
   @spec refresh_cache() :: :ok | {:error, :not_running}
   def refresh_cache do

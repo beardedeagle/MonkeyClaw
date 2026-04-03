@@ -33,16 +33,22 @@ defmodule MonkeyClawWeb.NotificationController do
   """
   @spec index(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def index(conn, %{"workspace_id" => workspace_id} = params) do
-    filters = parse_filters(params)
-    notifications = Notifications.list_notifications(workspace_id, filters)
-    unread_count = Notifications.count_unread(workspace_id)
+    case MonkeyClaw.Workspaces.get_workspace(workspace_id) do
+      {:ok, _workspace} ->
+        filters = parse_filters(params)
+        notifications = Notifications.list_notifications(workspace_id, filters)
+        unread_count = Notifications.count_unread(workspace_id)
 
-    conn
-    |> put_status(200)
-    |> json(%{
-      notifications: Enum.map(notifications, &serialize_notification/1),
-      unread_count: unread_count
-    })
+        conn
+        |> put_status(200)
+        |> json(%{
+          notifications: Enum.map(notifications, &serialize_notification/1),
+          unread_count: unread_count
+        })
+
+      {:error, :not_found} ->
+        conn |> put_status(404) |> json(%{error: "not found"})
+    end
   end
 
   @doc """

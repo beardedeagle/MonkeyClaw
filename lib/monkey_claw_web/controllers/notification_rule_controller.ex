@@ -32,11 +32,17 @@ defmodule MonkeyClawWeb.NotificationRuleController do
   """
   @spec index(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def index(conn, %{"workspace_id" => workspace_id}) do
-    rules = Notifications.list_rules(workspace_id)
+    case Workspaces.get_workspace(workspace_id) do
+      {:ok, _workspace} ->
+        rules = Notifications.list_rules(workspace_id)
 
-    conn
-    |> put_status(200)
-    |> json(%{rules: Enum.map(rules, &serialize_rule/1)})
+        conn
+        |> put_status(200)
+        |> json(%{rules: Enum.map(rules, &serialize_rule/1)})
+
+      {:error, :not_found} ->
+        conn |> put_status(404) |> json(%{error: "workspace not found"})
+    end
   end
 
   @doc """

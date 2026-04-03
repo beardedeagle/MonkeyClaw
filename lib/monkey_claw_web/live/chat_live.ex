@@ -461,13 +461,20 @@ defmodule MonkeyClawWeb.ChatLive do
   # The component subscribes via Notifications.subscribe/1, but PubSub
   # messages arrive in the parent LiveView's process. We forward them
   # using send_update/3 so the component can refresh its state.
+  # Guard: only forward if the notification belongs to the current workspace.
   def handle_info({:notification_created, notification}, socket) do
-    send_update(MonkeyClawWeb.NotificationLive,
-      id: "notifications",
-      notification_created: notification
-    )
+    case socket.assigns[:workspace] do
+      %{id: workspace_id} when workspace_id == notification.workspace_id ->
+        send_update(MonkeyClawWeb.NotificationLive,
+          id: "notifications",
+          notification_created: notification
+        )
 
-    {:noreply, socket}
+        {:noreply, socket}
+
+      _ ->
+        {:noreply, socket}
+    end
   end
 
   # Normal task exit — no action needed.

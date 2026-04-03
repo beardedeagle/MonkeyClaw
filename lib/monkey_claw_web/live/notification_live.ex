@@ -84,11 +84,16 @@ defmodule MonkeyClawWeb.NotificationLive do
   end
 
   # Handle incoming notification from PubSub (forwarded by parent).
+  # Guard: only display if the notification belongs to the current workspace.
   def update(%{notification_created: notification}, socket) do
-    notifications = [notification | socket.assigns.notifications] |> Enum.take(@max_displayed)
-    unread_count = socket.assigns.unread_count + 1
+    if notification.workspace_id == socket.assigns.workspace_id do
+      notifications = [notification | socket.assigns.notifications] |> Enum.take(@max_displayed)
+      unread_count = socket.assigns.unread_count + 1
 
-    {:ok, assign(socket, notifications: notifications, unread_count: unread_count)}
+      {:ok, assign(socket, notifications: notifications, unread_count: unread_count)}
+    else
+      {:ok, socket}
+    end
   end
 
   def update(assigns, socket) do
