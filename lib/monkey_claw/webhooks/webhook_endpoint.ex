@@ -33,6 +33,15 @@ defmodule MonkeyClaw.Webhooks.WebhookEndpoint do
     * `:discord` — Discord interaction webhooks (Ed25519)
     * `:bitbucket` — Bitbucket Cloud webhook events
     * `:forgejo` — Forgejo, Codeberg, and Gitea webhook events
+    * `:stripe` — Stripe webhook events (timestamp-bound HMAC-SHA256)
+    * `:twilio` — Twilio webhook events (HMAC-SHA1, URL-based)
+    * `:linear` — Linear webhook events (HMAC-SHA256)
+    * `:sentry` — Sentry webhook events (HMAC-SHA256, re-serialized)
+    * `:pagerduty` — PagerDuty v3 webhook events (HMAC-SHA256)
+    * `:vercel` — Vercel webhook events (HMAC-SHA1)
+    * `:netlify` — Netlify deploy notifications (JWS/HS256)
+    * `:circleci` — CircleCI webhook events (HMAC-SHA256)
+    * `:mattermost` — Mattermost outgoing webhooks (token)
 
   Each source has a dedicated verifier module implementing the
   `MonkeyClaw.Webhooks.Verifier` behaviour. See
@@ -77,10 +86,43 @@ defmodule MonkeyClaw.Webhooks.WebhookEndpoint do
           updated_at: DateTime.t() | nil
         }
 
-  @type source :: :generic | :github | :gitlab | :slack | :discord | :bitbucket | :forgejo
+  @type source ::
+          :generic
+          | :github
+          | :gitlab
+          | :slack
+          | :discord
+          | :bitbucket
+          | :forgejo
+          | :stripe
+          | :twilio
+          | :linear
+          | :sentry
+          | :pagerduty
+          | :vercel
+          | :netlify
+          | :circleci
+          | :mattermost
   @type status :: :active | :paused | :revoked
 
-  @sources [:generic, :github, :gitlab, :slack, :discord, :bitbucket, :forgejo]
+  @sources [
+    :generic,
+    :github,
+    :gitlab,
+    :slack,
+    :discord,
+    :bitbucket,
+    :forgejo,
+    :stripe,
+    :twilio,
+    :linear,
+    :sentry,
+    :pagerduty,
+    :vercel,
+    :netlify,
+    :circleci,
+    :mattermost
+  ]
   @statuses [:active, :paused, :revoked]
 
   @valid_transitions %{

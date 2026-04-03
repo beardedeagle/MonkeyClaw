@@ -76,7 +76,7 @@ Clean separation of concerns, connected through a public Elixir API.
 | **Skills**    | `MonkeyClaw.Skills`                  | Reusable procedures extracted from successful experiments with FTS5 search and effectiveness scoring |
 | **Scheduling**| `MonkeyClaw.Scheduling`              | Timed experiment runs — once or recurring — with status lifecycle and run tracking |
 | **UserModeling**| `MonkeyClaw.UserModeling`          | Privacy-aware observation of user interactions, topic extraction, and injectable context for personalized queries |
-| **Webhooks**  | `MonkeyClaw.Webhooks`                | Multi-source webhook ingress (GitHub, GitLab, Slack, Discord, Bitbucket, Forgejo) with source-specific signature verification, replay detection, rate limiting, and async agent dispatch |
+| **Webhooks**  | `MonkeyClaw.Webhooks`                | Multi-source webhook ingress (16 built-in sources) with source-specific signature verification, replay detection, rate limiting, and async agent dispatch |
 
 Contexts (`MonkeyClaw.Assistants`, `MonkeyClaw.Workspaces`, `MonkeyClaw.Webhooks`) provide the
 public CRUD API. `MonkeyClaw.AgentBridge` translates domain objects into
@@ -322,7 +322,7 @@ Four-layer architecture:
 |-------|--------|------|
 | **Webhooks** | `MonkeyClaw.Webhooks` | Endpoint CRUD, delivery tracking, replay detection, secret management |
 | **Security** | `MonkeyClaw.Webhooks.Security` | Shared crypto utilities, verifier dispatch via `verifier_for/1` |
-| **Verifiers** | `MonkeyClaw.Webhooks.Verifiers.*` | Source-specific signature verification (7 built-in sources) |
+| **Verifiers** | `MonkeyClaw.Webhooks.Verifiers.*` | Source-specific signature verification (16 built-in sources) |
 | **Dispatcher** | `MonkeyClaw.Webhooks.Dispatcher` | Async agent dispatch via `Conversation.send_message/4` |
 
 Built-in webhook sources:
@@ -336,6 +336,15 @@ Built-in webhook sources:
 | `:discord` | Ed25519 public-key signatures | `X-Signature-Ed25519` |
 | `:bitbucket` | HMAC-SHA256 body-only | `X-Hub-Signature` |
 | `:forgejo` | HMAC-SHA256 body-only (Forgejo/Gitea/Codeberg) | `X-Forgejo-Signature` |
+| `:stripe` | HMAC-SHA256 with timestamp | `Stripe-Signature` |
+| `:twilio` | HMAC-SHA1 URL-based (Base64) | `X-Twilio-Signature` |
+| `:linear` | HMAC-SHA256 body-only | `Linear-Signature` |
+| `:sentry` | HMAC-SHA256 re-serialized JSON | `Sentry-Hook-Signature` |
+| `:pagerduty` | HMAC-SHA256 body-only | `x-pagerduty-signature` |
+| `:vercel` | HMAC-SHA1 body-only | `x-vercel-signature` |
+| `:netlify` | JWS/HS256 with body hash claim | `X-Webhook-Signature` |
+| `:circleci` | HMAC-SHA256 body-only | `circleci-signature` |
+| `:mattermost` | Plain token in request body | (body `token` field) |
 
 Each source implements the `MonkeyClaw.Webhooks.Verifier` behaviour
 (`verify/3`, `extract_event_type/1`, `extract_delivery_id/1`).

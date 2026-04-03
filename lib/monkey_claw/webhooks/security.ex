@@ -7,7 +7,8 @@ defmodule MonkeyClaw.Webhooks.Security do
 
     * **Verifier dispatch** — `verifier_for/1` maps a source atom
       to its verification module
-    * **HMAC computation** — Shared HMAC-SHA256 used by multiple verifiers
+    * **HMAC computation** — Shared HMAC-SHA256 and HMAC-SHA1 used by
+      multiple verifiers
     * **Constant-time comparison** — Prevents timing side-channel attacks
     * **Timestamp validation** — Shared freshness check for
       timestamp-aware signing schemes
@@ -39,7 +40,16 @@ defmodule MonkeyClaw.Webhooks.Security do
     slack: Verifiers.Slack,
     discord: Verifiers.Discord,
     bitbucket: Verifiers.Bitbucket,
-    forgejo: Verifiers.Forgejo
+    forgejo: Verifiers.Forgejo,
+    stripe: Verifiers.Stripe,
+    twilio: Verifiers.Twilio,
+    linear: Verifiers.Linear,
+    sentry: Verifiers.Sentry,
+    pagerduty: Verifiers.PagerDuty,
+    vercel: Verifiers.Vercel,
+    netlify: Verifiers.Netlify,
+    circleci: Verifiers.CircleCI,
+    mattermost: Verifiers.Mattermost
   }
 
   @doc """
@@ -86,6 +96,38 @@ defmodule MonkeyClaw.Webhooks.Security do
   def hmac_sha256_hex(secret, message) when is_binary(secret) do
     :crypto.mac(:hmac, :sha256, secret, message)
     |> Base.encode16(case: :lower)
+  end
+
+  @doc """
+  Compute HMAC-SHA1 and return as lowercase hex string.
+
+  Used by verifiers for sources that sign with SHA1 (Vercel).
+
+  ## Examples
+
+      Security.hmac_sha1_hex("secret", "body")
+      #=> "e02afb4a8e2..." (40 hex chars)
+  """
+  @spec hmac_sha1_hex(String.t(), iodata()) :: String.t()
+  def hmac_sha1_hex(secret, message) when is_binary(secret) do
+    :crypto.mac(:hmac, :sha, secret, message)
+    |> Base.encode16(case: :lower)
+  end
+
+  @doc """
+  Compute HMAC-SHA1 and return as Base64-encoded string.
+
+  Used by verifiers for sources that use Base64 signatures (Twilio).
+
+  ## Examples
+
+      Security.hmac_sha1_base64("secret", "body")
+      #=> "4GtuVf1..." (Base64 string)
+  """
+  @spec hmac_sha1_base64(String.t(), iodata()) :: String.t()
+  def hmac_sha1_base64(secret, message) when is_binary(secret) do
+    :crypto.mac(:hmac, :sha, secret, message)
+    |> Base.encode64()
   end
 
   @doc """

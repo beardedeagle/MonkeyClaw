@@ -35,6 +35,21 @@ defmodule MonkeyClaw.Webhooks.Verifier do
     * `MonkeyClaw.Webhooks.Verifiers.Bitbucket` — HMAC-SHA256, body only
     * `MonkeyClaw.Webhooks.Verifiers.Forgejo` — HMAC-SHA256, body only
       (also supports Gitea and Codeberg)
+    * `MonkeyClaw.Webhooks.Verifiers.Stripe` — Timestamp-bound
+      HMAC-SHA256 (`t=<ts>,v1=<hmac>`)
+    * `MonkeyClaw.Webhooks.Verifiers.Twilio` — HMAC-SHA1, URL-based
+    * `MonkeyClaw.Webhooks.Verifiers.Linear` — HMAC-SHA256, body only
+    * `MonkeyClaw.Webhooks.Verifiers.Sentry` — HMAC-SHA256,
+      re-serialized JSON
+    * `MonkeyClaw.Webhooks.Verifiers.PagerDuty` — HMAC-SHA256, body
+      only (`v1=<hmac>`)
+    * `MonkeyClaw.Webhooks.Verifiers.Vercel` — HMAC-SHA1, body only
+    * `MonkeyClaw.Webhooks.Verifiers.Netlify` — JWS/HS256 with body
+      hash claim
+    * `MonkeyClaw.Webhooks.Verifiers.CircleCI` — HMAC-SHA256, body
+      only (`v1=<hmac>`)
+    * `MonkeyClaw.Webhooks.Verifiers.Mattermost` — Plain token in
+      request body
 
   ## Design
 
