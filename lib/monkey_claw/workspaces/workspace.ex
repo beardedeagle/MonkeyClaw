@@ -41,6 +41,7 @@ defmodule MonkeyClaw.Workspaces.Workspace do
   alias MonkeyClaw.Sessions.Session
   alias MonkeyClaw.Skills.Skill
   alias MonkeyClaw.UserModeling.UserProfile
+  alias MonkeyClaw.Webhooks.WebhookEndpoint
   alias MonkeyClaw.Workspaces.Channel
 
   @type t :: %__MODULE__{
@@ -73,6 +74,7 @@ defmodule MonkeyClaw.Workspaces.Workspace do
     has_many :schedule_entries, ScheduleEntry
     has_many :sessions, Session
     has_many :skills, Skill
+    has_many :webhook_endpoints, WebhookEndpoint
     has_one :user_profile, UserProfile
 
     timestamps(type: :utc_datetime_usec)

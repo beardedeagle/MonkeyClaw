@@ -30,6 +30,7 @@ defmodule MonkeyClaw.Factory do
   alias MonkeyClaw.Sessions
   alias MonkeyClaw.Skills
   alias MonkeyClaw.UserModeling
+  alias MonkeyClaw.Webhooks
   alias MonkeyClaw.Workspaces
 
   # ──────────────────────────────────────────────
@@ -314,6 +315,74 @@ defmodule MonkeyClaw.Factory do
       Map.new(overrides)
     )
   end
+
+  # ──────────────────────────────────────────────
+  # Webhook Builders
+  # ──────────────────────────────────────────────
+
+  @doc """
+  Build a map of valid webhook endpoint attributes.
+
+  Generates a unique name and defaults to `:generic` source.
+  """
+  @spec webhook_endpoint_attrs(Enumerable.t()) :: map()
+  def webhook_endpoint_attrs(overrides \\ %{}) do
+    Map.merge(
+      %{
+        name: "webhook-#{System.unique_integer([:positive])}",
+        source: :generic
+      },
+      Map.new(overrides)
+    )
+  end
+
+  @doc """
+  Build a map of valid webhook delivery attributes.
+
+  Defaults to `:accepted` status with a test payload hash.
+  """
+  @spec webhook_delivery_attrs(Enumerable.t()) :: map()
+  def webhook_delivery_attrs(overrides \\ %{}) do
+    Map.merge(
+      %{
+        status: :accepted,
+        payload_hash: :crypto.hash(:sha256, "test-payload") |> Base.encode16(case: :lower),
+        event_type: "test.event",
+        remote_ip: "127.0.0.1"
+      },
+      Map.new(overrides)
+    )
+  end
+
+  @doc """
+  Insert a webhook endpoint into the database within a workspace.
+
+  Delegates to `MonkeyClaw.Webhooks.create_endpoint/2`.
+  Raises on validation failure.
+  """
+  @spec insert_webhook_endpoint!(MonkeyClaw.Workspaces.Workspace.t(), Enumerable.t()) ::
+          MonkeyClaw.Webhooks.WebhookEndpoint.t()
+  def insert_webhook_endpoint!(workspace, overrides \\ %{}) do
+    {:ok, endpoint} = Webhooks.create_endpoint(workspace, webhook_endpoint_attrs(overrides))
+    endpoint
+  end
+
+  @doc """
+  Insert a webhook delivery into the database for an endpoint.
+
+  Delegates to `MonkeyClaw.Webhooks.record_delivery/2`.
+  Raises on validation failure.
+  """
+  @spec insert_webhook_delivery!(MonkeyClaw.Webhooks.WebhookEndpoint.t(), Enumerable.t()) ::
+          MonkeyClaw.Webhooks.WebhookDelivery.t()
+  def insert_webhook_delivery!(endpoint, overrides \\ %{}) do
+    {:ok, delivery} = Webhooks.record_delivery(endpoint, webhook_delivery_attrs(overrides))
+    delivery
+  end
+
+  # ──────────────────────────────────────────────
+  # User Profile Builders
+  # ──────────────────────────────────────────────
 
   @doc """
   Insert a user profile into the database within a workspace.

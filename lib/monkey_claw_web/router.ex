@@ -26,6 +26,17 @@ defmodule MonkeyClawWeb.Router do
     plug MonkeyClawWeb.Plugs.MTLSAudit
   end
 
+  # Webhook ingress — JSON API for receiving external webhook deliveries.
+  # Uses the :api pipeline (MTLSAudit in production). HMAC-SHA256
+  # signature verification is handled by the controller, not a plug,
+  # because verification requires both the raw body and the endpoint's
+  # decrypted signing secret (database lookup).
+  scope "/api/webhooks", MonkeyClawWeb do
+    pipe_through :api
+
+    post "/:endpoint_id", WebhookController, :receive
+  end
+
   scope "/", MonkeyClawWeb do
     pipe_through :browser
 
@@ -33,11 +44,6 @@ defmodule MonkeyClawWeb.Router do
     live "/chat", ChatLive
     live "/chat/:workspace_id", ChatLive
   end
-
-  # Other scopes may use custom stacks.
-  # scope "/api", MonkeyClawWeb do
-  #   pipe_through :api
-  # end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development.
   # In production, all routes are gated by mTLS at the transport layer —

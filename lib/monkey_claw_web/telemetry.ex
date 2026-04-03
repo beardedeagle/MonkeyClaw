@@ -97,6 +97,24 @@ defmodule MonkeyClawWeb.Telemetry do
         description: "Rejected PubSub subscription attempts"
       ),
 
+      # Webhook Metrics
+      counter("monkey_claw.webhook.received.count",
+        tags: [:source, :event_type],
+        description: "Webhook requests that passed verification"
+      ),
+      counter("monkey_claw.webhook.rejected.count",
+        tags: [:status],
+        description:
+          "Webhook requests rejected (auth, content-type, event filter, or server error)"
+      ),
+      counter("monkey_claw.webhook.rate_limited.count",
+        description: "Webhook requests rejected by rate limiting"
+      ),
+      counter("monkey_claw.webhook.dispatched.count",
+        tags: [:event_type],
+        description: "Webhook events dispatched to agent workflow"
+      ),
+
       # VM Metrics
       summary("vm.memory.total", unit: {:byte, :kilobyte}),
       summary("vm.total_run_queue_lengths.total"),
