@@ -132,7 +132,7 @@ defmodule MonkeyClaw.Notifications.Notification do
     |> validate_length(:body, max: @max_body_length)
     |> validate_length(:source_id, max: @max_source_id_length)
     |> validate_length(:source_type, max: @max_source_type_length)
-    |> validate_inclusion(:source_type, @valid_source_types)
+    |> validate_source_type()
     |> validate_metadata()
     |> assoc_constraint(:workspace)
   end
@@ -165,6 +165,16 @@ defmodule MonkeyClaw.Notifications.Notification do
 
       _ ->
         changeset
+    end
+  end
+
+  # Validate source_type only when present (field is optional).
+  defp validate_source_type(changeset) do
+    case fetch_change(changeset, :source_type) do
+      :error -> changeset
+      {:ok, nil} -> changeset
+      {:ok, value} when value in @valid_source_types -> changeset
+      {:ok, _} -> add_error(changeset, :source_type, "is invalid")
     end
   end
 

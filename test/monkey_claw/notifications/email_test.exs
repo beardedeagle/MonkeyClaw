@@ -1,5 +1,5 @@
 defmodule MonkeyClaw.Notifications.EmailTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias MonkeyClaw.Notifications.Email
   alias MonkeyClaw.Notifications.Notification

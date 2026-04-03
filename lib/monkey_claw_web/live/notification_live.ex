@@ -233,6 +233,7 @@ defmodule MonkeyClawWeb.NotificationLive do
                 phx-target={@myself}
                 class="text-xs text-zinc-400 hover:text-red-500"
                 title="Dismiss"
+                aria-label="Dismiss notification"
               >
                 &times;
               </button>

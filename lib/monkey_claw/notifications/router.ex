@@ -283,12 +283,22 @@ defmodule MonkeyClaw.Notifications.Router do
 
   @spec handle_telemetry_event([atom()], map(), map()) :: :ok
   defp handle_telemetry_event(event, measurements, metadata) do
-    case EventMapper.map_event(event, measurements, metadata) do
-      {:ok, attrs} ->
-        process_mapped_event(event, attrs)
+    event_pattern = Enum.join(event, ".")
 
-      :skip ->
+    # Check ETS cache first — skip EventMapper entirely when no rules
+    # exist for this event pattern. This makes unrouted events true no-ops.
+    case :ets.lookup(@ets_table, event_pattern) do
+      [] ->
         :ok
+
+      [{^event_pattern, _rules}] ->
+        case EventMapper.map_event(event, measurements, metadata) do
+          {:ok, attrs} ->
+            process_mapped_event(event_pattern, attrs)
+
+          :skip ->
+            :ok
+        end
     end
   rescue
     error ->
@@ -299,10 +309,8 @@ defmodule MonkeyClaw.Notifications.Router do
       :ok
   end
 
-  @spec process_mapped_event([atom()], EventMapper.notification_attrs()) :: :ok
-  defp process_mapped_event(event, attrs) do
-    event_pattern = Enum.join(event, ".")
-
+  @spec process_mapped_event(String.t(), EventMapper.notification_attrs()) :: :ok
+  defp process_mapped_event(event_pattern, attrs) do
     rules = lookup_rules(event_pattern, attrs.workspace_id)
 
     Enum.each(rules, fn rule ->
