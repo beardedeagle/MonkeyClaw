@@ -30,9 +30,13 @@ defmodule MonkeyClaw.Webhooks.WebhookEndpoint do
     * `:github` — GitHub webhook events
     * `:gitlab` — GitLab webhook events
     * `:slack` — Slack event subscriptions
+    * `:discord` — Discord interaction webhooks (Ed25519)
+    * `:bitbucket` — Bitbucket Cloud webhook events
+    * `:forgejo` — Forgejo, Codeberg, and Gitea webhook events
 
-  Source-specific signature verification can be added by extending
-  `MonkeyClaw.Webhooks.Security`.
+  Each source has a dedicated verifier module implementing the
+  `MonkeyClaw.Webhooks.Verifier` behaviour. See
+  `MonkeyClaw.Webhooks.Security.verifier_for/1` for dispatch.
 
   ## Event Filtering
 
@@ -73,10 +77,10 @@ defmodule MonkeyClaw.Webhooks.WebhookEndpoint do
           updated_at: DateTime.t() | nil
         }
 
-  @type source :: :generic | :github | :gitlab | :slack
+  @type source :: :generic | :github | :gitlab | :slack | :discord | :bitbucket | :forgejo
   @type status :: :active | :paused | :revoked
 
-  @sources [:generic, :github, :gitlab, :slack]
+  @sources [:generic, :github, :gitlab, :slack, :discord, :bitbucket, :forgejo]
   @statuses [:active, :paused, :revoked]
 
   @valid_transitions %{

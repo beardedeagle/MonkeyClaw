@@ -76,7 +76,7 @@ Clean separation of concerns, connected through a public Elixir API.
 | **Skills**    | `MonkeyClaw.Skills`                  | Reusable procedures extracted from successful experiments with FTS5 search and effectiveness scoring |
 | **Scheduling**| `MonkeyClaw.Scheduling`              | Timed experiment runs — once or recurring — with status lifecycle and run tracking |
 | **UserModeling**| `MonkeyClaw.UserModeling`          | Privacy-aware observation of user interactions, topic extraction, and injectable context for personalized queries |
-| **Webhooks**  | `MonkeyClaw.Webhooks`                | Secure webhook ingress with HMAC-SHA256 verification, replay detection, rate limiting, and async agent dispatch |
+| **Webhooks**  | `MonkeyClaw.Webhooks`                | Multi-source webhook ingress (GitHub, GitLab, Slack, Discord, Bitbucket, Forgejo) with source-specific signature verification, replay detection, rate limiting, and async agent dispatch |
 
 Contexts (`MonkeyClaw.Assistants`, `MonkeyClaw.Workspaces`, `MonkeyClaw.Webhooks`) provide the
 public CRUD API. `MonkeyClaw.AgentBridge` translates domain objects into
@@ -316,28 +316,42 @@ Secure HTTP endpoint for receiving external webhook deliveries and
 routing them to agent workflows. Every incoming request passes through
 a defense-in-depth security pipeline before reaching the agent.
 
-Three-layer architecture:
+Four-layer architecture:
 
 | Layer | Module | Owns |
 |-------|--------|------|
 | **Webhooks** | `MonkeyClaw.Webhooks` | Endpoint CRUD, delivery tracking, replay detection, secret management |
-| **Security** | `MonkeyClaw.Webhooks.Security` | HMAC-SHA256 signature verification, timestamp freshness, header parsing |
+| **Security** | `MonkeyClaw.Webhooks.Security` | Shared crypto utilities, verifier dispatch via `verifier_for/1` |
+| **Verifiers** | `MonkeyClaw.Webhooks.Verifiers.*` | Source-specific signature verification (7 built-in sources) |
 | **Dispatcher** | `MonkeyClaw.Webhooks.Dispatcher` | Async agent dispatch via `Conversation.send_message/4` |
+
+Built-in webhook sources:
+
+| Source | Scheme | Headers |
+|--------|--------|---------|
+| `:generic` | HMAC-SHA256 with timestamp (Stripe-style) | `X-MonkeyClaw-Signature` |
+| `:github` | HMAC-SHA256 body-only | `X-Hub-Signature-256` |
+| `:gitlab` | Plain token comparison (constant-time) | `X-Gitlab-Token` |
+| `:slack` | Versioned HMAC-SHA256 with timestamp | `X-Slack-Signature` |
+| `:discord` | Ed25519 public-key signatures | `X-Signature-Ed25519` |
+| `:bitbucket` | HMAC-SHA256 body-only | `X-Hub-Signature` |
+| `:forgejo` | HMAC-SHA256 body-only (Forgejo/Gitea/Codeberg) | `X-Forgejo-Signature` |
+
+Each source implements the `MonkeyClaw.Webhooks.Verifier` behaviour
+(`verify/3`, `extract_event_type/1`, `extract_delivery_id/1`).
 
 Security pipeline (in order):
 
 1. **Endpoint lookup** — Active endpoints only; missing, paused, and
    revoked return identical 404s (anti-enumeration)
 2. **Content-Type** — JSON only (415 for anything else)
-3. **HMAC-SHA256** — Stripe-style signature: `t=<timestamp>,v1=<hex>`
-   with constant-time comparison via `Plug.Crypto.secure_compare/2`
-4. **Timestamp freshness** — 5-minute tolerance window rejects stale
-   signatures
-5. **Replay detection** — Idempotency keys checked against delivery
+3. **Source-dispatched verification** — Each source uses its own signing
+   scheme; `Security.verifier_for/1` routes to the correct module
+4. **Replay detection** — Delivery IDs checked against delivery
    history; replays return 202 without reprocessing
-6. **Rate limiting** — ETS-backed per-endpoint sliding window with
+5. **Rate limiting** — ETS-backed per-endpoint sliding window with
    atomic counters; 429 with Retry-After header
-7. **Event filtering** — Optional allowed-events map per endpoint
+6. **Event filtering** — Optional allowed-events map per endpoint
 
 Signing secrets are encrypted at rest with AES-256-GCM using a key
 derived from `secret_key_base` with a domain-specific separator.

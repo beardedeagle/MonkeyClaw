@@ -7,13 +7,17 @@ defmodule MonkeyClawWeb.WebhookController do
 
     1. Endpoint lookup (active only)
     2. Content-Type validation
-    3. HMAC-SHA256 signature verification
-    4. Timestamp freshness check
-    5. Replay detection (idempotency key)
-    6. Rate limit enforcement
-    7. Event type filtering
-    8. Delivery recording (audit)
-    9. Async dispatch to agent
+    3. Source-dispatched signature verification
+    4. Replay detection (delivery ID)
+    5. Rate limit enforcement
+    6. Event type filtering
+    7. Delivery recording (audit)
+    8. Async dispatch to agent
+
+  Signature verification is delegated to source-specific verifier
+  modules via `Security.verifier_for/1`. Each source (GitHub, Slack,
+  Discord, etc.) implements the `MonkeyClaw.Webhooks.Verifier`
+  behaviour with its own signing scheme.
 
   ## Error Response Design
 
@@ -31,7 +35,7 @@ defmodule MonkeyClawWeb.WebhookController do
 
   ## Replay Handling
 
-  If a request carries an idempotency key that was already processed,
+  If a request carries a delivery ID that was already processed,
   the controller returns `202 Accepted` without reprocessing. This
   provides idempotent behavior — the sender can safely retry without
   causing duplicate processing.
@@ -63,11 +67,12 @@ defmodule MonkeyClawWeb.WebhookController do
     with {:ok, endpoint} <- lookup_endpoint(endpoint_id),
          :ok <- verify_content_type(conn),
          raw_body = CacheBodyReader.get_raw_body(conn),
-         :ok <- Security.verify_request(endpoint.signing_secret, conn, raw_body),
-         {:ok, idempotency_key} <- Security.extract_idempotency_key(conn),
-         :ok <- check_replay(endpoint, idempotency_key),
+         verifier = Security.verifier_for(endpoint.source),
+         :ok <- verifier.verify(endpoint.signing_secret, conn, raw_body),
+         {:ok, delivery_id} <- verifier.extract_delivery_id(conn),
+         :ok <- check_replay(endpoint, delivery_id),
          :ok <- Webhooks.check_rate_limit(endpoint),
-         {:ok, event_type} <- Security.extract_event_type(conn),
+         {:ok, event_type} <- verifier.extract_event_type(conn),
          :ok <- verify_event_allowed(endpoint, event_type) do
       payload_hash = Security.hash_payload(raw_body)
       payload = conn.body_params
@@ -75,7 +80,7 @@ defmodule MonkeyClawWeb.WebhookController do
       emit_received_telemetry(endpoint, event_type)
 
       delivery_attrs = %{
-        idempotency_key: idempotency_key,
+        idempotency_key: delivery_id,
         event_type: event_type,
         status: :accepted,
         payload_hash: payload_hash,
@@ -94,7 +99,7 @@ defmodule MonkeyClawWeb.WebhookController do
     else
       {:error, :not_found} -> send_error(conn, 404)
       {:error, :unauthorized} -> send_error(conn, 401)
-      {:error, :invalid_idempotency_key} -> send_error(conn, 401)
+      {:error, :invalid_delivery_id} -> send_error(conn, 401)
       {:error, :invalid_event_type} -> send_error(conn, 422)
       {:error, :invalid_content_type} -> send_error(conn, 415)
       {:error, :event_not_allowed} -> send_error(conn, 422)

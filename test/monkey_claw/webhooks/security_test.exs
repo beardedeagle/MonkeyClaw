@@ -2,192 +2,117 @@ defmodule MonkeyClaw.Webhooks.SecurityTest do
   use ExUnit.Case, async: true
 
   alias MonkeyClaw.Webhooks.Security
+  alias MonkeyClaw.Webhooks.Verifiers
 
-  # Build a test conn with specific headers set.
-  defp conn_with_headers(headers) do
-    Enum.reduce(headers, Plug.Test.conn(:post, "/test", ""), fn {key, value}, conn ->
-      Plug.Conn.put_req_header(conn, key, value)
-    end)
-  end
+  # ── verifier_for/1 ──────────────────────────────
 
-  # ── verify_request/3 ──────────────────────────
-
-  describe "verify_request/3" do
-    setup do
-      secret = "test-signing-secret-32-bytes-long"
-      body = ~s({"event":"push","ref":"refs/heads/main"})
-      timestamp = System.os_time(:second)
-      signature = Security.compute_signature(secret, timestamp, body)
-      header = "t=#{timestamp},v1=#{signature}"
-
-      conn = conn_with_headers([{"x-monkeyclaw-signature", header}])
-
-      %{secret: secret, body: body, timestamp: timestamp, conn: conn}
+  describe "verifier_for/1" do
+    test "returns Generic for :generic" do
+      assert Security.verifier_for(:generic) == Verifiers.Generic
     end
 
-    test "succeeds with valid signature", %{secret: secret, body: body, conn: conn} do
-      assert :ok = Security.verify_request(secret, conn, body)
+    test "returns GitHub for :github" do
+      assert Security.verifier_for(:github) == Verifiers.GitHub
     end
 
-    test "fails with wrong secret", %{body: body, conn: conn} do
-      assert {:error, :unauthorized} =
-               Security.verify_request("completely-wrong-secret!!", conn, body)
+    test "returns GitLab for :gitlab" do
+      assert Security.verifier_for(:gitlab) == Verifiers.GitLab
     end
 
-    test "fails with tampered body", %{secret: secret, conn: conn} do
-      assert {:error, :unauthorized} =
-               Security.verify_request(secret, conn, "tampered-body-content")
+    test "returns Slack for :slack" do
+      assert Security.verifier_for(:slack) == Verifiers.Slack
     end
 
-    test "fails with expired timestamp (10 minutes ago)" do
-      secret = "test-secret"
-      body = "body"
-      old_timestamp = System.os_time(:second) - 600
-      signature = Security.compute_signature(secret, old_timestamp, body)
-      header = "t=#{old_timestamp},v1=#{signature}"
-
-      conn = conn_with_headers([{"x-monkeyclaw-signature", header}])
-      assert {:error, :unauthorized} = Security.verify_request(secret, conn, body)
+    test "returns Discord for :discord" do
+      assert Security.verifier_for(:discord) == Verifiers.Discord
     end
 
-    test "fails with future timestamp beyond tolerance" do
-      secret = "test-secret"
-      body = "body"
-      future_timestamp = System.os_time(:second) + 600
-      signature = Security.compute_signature(secret, future_timestamp, body)
-      header = "t=#{future_timestamp},v1=#{signature}"
-
-      conn = conn_with_headers([{"x-monkeyclaw-signature", header}])
-      assert {:error, :unauthorized} = Security.verify_request(secret, conn, body)
+    test "returns Bitbucket for :bitbucket" do
+      assert Security.verifier_for(:bitbucket) == Verifiers.Bitbucket
     end
 
-    test "accepts timestamp within tolerance window" do
-      secret = "test-secret"
-      body = "body"
-      # 4 minutes ago — within the 5-minute window
-      recent_timestamp = System.os_time(:second) - 240
-      signature = Security.compute_signature(secret, recent_timestamp, body)
-      header = "t=#{recent_timestamp},v1=#{signature}"
-
-      conn = conn_with_headers([{"x-monkeyclaw-signature", header}])
-      assert :ok = Security.verify_request(secret, conn, body)
+    test "returns Forgejo for :forgejo" do
+      assert Security.verifier_for(:forgejo) == Verifiers.Forgejo
     end
 
-    test "fails with missing signature header" do
-      conn = conn_with_headers([])
-      assert {:error, :unauthorized} = Security.verify_request("secret", conn, "body")
-    end
-
-    test "fails with malformed header — missing v1 component" do
-      conn = conn_with_headers([{"x-monkeyclaw-signature", "t=12_345"}])
-      assert {:error, :unauthorized} = Security.verify_request("secret", conn, "body")
-    end
-
-    test "fails with malformed header — non-integer timestamp" do
-      conn =
-        conn_with_headers([{"x-monkeyclaw-signature", "t=abc,v1=#{String.duplicate("a", 64)}"}])
-
-      assert {:error, :unauthorized} = Security.verify_request("secret", conn, "body")
-    end
-
-    test "fails with signature of wrong length" do
-      conn = conn_with_headers([{"x-monkeyclaw-signature", "t=12_345,v1=tooshort"}])
-      assert {:error, :unauthorized} = Security.verify_request("secret", conn, "body")
-    end
-
-    test "all failures return identical :unauthorized (no information leakage)" do
-      # Wrong secret, expired, missing header, malformed — all return the same error
-      secret = "secret"
-      body = "body"
-
-      wrong_secret_result =
-        Security.verify_request(
-          "wrong",
-          conn_with_headers([
-            {"x-monkeyclaw-signature",
-             Security.build_signature_header(secret, System.os_time(:second), body)}
-          ]),
-          body
-        )
-
-      missing_result = Security.verify_request(secret, conn_with_headers([]), body)
-
-      malformed_result =
-        Security.verify_request(
-          secret,
-          conn_with_headers([{"x-monkeyclaw-signature", "garbage"}]),
-          body
-        )
-
-      assert wrong_secret_result == {:error, :unauthorized}
-      assert missing_result == {:error, :unauthorized}
-      assert malformed_result == {:error, :unauthorized}
+    test "raises ArgumentError for unknown source" do
+      assert_raise ArgumentError, ~r/unknown webhook source/, fn ->
+        Security.verifier_for(:unknown)
+      end
     end
   end
 
-  # ── extract_idempotency_key/1 ─────────────────
+  # ── hmac_sha256_hex/2 ────────────────────────────
 
-  describe "extract_idempotency_key/1" do
-    test "returns key when present and valid" do
-      conn = conn_with_headers([{"x-monkeyclaw-idempotency-key", "abc-123-def"}])
-      assert {:ok, "abc-123-def"} = Security.extract_idempotency_key(conn)
+  describe "hmac_sha256_hex/2" do
+    test "produces 64-character lowercase hex string" do
+      result = Security.hmac_sha256_hex("secret", "message")
+      assert byte_size(result) == 64
+      assert result =~ ~r/^[0-9a-f]{64}$/
     end
 
-    test "returns nil when absent" do
-      conn = conn_with_headers([])
-      assert {:ok, nil} = Security.extract_idempotency_key(conn)
+    test "produces consistent results" do
+      a = Security.hmac_sha256_hex("secret", "message")
+      b = Security.hmac_sha256_hex("secret", "message")
+      assert a == b
     end
 
-    test "rejects empty key" do
-      conn = conn_with_headers([{"x-monkeyclaw-idempotency-key", ""}])
-      assert {:error, :invalid_idempotency_key} = Security.extract_idempotency_key(conn)
+    test "differs with different secrets" do
+      a = Security.hmac_sha256_hex("secret-a", "message")
+      b = Security.hmac_sha256_hex("secret-b", "message")
+      assert a != b
     end
 
-    test "accepts key at max length (255 bytes)" do
-      key = String.duplicate("k", 255)
-      conn = conn_with_headers([{"x-monkeyclaw-idempotency-key", key}])
-      assert {:ok, ^key} = Security.extract_idempotency_key(conn)
-    end
-
-    test "rejects key exceeding 255 bytes" do
-      long_key = String.duplicate("k", 256)
-      conn = conn_with_headers([{"x-monkeyclaw-idempotency-key", long_key}])
-      assert {:error, :invalid_idempotency_key} = Security.extract_idempotency_key(conn)
+    test "differs with different messages" do
+      a = Security.hmac_sha256_hex("secret", "message-a")
+      b = Security.hmac_sha256_hex("secret", "message-b")
+      assert a != b
     end
   end
 
-  # ── extract_event_type/1 ──────────────────────
+  # ── constant_time_compare/2 ──────────────────────
 
-  describe "extract_event_type/1" do
-    test "returns event type when present" do
-      conn = conn_with_headers([{"x-monkeyclaw-event", "push"}])
-      assert {:ok, "push"} = Security.extract_event_type(conn)
+  describe "constant_time_compare/2" do
+    test "returns true for equal strings" do
+      assert Security.constant_time_compare("abc", "abc")
     end
 
-    test "defaults to 'unknown' when absent" do
-      conn = conn_with_headers([])
-      assert {:ok, "unknown"} = Security.extract_event_type(conn)
+    test "returns false for different strings" do
+      refute Security.constant_time_compare("abc", "xyz")
     end
 
-    test "rejects empty event type" do
-      conn = conn_with_headers([{"x-monkeyclaw-event", ""}])
-      assert {:error, :invalid_event_type} = Security.extract_event_type(conn)
+    test "returns false for different lengths" do
+      refute Security.constant_time_compare("abc", "abcd")
     end
 
-    test "accepts event type at max length (255 bytes)" do
-      event = String.duplicate("e", 255)
-      conn = conn_with_headers([{"x-monkeyclaw-event", event}])
-      assert {:ok, ^event} = Security.extract_event_type(conn)
-    end
-
-    test "rejects event type exceeding 255 bytes" do
-      long_event = String.duplicate("e", 256)
-      conn = conn_with_headers([{"x-monkeyclaw-event", long_event}])
-      assert {:error, :invalid_event_type} = Security.extract_event_type(conn)
+    test "returns true for empty strings" do
+      assert Security.constant_time_compare("", "")
     end
   end
 
-  # ── compute_signature/3 ──────────────────────
+  # ── verify_timestamp/1 ──────────────────────────
+
+  describe "verify_timestamp/1" do
+    test "accepts current timestamp" do
+      assert :ok = Security.verify_timestamp(System.os_time(:second))
+    end
+
+    test "accepts timestamp within tolerance (4 minutes ago)" do
+      assert :ok = Security.verify_timestamp(System.os_time(:second) - 240)
+    end
+
+    test "rejects timestamp beyond tolerance (10 minutes ago)" do
+      assert {:error, :expired_timestamp} =
+               Security.verify_timestamp(System.os_time(:second) - 600)
+    end
+
+    test "rejects future timestamp beyond tolerance" do
+      assert {:error, :expired_timestamp} =
+               Security.verify_timestamp(System.os_time(:second) + 600)
+    end
+  end
+
+  # ── compute_signature/3 ──────────────────────────
 
   describe "compute_signature/3" do
     test "produces consistent results for same inputs" do
@@ -221,7 +146,7 @@ defmodule MonkeyClaw.Webhooks.SecurityTest do
     end
   end
 
-  # ── build_signature_header/3 ──────────────────
+  # ── build_signature_header/3 ──────────────────────
 
   describe "build_signature_header/3" do
     test "formats as t=<timestamp>,v1=<hex_signature>" do
@@ -229,14 +154,17 @@ defmodule MonkeyClaw.Webhooks.SecurityTest do
       assert header =~ ~r/^t=12345,v1=[0-9a-f]{64}$/
     end
 
-    test "header verifies against same inputs" do
+    test "header verifies against Generic verifier" do
       secret = "test-secret"
       timestamp = System.os_time(:second)
       body = ~s({"data":"value"})
       header = Security.build_signature_header(secret, timestamp, body)
 
-      conn = conn_with_headers([{"x-monkeyclaw-signature", header}])
-      assert :ok = Security.verify_request(secret, conn, body)
+      conn =
+        Plug.Test.conn(:post, "/test", "")
+        |> Plug.Conn.put_req_header("x-monkeyclaw-signature", header)
+
+      assert :ok = Verifiers.Generic.verify(secret, conn, body)
     end
   end
 
