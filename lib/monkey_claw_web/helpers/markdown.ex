@@ -102,7 +102,7 @@ defmodule MonkeyClawWeb.Markdown do
 
   # Accumulator: {output_lines_reversed, fence_state | nil, code_lines_reversed}
   # fence_state: %{indent: String.t(), ticks: String.t()}
-  @typep fence_state :: %{indent: String.t(), ticks: String.t()}
+  @typep fence_state :: %{indent: String.t(), ticks: String.t(), opening_line: String.t()}
 
   @spec render_fenced_code_blocks(String.t()) :: String.t()
   defp render_fenced_code_blocks(text) do
@@ -142,7 +142,7 @@ defmodule MonkeyClawWeb.Markdown do
   @spec opening_fence(String.t()) :: {:ok, fence_state()} | :not_a_fence
   defp opening_fence(line) do
     case Regex.run(~r/^([ \t]*)(```+)(\w*)[ \t]*$/, line) do
-      [_full, indent, ticks, _lang] -> {:ok, %{indent: indent, ticks: ticks}}
+      [_full, indent, ticks, _lang] -> {:ok, %{indent: indent, ticks: ticks, opening_line: line}}
       _ -> :not_a_fence
     end
   end
@@ -173,11 +173,11 @@ defmodule MonkeyClawWeb.Markdown do
     output |> Enum.reverse() |> Enum.join("\n")
   end
 
-  defp finalize_fenced_output({output, %{indent: indent, ticks: ticks}, code_acc}) do
+  defp finalize_fenced_output({output, %{opening_line: opening_line}, code_acc}) do
     # Unclosed fence — treat accumulated lines as plain text in original order,
-    # including the opening fence line that started code accumulation.
-    opening_fence_line = indent <> ticks
-    all_lines = Enum.reverse(output) ++ [opening_fence_line] ++ Enum.reverse(code_acc)
+    # including the exact opening fence line (with language tag) that started
+    # code accumulation.
+    all_lines = Enum.reverse(output) ++ [opening_line] ++ Enum.reverse(code_acc)
     Enum.join(all_lines, "\n")
   end
 

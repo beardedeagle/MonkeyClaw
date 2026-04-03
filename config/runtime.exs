@@ -56,13 +56,6 @@ if config_env() == :prod do
       You can generate one by calling: mix phx.gen.secret 32
       """
 
-  session_signing_salt =
-    System.get_env("SESSION_SIGNING_SALT") ||
-      raise """
-      environment variable SESSION_SIGNING_SALT is missing.
-      You can generate one by calling: mix phx.gen.secret 32
-      """
-
   host = System.get_env("PHX_HOST") || "example.com"
 
   config :monkey_claw, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
@@ -90,7 +83,6 @@ if config_env() == :prod do
       depth: 3
     ],
     secret_key_base: secret_key_base,
-    session_signing_salt: session_signing_salt,
     live_view: [signing_salt: signing_salt]
 
   # ## Configuring the mailer
