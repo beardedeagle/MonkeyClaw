@@ -7,6 +7,7 @@ defmodule MonkeyClaw.ExtensionsTest do
   alias MonkeyClaw.TestPlugs
 
   setup do
+    Application.delete_env(:monkey_claw, MonkeyClaw.Extensions)
     Extensions.clear_pipelines()
 
     on_exit(fn ->

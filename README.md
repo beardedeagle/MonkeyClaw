@@ -35,8 +35,9 @@ capabilities with security built into the platform, not patched on top.
 │  Workflow Layer                                      │
 │  MonkeyClaw.Workflows — conversation recipes         │
 ├─────────────────────────────────────────────────────┤
-│  Product Layer                                      │
-│  MonkeyClaw — assistants · workspaces · experiments │
+│  Product Layer                                       │
+│  MonkeyClaw — assistants · workspaces · experiments  │
+│  scheduling · user modeling                          │
 ├─────────────────────────────────────────────────────┤
 │  Extension Layer                                    │
 │  Plug pipelines — hooks · contexts · pipelines      │
@@ -73,6 +74,8 @@ Clean separation of concerns, connected through a public Elixir API.
 | **Experiment**| `MonkeyClaw.Experiments.Experiment`  | Bounded optimization loop with strategy-driven iteration |
 | **Recall**    | `MonkeyClaw.Recall`                  | Cross-session history search and context injection |
 | **Skills**    | `MonkeyClaw.Skills`                  | Reusable procedures extracted from successful experiments with FTS5 search and effectiveness scoring |
+| **Scheduling**| `MonkeyClaw.Scheduling`              | Timed experiment runs — once or recurring — with status lifecycle and run tracking |
+| **UserModeling**| `MonkeyClaw.UserModeling`          | Privacy-aware observation of user interactions, topic extraction, and injectable context for personalized queries |
 
 Contexts (`MonkeyClaw.Assistants`, `MonkeyClaw.Workspaces`) provide the
 public CRUD API. `MonkeyClaw.AgentBridge` translates domain objects into
@@ -181,12 +184,8 @@ The recall plug hooks into the existing extension pipeline at
 3. Formats matches into a context block (grouped by session)
 4. Sets `:effective_prompt` with the recalled context prepended
 
-Configuration is via application config:
-
-    config :monkey_claw, MonkeyClaw.Extensions,
-      hooks: %{
-        query_pre: [{MonkeyClaw.Recall.Plug, max_results: 10, max_chars: 4000}]
-      }
+Configuration is via application config alongside other query_pre plugs
+(see User Modeling section for the full pipeline configuration).
 
 The search layer supports temporal filtering (`:after`/`:before`),
 role filtering (`:roles`), session exclusion (`:exclude_session_id`),
@@ -223,18 +222,92 @@ for relevance. Effectiveness scores update on each use — accepted
 outcomes increment the score, rejected outcomes decrement it — so the
 library self-selects toward what actually works over time.
 
-Configuration is via application config:
-
-    config :monkey_claw, MonkeyClaw.Extensions,
-      hooks: %{
-        query_pre: [
-          {MonkeyClaw.Recall.Plug, max_results: 10, max_chars: 4000},
-          {MonkeyClaw.Skills.Plug, max_skills: 5, max_chars: 2000}
-        ]
-      }
+Configuration is via application config alongside other query_pre plugs
+(see User Modeling section for the full pipeline configuration).
 
 All functions are pure (database and ETS I/O aside) — no processes,
 no state beyond the cache.
+
+### Autonomous Scheduling
+
+Pure OTP scheduling for timed experiment runs. Schedule entries define
+when and how often to create experiments — no external cron or Quantum
+dependency.
+
+Two-layer architecture:
+
+| Layer | Module | Owns |
+|-------|--------|------|
+| **Scheduling** | `MonkeyClaw.Scheduling` | Schedule entry CRUD, status transitions, run tracking, due-entry queries |
+| **Scheduler** | `MonkeyClaw.Scheduling.Scheduler` | GenServer poll loop — wakes on interval, fires due entries |
+
+Schedule types:
+
+- **`:once`** — Fires a single time at `next_run_at`, then transitions
+  to `:completed`.
+- **`:interval`** — Fires every `interval_ms` milliseconds, starting
+  at `next_run_at`. Optionally bounded by `max_runs`.
+
+Status lifecycle: `active → paused → active` (toggle), `active →
+completed` (done or max_runs reached), `active → failed` (error).
+Terminal states (`:completed`, `:failed`) cannot transition further.
+
+The Scheduler GenServer polls every 15 seconds (configurable via
+`:scheduler_poll_interval_ms`) for active entries whose `next_run_at`
+has passed. For each due entry, it loads the workspace, creates an
+experiment from the entry's config, and records the run. Individual
+entry failures are logged but do not affect other entries in the same
+poll cycle. `trigger_poll/0` forces an immediate poll for testing or
+when a newly created entry is already due.
+
+### User Modeling
+
+Privacy-aware observation of user interactions for personalized agent
+queries. The user modeling system tracks topic frequencies and
+behavioral patterns from conversations, then injects relevant context
+into prompts to improve agent response quality.
+
+Four-layer architecture:
+
+| Layer | Module | Owns |
+|-------|--------|------|
+| **UserModeling** | `MonkeyClaw.UserModeling` | Profile CRUD, topic extraction, pattern merging, context generation |
+| **Observer** | `MonkeyClaw.UserModeling.Observer` | GenServer batching — accumulates observations in memory, flushes to DB on timer |
+| **ObservationPlug** | `MonkeyClaw.UserModeling.ObservationPlug` | Extension plug for `:query_post` — sends observations to the Observer |
+| **InjectionPlug** | `MonkeyClaw.UserModeling.InjectionPlug` | Extension plug for `:query_pre` — prepends personalized context to prompts |
+
+Privacy levels control what gets recorded:
+
+- **`:full`** — Records topic frequencies and behavioral patterns
+  (query count, average prompt length, active hours)
+- **`:limited`** — Records topic frequencies only (no patterns)
+- **`:none`** — Skips all observation recording
+
+The Observer GenServer decouples observation collection from
+persistence, accumulating observations in a buffer keyed by workspace
+ID and flushing them to the database every 30 seconds (configurable
+via `:observer_flush_interval_ms`). This prevents observation
+recording from blocking the query pipeline.
+
+Topic extraction downcases text, filters stopwords and short words,
+and counts frequencies. All accumulation is bounded: topics capped
+at the top 100 by frequency (individual counts capped at 1,000),
+query counts capped at 1,000,000, active hour counts capped at
+100,000. The injection context summarizes the user's top interests
+and explicit preferences, gated by the profile's `injection_enabled`
+flag.
+
+Configuration is via application config alongside other plugs:
+
+    config :monkey_claw, MonkeyClaw.Extensions,
+      hooks: %{
+        query_post: [{MonkeyClaw.UserModeling.ObservationPlug, []}],
+        query_pre: [
+          {MonkeyClaw.Recall.Plug, max_results: 10, max_chars: 4000},
+          {MonkeyClaw.Skills.Plug, max_skills: 5, max_chars: 2000},
+          {MonkeyClaw.UserModeling.InjectionPlug, min_query_length: 10}
+        ]
+      }
 
 ### Dashboard
 

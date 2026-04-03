@@ -21,7 +21,7 @@ defmodule MonkeyClaw.Assistants.AssistantTest do
         context_prompt: "Working on Elixir.",
         cwd: "/home/user",
         max_thinking_tokens: 1000,
-        permission_mode: :auto,
+        permission_mode: :default,
         is_default: true,
         description: "A full assistant"
       }
@@ -97,7 +97,7 @@ defmodule MonkeyClaw.Assistants.AssistantTest do
     end
 
     test "accepts all valid permission modes" do
-      for mode <- [:auto, :manual, :accept_edits] do
+      for mode <- [:default, :accept_edits, :bypass_permissions, :plan, :dont_ask] do
         attrs = %{name: "Dev", backend: :claude, permission_mode: mode}
         changeset = Assistant.create_changeset(%Assistant{}, attrs)
         assert changeset.valid?, "expected #{mode} to be valid"

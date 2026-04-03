@@ -92,7 +92,7 @@ defmodule MonkeyClawWeb.Markdown do
   # --- Fenced code blocks (``` ... ```) ---
   # Must be processed first to protect code content from inline parsing.
 
-  @fenced_code_re ~r/```(\w*)\n(.*?)```/s
+  @fenced_code_re ~r/^[ \t]*```(\w*)\n(.*?)^[ \t]*```[ \t]*$/ms
 
   defp render_fenced_code_blocks(text) do
     Regex.replace(@fenced_code_re, text, fn _full, _lang, code ->
@@ -135,12 +135,9 @@ defmodule MonkeyClawWeb.Markdown do
         items =
           trimmed
           |> String.split(~r/\n/)
-          |> Enum.map_join("", fn line ->
-            line
-            |> String.replace(~r/^\s*[-*] /, "")
-            |> inline()
-            |> then(&"<li>#{&1}</li>")
-          end)
+          |> Enum.reduce([], &accumulate_ul_line/2)
+          |> Enum.reverse()
+          |> Enum.map_join("", fn text -> "<li>#{inline(text)}</li>" end)
 
         "<ul>#{items}</ul>"
 
@@ -149,12 +146,9 @@ defmodule MonkeyClawWeb.Markdown do
         items =
           trimmed
           |> String.split(~r/\n/)
-          |> Enum.map_join("", fn line ->
-            line
-            |> String.replace(~r/^\s*\d+\. /, "")
-            |> inline()
-            |> then(&"<li>#{&1}</li>")
-          end)
+          |> Enum.reduce([], &accumulate_ol_line/2)
+          |> Enum.reverse()
+          |> Enum.map_join("", fn text -> "<li>#{inline(text)}</li>" end)
 
         "<ol>#{items}</ol>"
 
@@ -166,6 +160,29 @@ defmodule MonkeyClawWeb.Markdown do
           |> Enum.map_join("<br>", &inline/1)
 
         "<p>#{inner}</p>"
+    end
+  end
+
+  defp accumulate_ul_line(line, acc) do
+    if Regex.match?(~r/^\s*[-*] /, line) do
+      [String.replace(line, ~r/^\s*[-*] /, "") | acc]
+    else
+      append_continuation(line, acc)
+    end
+  end
+
+  defp accumulate_ol_line(line, acc) do
+    if Regex.match?(~r/^\s*\d+\. /, line) do
+      [String.replace(line, ~r/^\s*\d+\. /, "") | acc]
+    else
+      append_continuation(line, acc)
+    end
+  end
+
+  defp append_continuation(line, acc) do
+    case acc do
+      [current | rest] -> [current <> " " <> String.trim(line) | rest]
+      [] -> [String.trim(line)]
     end
   end
 
@@ -182,7 +199,7 @@ defmodule MonkeyClawWeb.Markdown do
   # Inline code must be rendered before bold/italic to prevent
   # backtick content from being processed as emphasis.
   defp render_inline_code(text) do
-    Regex.replace(~r/`([^`]+)`/, text, "<code>\\1</code>")
+    Regex.replace(~r/`([^`\n]+)`/, text, "<code>\\1</code>")
   end
 
   defp render_bold(text) do

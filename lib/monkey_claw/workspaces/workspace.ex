@@ -37,8 +37,10 @@ defmodule MonkeyClaw.Workspaces.Workspace do
 
   alias MonkeyClaw.Assistants.Assistant
   alias MonkeyClaw.Experiments.Experiment
+  alias MonkeyClaw.Scheduling.ScheduleEntry
   alias MonkeyClaw.Sessions.Session
   alias MonkeyClaw.Skills.Skill
+  alias MonkeyClaw.UserModeling.UserProfile
   alias MonkeyClaw.Workspaces.Channel
 
   @type t :: %__MODULE__{
@@ -68,8 +70,10 @@ defmodule MonkeyClaw.Workspaces.Workspace do
     belongs_to :assistant, Assistant
     has_many :channels, Channel
     has_many :experiments, Experiment
+    has_many :schedule_entries, ScheduleEntry
     has_many :sessions, Session
     has_many :skills, Skill
+    has_one :user_profile, UserProfile
 
     timestamps(type: :utc_datetime_usec)
   end

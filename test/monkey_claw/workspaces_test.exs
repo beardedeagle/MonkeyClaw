@@ -470,7 +470,7 @@ defmodule MonkeyClaw.WorkspacesTest do
           backend: :claude,
           model: "opus",
           system_prompt: "You are helpful.",
-          permission_mode: :auto
+          permission_mode: :default
         })
 
       workspace = insert_workspace!(%{name: "Full WS", assistant_id: assistant.id})
@@ -479,7 +479,7 @@ defmodule MonkeyClaw.WorkspacesTest do
       assert config.session_opts.backend == :claude
       assert config.session_opts.model == "opus"
       assert config.session_opts.system_prompt == "You are helpful."
-      assert config.session_opts.permission_mode == :auto
+      assert config.session_opts.permission_mode == :default
     end
 
     test "handles already-preloaded assistant" do

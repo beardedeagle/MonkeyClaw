@@ -26,8 +26,10 @@ defmodule MonkeyClaw.Factory do
 
   alias MonkeyClaw.Assistants
   alias MonkeyClaw.Experiments
+  alias MonkeyClaw.Scheduling
   alias MonkeyClaw.Sessions
   alias MonkeyClaw.Skills
+  alias MonkeyClaw.UserModeling
   alias MonkeyClaw.Workspaces
 
   # ──────────────────────────────────────────────
@@ -251,5 +253,86 @@ defmodule MonkeyClaw.Factory do
   def insert_skill!(workspace, overrides \\ %{}) do
     {:ok, skill} = Skills.create_skill(workspace, skill_attrs(overrides))
     skill
+  end
+
+  # ──────────────────────────────────────────────
+  # Schedule Entry Builders
+  # ──────────────────────────────────────────────
+
+  @doc """
+  Build a map of valid schedule entry attributes.
+
+  Defaults to `:once` schedule type with `next_run_at` in the future
+  and a basic experiment configuration.
+  """
+  @spec schedule_entry_attrs(Enumerable.t()) :: map()
+  def schedule_entry_attrs(overrides \\ %{}) do
+    Map.merge(
+      %{
+        name: "schedule-#{System.unique_integer([:positive])}",
+        schedule_type: :once,
+        next_run_at: DateTime.add(DateTime.utc_now(), 3600, :second),
+        experiment_config: %{
+          "title" => "Scheduled experiment",
+          "type" => "code",
+          "max_iterations" => 3
+        }
+      },
+      Map.new(overrides)
+    )
+  end
+
+  @doc """
+  Insert a schedule entry into the database within a workspace.
+
+  Delegates to `MonkeyClaw.Scheduling.create_schedule_entry/2`.
+  Raises on validation failure.
+  """
+  @spec insert_schedule_entry!(MonkeyClaw.Workspaces.Workspace.t(), Enumerable.t()) ::
+          MonkeyClaw.Scheduling.ScheduleEntry.t()
+  def insert_schedule_entry!(workspace, overrides \\ %{}) do
+    {:ok, entry} = Scheduling.create_schedule_entry(workspace, schedule_entry_attrs(overrides))
+    entry
+  end
+
+  # ──────────────────────────────────────────────
+  # User Profile Builders
+  # ──────────────────────────────────────────────
+
+  @doc """
+  Build a map of valid user profile attributes.
+
+  Defaults to `:full` privacy level with injection enabled.
+  """
+  @spec user_profile_attrs(Enumerable.t()) :: map()
+  def user_profile_attrs(overrides \\ %{}) do
+    Map.merge(
+      %{
+        privacy_level: :full,
+        injection_enabled: true
+      },
+      Map.new(overrides)
+    )
+  end
+
+  @doc """
+  Insert a user profile into the database within a workspace.
+
+  Delegates to `MonkeyClaw.UserModeling.ensure_profile/1` for creation,
+  then updates with overrides if provided. Each workspace can have at
+  most one profile (unique constraint).
+  """
+  @spec insert_user_profile!(MonkeyClaw.Workspaces.Workspace.t(), Enumerable.t()) ::
+          MonkeyClaw.UserModeling.UserProfile.t()
+  def insert_user_profile!(workspace, overrides \\ %{}) do
+    {:ok, profile} = UserModeling.ensure_profile(workspace)
+    attrs = Map.new(overrides)
+
+    if map_size(attrs) > 0 do
+      {:ok, updated} = UserModeling.update_profile(profile, attrs)
+      updated
+    else
+      profile
+    end
   end
 end

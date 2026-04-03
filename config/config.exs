@@ -32,7 +32,8 @@ config :monkey_claw, MonkeyClawWeb.Endpoint,
     layout: false
   ],
   pubsub_server: MonkeyClaw.PubSub,
-  live_view: [signing_salt: "O+pZ6FAJ"]
+  # Greenfield, zero users — no existing sessions to invalidate.
+  live_view: [signing_salt: "+zqFzRJszI2u/fRngg/usTH2EWOjb0QI"]
 
 # Configure the mailer
 #
@@ -75,6 +76,24 @@ config :monkey_claw, :available_models, [
 
 # Default model used when no assistant is configured on the workspace.
 config :monkey_claw, :default_model, "claude-sonnet-4-6"
+
+# Extension plug pipeline — hooks for query pre/post processing.
+# Plug execution order within a hook point is declaration order.
+# query_post: ObservationPlug records user interactions for modeling.
+# query_pre: Recall.Plug injects cross-session recall context,
+#   Skills.Plug injects relevant skill procedures,
+#   InjectionPlug prepends personalized user context.
+config :monkey_claw, MonkeyClaw.Extensions,
+  hooks: %{
+    query_post: [
+      {MonkeyClaw.UserModeling.ObservationPlug, []}
+    ],
+    query_pre: [
+      {MonkeyClaw.Recall.Plug, max_results: 10, max_chars: 4000},
+      {MonkeyClaw.Skills.Plug, max_skills: 5, max_chars: 2000},
+      {MonkeyClaw.UserModeling.InjectionPlug, min_query_length: 10}
+    ]
+  }
 
 # Configure Elixir's Logger
 config :logger, :default_formatter,

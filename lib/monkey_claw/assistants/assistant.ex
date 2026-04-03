@@ -45,10 +45,10 @@ defmodule MonkeyClaw.Assistants.Assistant do
         }
 
   @type backend :: :claude | :codex | :gemini | :opencode | :copilot
-  @type permission_mode :: :auto | :manual | :accept_edits
+  @type permission_mode :: :default | :accept_edits | :bypass_permissions | :plan | :dont_ask
 
   @backends [:claude, :codex, :gemini, :opencode, :copilot]
-  @permission_modes [:auto, :manual, :accept_edits]
+  @permission_modes [:default, :accept_edits, :bypass_permissions, :plan, :dont_ask]
 
   @create_fields [
     :name,

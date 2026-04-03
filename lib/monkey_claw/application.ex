@@ -21,26 +21,31 @@ defmodule MonkeyClaw.Application do
     # used for low-latency per-workspace skill lookups.
     :ok = SkillsCache.init()
 
-    children = [
-      MonkeyClawWeb.Telemetry,
-      MonkeyClaw.Repo,
-      {Ecto.Migrator,
-       repos: Application.fetch_env!(:monkey_claw, :ecto_repos), skip: skip_migrations?()},
-      {DNSCluster, query: Application.get_env(:monkey_claw, :dns_cluster_query) || :ignore},
-      {Phoenix.PubSub, name: MonkeyClaw.PubSub},
-      # AgentBridge: session registry and supervisor
-      {Registry, keys: :unique, name: MonkeyClaw.AgentBridge.SessionRegistry},
-      MonkeyClaw.AgentBridge.SessionSupervisor,
-      # Experiments: registry, task supervisor, and runner supervisor.
-      # Order matters — RunnerRegistry and TaskSupervisor must start
-      # before the Supervisor, since Runner processes register themselves
-      # and use TaskSupervisor for async agent queries.
-      {Registry, keys: :unique, name: MonkeyClaw.Experiments.RunnerRegistry},
-      {Task.Supervisor, name: MonkeyClaw.Experiments.TaskSupervisor},
-      MonkeyClaw.Experiments.Supervisor,
-      # Start to serve requests, typically the last entry
-      MonkeyClawWeb.Endpoint
-    ]
+    children =
+      [
+        MonkeyClawWeb.Telemetry,
+        MonkeyClaw.Repo,
+        {Ecto.Migrator,
+         repos: Application.fetch_env!(:monkey_claw, :ecto_repos), skip: skip_migrations?()},
+        {DNSCluster, query: Application.get_env(:monkey_claw, :dns_cluster_query) || :ignore},
+        {Phoenix.PubSub, name: MonkeyClaw.PubSub},
+        # AgentBridge: session registry and supervisor
+        {Registry, keys: :unique, name: MonkeyClaw.AgentBridge.SessionRegistry},
+        MonkeyClaw.AgentBridge.SessionSupervisor,
+        # Experiments: registry, task supervisor, and runner supervisor.
+        # Order matters — RunnerRegistry and TaskSupervisor must start
+        # before the Supervisor, since Runner processes register themselves
+        # and use TaskSupervisor for async agent queries.
+        {Registry, keys: :unique, name: MonkeyClaw.Experiments.RunnerRegistry},
+        {Task.Supervisor, name: MonkeyClaw.Experiments.TaskSupervisor},
+        MonkeyClaw.Experiments.Supervisor
+      ] ++
+        maybe_child(MonkeyClaw.Scheduling.Scheduler, :start_scheduler) ++
+        maybe_child(MonkeyClaw.UserModeling.Observer, :start_observer) ++
+        [
+          # Start to serve requests, typically the last entry
+          MonkeyClawWeb.Endpoint
+        ]
 
     # Compile extension pipelines from config before serving requests.
     # Pure config read — no processes or DB access required.
@@ -63,5 +68,16 @@ defmodule MonkeyClaw.Application do
   defp skip_migrations? do
     # By default, sqlite migrations are run when using a release
     System.get_env("RELEASE_NAME") == nil
+  end
+
+  # Include a child spec only when the config flag is not explicitly false.
+  # Defaults to true (started) — test.exs sets these to false so tests
+  # control GenServer lifecycle via start_supervised!/1.
+  defp maybe_child(child_spec, config_key) do
+    if Application.get_env(:monkey_claw, config_key, true) do
+      [child_spec]
+    else
+      []
+    end
   end
 end

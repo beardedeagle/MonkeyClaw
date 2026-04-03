@@ -137,7 +137,10 @@ defmodule MonkeyClaw.Sessions.Message do
 
   defp random_fts_rowid do
     <<int::unsigned-64>> = :crypto.strong_rand_bytes(8)
-    Bitwise.band(int, 0x7FFF_FFFF_FFFF_FFFF)
+
+    int
+    |> Bitwise.band(0x7FFF_FFFF_FFFF_FFFF)
+    |> max(1)
   end
 
   # Normalize nil metadata to %{} so the DB NOT NULL constraint is

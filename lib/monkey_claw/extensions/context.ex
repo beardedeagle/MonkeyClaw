@@ -22,7 +22,7 @@ defmodule MonkeyClaw.Extensions.Context do
   The `:data` map carries domain data relevant to the current event.
   Each hook point defines its own data shape:
 
-    * `:query_pre` — `%{session_id: String.t(), prompt: String.t()}`
+    * `:query_pre` — `%{workspace_id: String.t(), prompt: String.t()}`
     * `:session_starting` — `%{session_id: String.t(), config: map()}`
     * `:workspace_created` — `%{workspace: Workspace.t()}`
 

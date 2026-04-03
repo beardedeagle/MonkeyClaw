@@ -41,7 +41,8 @@ defmodule MonkeyClaw.AgentBridge.Scope do
           optional(:system_prompt) => String.t(),
           optional(:cwd) => String.t(),
           optional(:max_thinking_tokens) => pos_integer(),
-          optional(:permission_mode) => :auto | :manual | :accept_edits
+          optional(:permission_mode) =>
+            :default | :accept_edits | :bypass_permissions | :plan | :dont_ask
         }
 
   @type channel_config :: %{
@@ -131,7 +132,8 @@ defmodule MonkeyClaw.AgentBridge.Scope do
       {:max_thinking_tokens, v}, acc when is_integer(v) and v > 0 ->
         Map.put(acc, :max_thinking_tokens, v)
 
-      {:permission_mode, v}, acc when v in [:auto, :manual, :accept_edits] ->
+      {:permission_mode, v}, acc
+      when v in [:default, :accept_edits, :bypass_permissions, :plan, :dont_ask] ->
         Map.put(acc, :permission_mode, v)
 
       _other, acc ->
