@@ -256,7 +256,7 @@ defmodule MonkeyClaw.Webhooks do
   @spec event_allowed?(WebhookEndpoint.t(), String.t()) :: boolean()
   def event_allowed?(%WebhookEndpoint{allowed_events: allowed}, event_type)
       when is_binary(event_type) do
-    map_size(allowed) == 0 or Map.has_key?(allowed, event_type)
+    map_size(allowed) == 0 or Map.get(allowed, event_type) == true
   end
 
   # ──────────────────────────────────────────────

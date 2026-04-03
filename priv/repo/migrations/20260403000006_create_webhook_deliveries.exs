@@ -2,7 +2,7 @@ defmodule MonkeyClaw.Repo.Migrations.CreateWebhookDeliveries do
   use Ecto.Migration
 
   def change do
-    create table(:webhook_deliveries, primary_key: false) do
+    create table(:webhook_deliveries, primary_key: false, options: "STRICT, WITHOUT ROWID") do
       add :id, :binary_id, primary_key: true
 
       add :webhook_endpoint_id,

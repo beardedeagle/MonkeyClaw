@@ -87,15 +87,7 @@ defmodule MonkeyClawWeb.WebhookController do
         remote_ip: format_remote_ip(conn)
       }
 
-      case Webhooks.record_delivery(endpoint, delivery_attrs) do
-        {:ok, delivery} ->
-          _task = Dispatcher.dispatch_async(endpoint, event_type, payload, delivery)
-          send_accepted(conn, delivery.id)
-
-        {:error, changeset} ->
-          Logger.warning("Failed to record webhook delivery: #{inspect(changeset.errors)}")
-          send_error(conn, 500)
-      end
+      record_and_dispatch(conn, endpoint, event_type, payload, delivery_attrs)
     else
       {:error, :not_found} -> send_error(conn, 404)
       {:error, :unauthorized} -> send_error(conn, 401)
@@ -105,6 +97,30 @@ defmodule MonkeyClawWeb.WebhookController do
       {:error, :event_not_allowed} -> send_error(conn, 422)
       {:error, :rate_limited} -> send_rate_limited(conn)
       {:error, :replay_detected} -> send_accepted_replay(conn)
+    end
+  end
+
+  # ── Private — Delivery Recording ─────────────────────────────
+
+  # Record the accepted delivery and dispatch to the agent.
+  # Handles concurrent replay races: if a unique constraint
+  # violation fires on idempotency_key, treat it as a replay
+  # (idempotent 202) instead of a 500.
+  @spec record_and_dispatch(Plug.Conn.t(), Webhooks.WebhookEndpoint.t(), String.t(), map(), map()) ::
+          Plug.Conn.t()
+  defp record_and_dispatch(conn, endpoint, event_type, payload, delivery_attrs) do
+    case Webhooks.record_delivery(endpoint, delivery_attrs) do
+      {:ok, delivery} ->
+        _task = Dispatcher.dispatch_async(endpoint, event_type, payload, delivery)
+        send_accepted(conn, delivery.id)
+
+      {:error, %Ecto.Changeset{errors: errors} = changeset} ->
+        if unique_constraint_error?(errors, :idempotency_key) do
+          send_accepted_replay(conn)
+        else
+          Logger.warning("Failed to record webhook delivery: #{inspect(changeset.errors)}")
+          send_error(conn, 500)
+        end
     end
   end
 
@@ -226,6 +242,17 @@ defmodule MonkeyClawWeb.WebhookController do
       %{count: 1},
       %{remote_ip: format_remote_ip(conn)}
     )
+  end
+
+  # Check if a changeset error list contains a unique constraint violation
+  # for a specific field. Used to distinguish concurrent replay races
+  # from genuine insert failures.
+  @spec unique_constraint_error?([{atom(), {String.t(), keyword()}}], atom()) :: boolean()
+  defp unique_constraint_error?(errors, field) do
+    Enum.any?(errors, fn
+      {^field, {_msg, opts}} -> opts[:constraint] != nil
+      _ -> false
+    end)
   end
 
   # Format the remote IP as a string for logging and audit.

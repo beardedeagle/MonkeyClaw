@@ -19,9 +19,9 @@ defmodule MonkeyClawWeb.CacheBodyReader do
   ## Chunked Reads
 
   `Plug.Parsers` may call the body reader multiple times for large
-  payloads. Each chunk is appended to the accumulated body in
-  `conn.private[:raw_body]`. After parsing completes, the full
-  raw body is available as a single binary.
+  payloads. Chunks are accumulated as iodata (a list of binaries)
+  in `conn.private[:raw_body_chunks]` to avoid O(n^2) binary
+  copying. `get_raw_body/1` converts to a flat binary once.
 
   ## Design
 
@@ -63,13 +63,19 @@ defmodule MonkeyClawWeb.CacheBodyReader do
   """
   @spec get_raw_body(Plug.Conn.t()) :: binary()
   def get_raw_body(conn) do
-    conn.private[:raw_body] || ""
+    case conn.private[:raw_body_chunks] do
+      nil -> ""
+      chunks -> IO.iodata_to_binary(chunks)
+    end
   end
 
-  # Append a chunk to the accumulated raw body in conn.private.
+  # Append a chunk to the accumulated iodata in conn.private.
+  # Accumulated as a list of binaries (iodata) to avoid O(n^2)
+  # binary copying when the body arrives in many chunks.
+  # Converted to a flat binary once in get_raw_body/1.
   @spec accumulate_body(Plug.Conn.t(), binary()) :: Plug.Conn.t()
   defp accumulate_body(conn, chunk) do
-    existing = conn.private[:raw_body] || ""
-    Plug.Conn.put_private(conn, :raw_body, existing <> chunk)
+    existing = conn.private[:raw_body_chunks] || []
+    Plug.Conn.put_private(conn, :raw_body_chunks, [existing | [chunk]])
   end
 end
