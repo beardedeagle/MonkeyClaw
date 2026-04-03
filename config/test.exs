@@ -16,6 +16,7 @@ config :monkey_claw, MonkeyClawWeb.Endpoint,
   http: [ip: {127, 0, 0, 1}, port: 4002],
   secret_key_base: "Ho55hK3AbP5jt9x0wm2VZ6Ts0TbDrBfZ/JdKWdJUwmwcjhqVAuq/iupKNfGZmm87",
   live_view: [signing_salt: "monkey_claw_test_salt"],
+  session_signing_salt: "monkey_claw_test_session_salt",
   server: false
 
 # In test we don't send emails

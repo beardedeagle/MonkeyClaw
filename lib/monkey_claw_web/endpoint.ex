@@ -16,7 +16,8 @@ defmodule MonkeyClawWeb.Endpoint do
   @session_options [
     store: :cookie,
     key: "_monkey_claw_key",
-    signing_salt: "1Rh7TwKf",
+    signing_salt:
+      Application.compile_env!(:monkey_claw, [MonkeyClawWeb.Endpoint, :session_signing_salt]),
     same_site: "Lax",
     secure: true
   ]

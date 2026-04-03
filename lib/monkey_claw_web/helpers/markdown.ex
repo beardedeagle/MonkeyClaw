@@ -151,7 +151,9 @@ defmodule MonkeyClawWeb.Markdown do
   # of backticks as the opening fence, with nothing else on the line.
   @spec closing_fence?(String.t(), fence_state()) :: boolean()
   defp closing_fence?(line, %{indent: indent, ticks: ticks}) do
-    Regex.match?(~r/^#{Regex.escape(indent)}#{Regex.escape(ticks)}[ \t]*$/, line)
+    expected = indent <> ticks
+    stripped = String.trim_trailing(line)
+    stripped == expected
   end
 
   @spec build_code_block([String.t()]) :: String.t()
@@ -323,6 +325,9 @@ defmodule MonkeyClawWeb.Markdown do
 
         case find_closing_backtick(after_open) do
           {:ok, code_content, rest} ->
+            # Safety: code_content is already HTML-escaped because html_escape/1
+            # runs on the full text before render_inline_code/1 in the inline/1
+            # pipeline. The sanitize_html/1 output layer provides defense-in-depth.
             span = "<code>#{code_content}</code>"
             scan_inline_code(rest, [span, before | acc])
 
