@@ -16,7 +16,7 @@ defmodule MonkeyClaw.Scheduling do
 
   This module is NOT a process. It delegates persistence to
   `MonkeyClaw.Repo` (Ecto/SQLite3). All functions are stateless
-  (no process state) and safe for concurrent use.
+  (no process state) and operate on the database through Ecto.
   """
 
   require Logger
@@ -176,17 +176,16 @@ defmodule MonkeyClaw.Scheduling do
 
   ## Concurrency
 
-  This function is safe to call from a single serialized caller
-  (the Scheduler GenServer). It reads `run_count` from the struct
-  and increments it in Elixir. If callers are ever parallelized,
-  add `Ecto.Changeset.optimistic_lock/3` on a `lock_version` column.
+  Uses optimistic locking via `lock_version` to prevent lost updates.
+  If another process modifies the entry between read and write, the
+  update fails with `{:error, :stale}` instead of silently overwriting.
 
   ## Examples
 
       {:ok, updated} = Scheduling.record_run(entry)
   """
   @spec record_run(ScheduleEntry.t()) ::
-          {:ok, ScheduleEntry.t()} | {:error, Ecto.Changeset.t()}
+          {:ok, ScheduleEntry.t()} | {:error, Ecto.Changeset.t()} | {:error, :stale}
   def record_run(%ScheduleEntry{} = entry) do
     now = DateTime.utc_now()
     new_run_count = entry.run_count + 1
@@ -198,7 +197,17 @@ defmodule MonkeyClaw.Scheduling do
 
     attrs = compute_post_run_attrs(entry, attrs, now, new_run_count)
 
-    update_schedule_entry(entry, attrs)
+    entry
+    |> ScheduleEntry.update_changeset(attrs)
+    |> Ecto.Changeset.optimistic_lock(:lock_version)
+    |> Repo.update()
+  rescue
+    Ecto.StaleEntryError ->
+      Logger.warning(
+        "Optimistic lock conflict on schedule entry #{entry.id} — another process modified it"
+      )
+
+      {:error, :stale}
   end
 
   # ──────────────────────────────────────────────

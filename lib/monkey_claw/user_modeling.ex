@@ -201,10 +201,16 @@ defmodule MonkeyClaw.UserModeling do
   Downcases the text, splits on non-alphanumeric boundaries, filters
   stopwords and words shorter than 4 characters, and counts frequencies.
 
+  Returns an empty map when the input contains no extractable topics
+  (e.g., only stopwords or words shorter than 4 characters).
+
   ## Examples
 
       UserModeling.extract_topics("How do I deploy an Elixir release?")
       #=> %{"deploy" => 1, "elixir" => 1, "release" => 1}
+
+      UserModeling.extract_topics("the and or but")
+      #=> %{}
   """
   @spec extract_topics(String.t()) :: %{optional(String.t()) => pos_integer()}
   def extract_topics(text) when is_binary(text) do

@@ -180,6 +180,16 @@ defmodule MonkeyClaw.Scheduling.Scheduler do
         {:ok, _updated} ->
           :ok
 
+        {:error, :stale} ->
+          # Optimistic lock conflict — another process already updated this entry.
+          # The experiment was already created above. Re-fetch and retry once to
+          # record the run with the current lock_version.
+          Logger.warning(
+            "Scheduler hit optimistic lock conflict for entry #{entry.id} — will not retry"
+          )
+
+          mark_entry_failed(entry)
+
         {:error, changeset} ->
           # record_run failure means the entry stays active+due, which would
           # cause duplicate experiments on the next poll. Mark failed to prevent

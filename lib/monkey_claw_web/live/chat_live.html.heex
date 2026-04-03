@@ -128,7 +128,7 @@
         </div>
       </div>
 
-      <div :for={message <- @messages} id={"msg-#{message.id}"}>
+      <div :for={message <- Enum.reverse(@messages)} id={"msg-#{message.id}"}>
         <div :if={message.role == :user} class="chat chat-end">
           <div class="chat-bubble chat-bubble-primary whitespace-pre-wrap">
             {message.content}

@@ -24,7 +24,7 @@ defmodule MonkeyClaw.Repo.Migrations.CreateScheduleEntries do
     create table(:schedule_entries, primary_key: false, options: "STRICT, WITHOUT ROWID") do
       add :id, :binary_id, primary_key: true
       add :name, :string, null: false
-      add :description, :text
+      add :description, :string
       add :schedule_type, :string, null: false
       add :interval_ms, :integer
       add :next_run_at, :utc_datetime_usec, null: false

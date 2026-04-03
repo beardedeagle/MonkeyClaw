@@ -91,14 +91,90 @@ defmodule MonkeyClawWeb.Markdown do
 
   # --- Fenced code blocks (``` ... ```) ---
   # Must be processed first to protect code content from inline parsing.
+  #
+  # A regex-based approach cannot reliably match fenced code blocks when the
+  # content itself contains triple-backtick lines (e.g., markdown examples in
+  # AI responses). The `(.*?)` with the `s` (dotall) flag treats any inner
+  # triple-backtick line as a potential closing fence. The stateful line-by-line
+  # parser below solves this by recording the exact backtick count and leading
+  # indentation of the opening fence and only accepting a closing fence line
+  # that matches both, with nothing else on the line.
 
-  @fenced_code_re ~r/^[ \t]*```(\w*)\n(.*?)^[ \t]*```[ \t]*$/ms
+  # Accumulator: {output_lines_reversed, fence_state | nil, code_lines_reversed}
+  # fence_state: %{indent: String.t(), ticks: String.t()}
+  @typep fence_state :: %{indent: String.t(), ticks: String.t()}
 
+  @spec render_fenced_code_blocks(String.t()) :: String.t()
   defp render_fenced_code_blocks(text) do
-    Regex.replace(@fenced_code_re, text, fn _full, _lang, code ->
-      escaped = html_escape(String.trim_trailing(code))
-      "<!--CODE_BLOCK--><pre><code>#{escaped}</code></pre><!--/CODE_BLOCK-->"
-    end)
+    text
+    |> String.split("\n")
+    |> parse_fenced_blocks({[], nil, []})
+    |> finalize_fenced_output()
+  end
+
+  @spec parse_fenced_blocks([String.t()], {[String.t()], fence_state() | nil, [String.t()]}) ::
+          {[String.t()], fence_state() | nil, [String.t()]}
+  defp parse_fenced_blocks([], acc), do: acc
+
+  defp parse_fenced_blocks([line | rest], {output, nil, _code_acc}) do
+    case opening_fence(line) do
+      {:ok, state} ->
+        parse_fenced_blocks(rest, {output, state, []})
+
+      :not_a_fence ->
+        parse_fenced_blocks(rest, {[line | output], nil, []})
+    end
+  end
+
+  defp parse_fenced_blocks([line | rest], {output, fence_state, code_acc}) do
+    if closing_fence?(line, fence_state) do
+      code_html = build_code_block(code_acc)
+      parse_fenced_blocks(rest, {[code_html | output], nil, []})
+    else
+      parse_fenced_blocks(rest, {output, fence_state, [line | code_acc]})
+    end
+  end
+
+  # Matches an opening fence line: optional leading spaces/tabs, then 3+
+  # backticks, then an optional info string (language tag).
+  # Returns the indent and tick string so the closing fence can be matched
+  # exactly.
+  @spec opening_fence(String.t()) :: {:ok, fence_state()} | :not_a_fence
+  defp opening_fence(line) do
+    case Regex.run(~r/^([ \t]*)(```+)(\w*)[ \t]*$/, line) do
+      [_full, indent, ticks, _lang] -> {:ok, %{indent: indent, ticks: ticks}}
+      _ -> :not_a_fence
+    end
+  end
+
+  # A closing fence must have the same leading indentation and the same number
+  # of backticks as the opening fence, with nothing else on the line.
+  @spec closing_fence?(String.t(), fence_state()) :: boolean()
+  defp closing_fence?(line, %{indent: indent, ticks: ticks}) do
+    Regex.match?(~r/^#{Regex.escape(indent)}#{Regex.escape(ticks)}[ \t]*$/, line)
+  end
+
+  @spec build_code_block([String.t()]) :: String.t()
+  defp build_code_block(code_lines_reversed) do
+    code =
+      code_lines_reversed
+      |> Enum.reverse()
+      |> Enum.join("\n")
+      |> String.trim_trailing()
+
+    escaped = html_escape(code)
+    "<!--CODE_BLOCK--><pre><code>#{escaped}</code></pre><!--/CODE_BLOCK-->"
+  end
+
+  @spec finalize_fenced_output({[String.t()], fence_state() | nil, [String.t()]}) :: String.t()
+  defp finalize_fenced_output({output, nil, _code_acc}) do
+    output |> Enum.reverse() |> Enum.join("\n")
+  end
+
+  defp finalize_fenced_output({output, _fence_state, code_acc}) do
+    # Unclosed fence — treat accumulated code lines as plain text.
+    all_lines = Enum.reverse(code_acc) ++ Enum.reverse(output)
+    Enum.join(all_lines, "\n")
   end
 
   # --- Block-level rendering ---
@@ -135,6 +211,7 @@ defmodule MonkeyClawWeb.Markdown do
         items =
           trimmed
           |> String.split(~r/\n/)
+          |> Enum.reject(&(&1 == ""))
           |> Enum.reduce([], &accumulate_ul_line/2)
           |> Enum.reverse()
           |> Enum.map_join("", fn text -> "<li>#{inline(text)}</li>" end)
@@ -146,6 +223,7 @@ defmodule MonkeyClawWeb.Markdown do
         items =
           trimmed
           |> String.split(~r/\n/)
+          |> Enum.reject(&(&1 == ""))
           |> Enum.reduce([], &accumulate_ol_line/2)
           |> Enum.reverse()
           |> Enum.map_join("", fn text -> "<li>#{inline(text)}</li>" end)
@@ -163,6 +241,10 @@ defmodule MonkeyClawWeb.Markdown do
     end
   end
 
+  # Accumulates lines into unordered list items. Lines starting with a list
+  # marker (`- ` or `* `) open a new item; all other non-empty lines are
+  # treated as continuation text and appended to the preceding item.
+  @spec accumulate_ul_line(String.t(), [String.t()]) :: [String.t()]
   defp accumulate_ul_line(line, acc) do
     if Regex.match?(~r/^\s*[-*] /, line) do
       [String.replace(line, ~r/^\s*[-*] /, "") | acc]
@@ -171,6 +253,10 @@ defmodule MonkeyClawWeb.Markdown do
     end
   end
 
+  # Accumulates lines into ordered list items. Lines starting with a number
+  # followed by `. ` open a new item; all other non-empty lines are treated
+  # as continuation text and appended to the preceding item.
+  @spec accumulate_ol_line(String.t(), [String.t()]) :: [String.t()]
   defp accumulate_ol_line(line, acc) do
     if Regex.match?(~r/^\s*\d+\. /, line) do
       [String.replace(line, ~r/^\s*\d+\. /, "") | acc]
@@ -179,6 +265,10 @@ defmodule MonkeyClawWeb.Markdown do
     end
   end
 
+  # Appends a continuation line to the most recent list item by joining with
+  # a space. If the accumulator is empty (orphan continuation with no preceding
+  # item), the line is started as a new item.
+  @spec append_continuation(String.t(), [String.t()]) :: [String.t()]
   defp append_continuation(line, acc) do
     case acc do
       [current | rest] -> [current <> " " <> String.trim(line) | rest]
@@ -198,8 +288,77 @@ defmodule MonkeyClawWeb.Markdown do
 
   # Inline code must be rendered before bold/italic to prevent
   # backtick content from being processed as emphasis.
+  #
+  # The naive regex ``(`[^`\n]+`)`` is ambiguous when there are multiple
+  # backtick-delimited spans on the same line: the regex engine can match
+  # across span boundaries because `[^`\n]+` is not anchored to the shortest
+  # non-backtick run. For example, in:
+  #
+  #   `a` and `b`
+  #
+  # a greedy engine could match `` `a` and `b` `` as one span instead of
+  # two. The scanner below processes inline code spans in a single
+  # left-to-right pass: it finds the first opening backtick, then finds the
+  # next backtick on the same line as the closing delimiter, emits one
+  # `<code>` span, and continues scanning from after the closing backtick.
+  # This prevents cross-boundary matches and handles adjacent spans correctly.
+  @spec render_inline_code(String.t()) :: String.t()
   defp render_inline_code(text) do
-    Regex.replace(~r/`([^`\n]+)`/, text, "<code>\\1</code>")
+    scan_inline_code(text, [])
+  end
+
+  @spec scan_inline_code(String.t(), [String.t()]) :: String.t()
+  defp scan_inline_code("", acc), do: acc |> Enum.reverse() |> Enum.join()
+
+  defp scan_inline_code(text, acc) do
+    case :binary.match(text, "`") do
+      :nomatch ->
+        scan_inline_code("", [text | acc])
+
+      {open_pos, 1} ->
+        before = binary_part(text, 0, open_pos)
+        after_open = binary_part(text, open_pos + 1, byte_size(text) - open_pos - 1)
+
+        case find_closing_backtick(after_open) do
+          {:ok, code_content, rest} ->
+            span = "<code>#{code_content}</code>"
+            scan_inline_code(rest, [span, before | acc])
+
+          :not_found ->
+            # No closing backtick on the same line — emit the backtick literally.
+            scan_inline_code(after_open, ["`", before | acc])
+        end
+    end
+  end
+
+  # Finds the next backtick that closes an inline code span. The closing
+  # backtick must appear before any newline (inline code does not span lines).
+  # Returns `{:ok, code_content, rest_of_string}` or `:not_found`.
+  @spec find_closing_backtick(String.t()) :: {:ok, String.t(), String.t()} | :not_found
+  defp find_closing_backtick(text) do
+    find_closing_backtick(text, 0, byte_size(text))
+  end
+
+  @spec find_closing_backtick(String.t(), non_neg_integer(), non_neg_integer()) ::
+          {:ok, String.t(), String.t()} | :not_found
+  defp find_closing_backtick(_text, pos, size) when pos >= size, do: :not_found
+
+  defp find_closing_backtick(text, pos, size) do
+    <<_head::binary-size(pos), byte, _rest::binary>> = text
+
+    cond do
+      byte == ?\n ->
+        # Hit a newline — inline code cannot span lines.
+        :not_found
+
+      byte == ?` ->
+        code_content = binary_part(text, 0, pos)
+        rest = binary_part(text, pos + 1, size - pos - 1)
+        {:ok, code_content, rest}
+
+      true ->
+        find_closing_backtick(text, pos + 1, size)
+    end
   end
 
   defp render_bold(text) do
