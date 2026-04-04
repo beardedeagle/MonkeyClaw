@@ -239,6 +239,7 @@ defmodule MonkeyClaw.ModelRegistry.Provider do
     case Keyword.get(opts, :base_url) do
       nil -> configured_url(provider)
       url when is_binary(url) -> url
+      other -> raise ArgumentError, "expected :base_url to be a string, got: #{inspect(other)}"
     end
   end
 

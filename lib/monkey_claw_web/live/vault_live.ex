@@ -61,6 +61,7 @@ defmodule MonkeyClawWeb.VaultLive do
       |> assign(:show_form, false)
       |> assign(:form, nil)
       |> assign(:form_errors, [])
+      |> assign(:refreshing_models, false)
 
     {:ok, socket, layout: {MonkeyClawWeb.Layouts, :app}}
   end
@@ -141,7 +142,14 @@ defmodule MonkeyClawWeb.VaultLive do
             {:noreply, socket}
 
           {:error, changeset} ->
-            {:noreply, assign(socket, :form_errors, format_changeset_errors(changeset))}
+            form = to_form(params)
+
+            socket =
+              socket
+              |> assign(:form, form)
+              |> assign(:form_errors, format_changeset_errors(changeset))
+
+            {:noreply, socket}
         end
     end
   end
@@ -197,24 +205,53 @@ defmodule MonkeyClawWeb.VaultLive do
   # ── Model Events ───────────────────────────────────────────
 
   def handle_event("refresh_models", _params, socket) do
-    case safe_refresh_models() do
-      :ok ->
-        socket =
-          socket
-          |> assign(:models, list_models())
-          |> put_flash(:info, "Models refreshed")
+    case Process.whereis(ModelRegistry) do
+      nil ->
+        {:noreply, put_flash(socket, :error, "Failed to refresh models: Model registry is not running")}
 
-        {:noreply, socket}
+      _pid ->
+        lv = self()
 
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Failed to refresh models: #{reason}")}
+        Task.Supervisor.start_child(MonkeyClaw.TaskSupervisor, fn ->
+          result =
+            try do
+              safe_refresh_models()
+            catch
+              kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
+            end
+
+          send(lv, {:refresh_models_result, result})
+        end)
+
+        {:noreply, assign(socket, :refreshing_models, true)}
     end
+  end
+
+  # ── Async Refresh Results ───────────────────────────────────
+
+  @impl true
+  def handle_info({:refresh_models_result, :ok}, socket) do
+    socket =
+      socket
+      |> assign(:models, list_models())
+      |> assign(:refreshing_models, false)
+      |> put_flash(:info, "Models refreshed")
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:refresh_models_result, {:error, reason}}, socket) do
+    socket =
+      socket
+      |> assign(:refreshing_models, false)
+      |> put_flash(:error, "Failed to refresh models: #{reason}")
+
+    {:noreply, socket}
   end
 
   # Forward notification PubSub messages to the NotificationLive component.
   # The NotificationHook subscribes to the global topic. Messages arrive
   # in the parent LiveView process and are forwarded via send_update/3.
-  @impl true
   def handle_info({:notification_created, _notification} = _msg, socket) do
     {:noreply, socket}
   end
@@ -487,8 +524,16 @@ defmodule MonkeyClawWeb.VaultLive do
     ~H"""
     <div class="space-y-4">
       <div class="flex justify-end">
-        <button phx-click="refresh_models" class="btn btn-primary btn-sm gap-2">
-          <.icon name="hero-arrow-path" class="size-4" /> Refresh Models
+        <button
+          phx-click="refresh_models"
+          class="btn btn-primary btn-sm gap-2"
+          disabled={@refreshing_models}
+        >
+          <.icon
+            name="hero-arrow-path"
+            class={["size-4", @refreshing_models && "animate-spin"]}
+          />
+          {if @refreshing_models, do: "Refreshing...", else: "Refresh Models"}
         </button>
       </div>
 

@@ -103,11 +103,11 @@ defmodule MonkeyClaw.VaultTest do
       assert errors_on(changeset)[:name]
     end
 
-    test "rejects missing value (no encrypted_value produced)" do
+    test "rejects missing value" do
       workspace = insert_workspace!()
 
       assert {:error, changeset} = Vault.create_secret(workspace, %{name: "my_key"})
-      assert errors_on(changeset)[:encrypted_value]
+      assert errors_on(changeset)[:value]
     end
   end
 

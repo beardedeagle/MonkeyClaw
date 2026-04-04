@@ -274,9 +274,6 @@ defmodule MonkeyClaw.Vault do
     rest = Map.delete(rest, :encrypted_value) |> Map.delete("encrypted_value")
 
     case value do
-      nil ->
-        {:ok, rest}
-
       plaintext when is_binary(plaintext) and byte_size(plaintext) > 0 ->
         case Crypto.encrypt(plaintext) do
           {:ok, ciphertext} ->
@@ -292,7 +289,12 @@ defmodule MonkeyClaw.Vault do
         end
 
       _ ->
-        {:ok, rest}
+        changeset =
+          %Secret{}
+          |> Ecto.Changeset.change()
+          |> Ecto.Changeset.add_error(:value, "can't be blank")
+
+        {:error, changeset}
     end
   end
 

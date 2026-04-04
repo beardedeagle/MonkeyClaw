@@ -533,7 +533,7 @@ defmodule MonkeyClaw.Factory do
   Delegates to `MonkeyClaw.Vault.create_secret/2`.
   Raises on validation failure.
   """
-  @spec insert_vault_secret!(MonkeyClaw.Workspaces.Workspace.t(), Enumerable.t()) ::
+  @spec insert_vault_secret!(MonkeyClaw.Workspaces.Workspace.t(), map() | keyword()) ::
           MonkeyClaw.Vault.Secret.t()
   def insert_vault_secret!(workspace, overrides \\ %{}) do
     {:ok, secret} = Vault.create_secret(workspace, vault_secret_attrs(overrides))
@@ -546,7 +546,7 @@ defmodule MonkeyClaw.Factory do
   Delegates to `MonkeyClaw.Vault.store_token/2`.
   Raises on validation failure.
   """
-  @spec insert_vault_token!(MonkeyClaw.Workspaces.Workspace.t(), Enumerable.t()) ::
+  @spec insert_vault_token!(MonkeyClaw.Workspaces.Workspace.t(), map() | keyword()) ::
           MonkeyClaw.Vault.Token.t()
   def insert_vault_token!(workspace, overrides \\ %{}) do
     {:ok, token} = Vault.store_token(workspace, vault_token_attrs(overrides))
