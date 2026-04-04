@@ -167,7 +167,7 @@ defmodule MonkeyClaw.Vault do
     end
   end
 
-  # ── Tokens ───────────────────────────────────────���───────────
+  # ── Tokens ─────────────────────────────────────────────────────
 
   @doc """
   Store an OAuth token for a provider in a workspace.
@@ -177,21 +177,13 @@ defmodule MonkeyClaw.Vault do
   """
   @spec store_token(Workspace.t(), map()) :: {:ok, Token.t()} | {:error, Ecto.Changeset.t()}
   def store_token(%Workspace{} = workspace, attrs) when is_map(attrs) do
-    # Check for existing token to decide insert vs update
-    provider = Map.get(attrs, :provider) || Map.get(attrs, "provider")
-
-    case get_token(workspace.id, provider) do
-      {:ok, existing} ->
-        existing
-        |> Token.update_changeset(attrs)
-        |> Repo.update()
-
-      {:error, :not_found} ->
-        workspace
-        |> Ecto.build_assoc(:vault_tokens)
-        |> Token.create_changeset(attrs)
-        |> Repo.insert()
-    end
+    workspace
+    |> Ecto.build_assoc(:vault_tokens)
+    |> Token.create_changeset(attrs)
+    |> Repo.insert(
+      on_conflict: {:replace_all_except, [:id, :workspace_id, :provider, :inserted_at]},
+      conflict_target: [:workspace_id, :provider]
+    )
   end
 
   @doc """

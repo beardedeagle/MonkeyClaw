@@ -114,37 +114,47 @@ defmodule MonkeyClawWeb.VaultLive do
   end
 
   def handle_event("save_secret", %{"secret" => params}, socket) do
-    workspace = socket.assigns.workspace
+    case socket.assigns.workspace do
+      nil ->
+        {:noreply, put_flash(socket, :error, "No workspace available")}
 
-    attrs = %{
-      name: params["name"],
-      value: params["value"],
-      description: non_empty_or_nil(params["description"]),
-      provider: non_empty_or_nil(params["provider"])
-    }
+      workspace ->
+        attrs = %{
+          name: params["name"],
+          value: params["value"],
+          description: non_empty_or_nil(params["description"]),
+          provider: non_empty_or_nil(params["provider"])
+        }
 
-    case Vault.create_secret(workspace, attrs) do
-      {:ok, _secret} ->
-        socket =
-          socket
-          |> assign(:secrets, list_secrets(workspace))
-          |> assign(:show_form, false)
-          |> assign(:form, nil)
-          |> assign(:form_errors, [])
-          |> put_flash(:info, "Secret created")
+        case Vault.create_secret(workspace, attrs) do
+          {:ok, _secret} ->
+            socket =
+              socket
+              |> assign(:secrets, list_secrets(workspace))
+              |> assign(:show_form, false)
+              |> assign(:form, nil)
+              |> assign(:form_errors, [])
+              |> put_flash(:info, "Secret created")
 
-        {:noreply, socket}
+            {:noreply, socket}
 
-      {:error, changeset} ->
-        {:noreply, assign(socket, :form_errors, format_changeset_errors(changeset))}
+          {:error, changeset} ->
+            {:noreply, assign(socket, :form_errors, format_changeset_errors(changeset))}
+        end
     end
   end
 
   def handle_event("delete_secret", %{"id" => id}, socket) do
+    workspace = socket.assigns.workspace
+
     with {:ok, secret} <- Vault.get_secret(id),
+         true <- secret.workspace_id == workspace.id,
          {:ok, _} <- Vault.delete_secret(secret) do
-      {:noreply, assign(socket, :secrets, list_secrets(socket.assigns.workspace))}
+      {:noreply, assign(socket, :secrets, list_secrets(workspace))}
     else
+      false ->
+        {:noreply, put_flash(socket, :error, "Secret not found")}
+
       {:error, :not_found} ->
         {:noreply, put_flash(socket, :error, "Secret not found")}
 
@@ -156,10 +166,16 @@ defmodule MonkeyClawWeb.VaultLive do
   # ── Token Events ───────────────────────────────────────────
 
   def handle_event("delete_token", %{"id" => id}, socket) do
+    workspace = socket.assigns.workspace
+
     with {:ok, token} <- fetch_token_by_id(id),
+         true <- token.workspace_id == workspace.id,
          {:ok, _} <- Vault.delete_token(token) do
-      {:noreply, assign(socket, :tokens, list_tokens(socket.assigns.workspace))}
+      {:noreply, assign(socket, :tokens, list_tokens(workspace))}
     else
+      false ->
+        {:noreply, put_flash(socket, :error, "Token not found")}
+
       {:error, :not_found} ->
         {:noreply, put_flash(socket, :error, "Token not found")}
 

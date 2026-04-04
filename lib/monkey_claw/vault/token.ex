@@ -11,7 +11,7 @@ defmodule MonkeyClaw.Vault.Token do
 
   ## Fields
 
-    * `:provider` �� Provider identifier (anthropic, openai, google, github_copilot)
+    * `:provider` — Provider identifier (anthropic, openai, google, github_copilot)
     * `:access_token` — Encrypted OAuth access token (auto-decrypt on load)
     * `:refresh_token` — Encrypted OAuth refresh token (auto-decrypt on load, optional)
     * `:token_type` — Token type, typically "Bearer"

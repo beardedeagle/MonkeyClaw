@@ -37,7 +37,7 @@ capabilities with security built into the platform, not patched on top.
 ├─────────────────────────────────────────────────────┤
 │  Product Layer                                       │
 │  MonkeyClaw — assistants · workspaces · experiments  │
-│  scheduling · user modeling �� webhooks · notifs ·    │
+│  scheduling · user modeling · webhooks · notifs ·     │
 │  channels · vault · model registry                   │
 ├─────────────────────────────────────────────────────┤
 │  Extension Layer                                    │
