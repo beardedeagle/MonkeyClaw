@@ -44,6 +44,8 @@ defmodule MonkeyClaw.Workspaces.Workspace do
   alias MonkeyClaw.Sessions.Session
   alias MonkeyClaw.Skills.Skill
   alias MonkeyClaw.UserModeling.UserProfile
+  alias MonkeyClaw.Vault.Secret, as: VaultSecret
+  alias MonkeyClaw.Vault.Token, as: VaultToken
   alias MonkeyClaw.Webhooks.WebhookEndpoint
   alias MonkeyClaw.Workspaces.Channel
 
@@ -80,6 +82,8 @@ defmodule MonkeyClaw.Workspaces.Workspace do
     has_many :schedule_entries, ScheduleEntry
     has_many :sessions, Session
     has_many :skills, Skill
+    has_many :vault_secrets, VaultSecret
+    has_many :vault_tokens, VaultToken
     has_many :webhook_endpoints, WebhookEndpoint
     has_one :user_profile, UserProfile
 

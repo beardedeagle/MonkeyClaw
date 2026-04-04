@@ -37,8 +37,8 @@ capabilities with security built into the platform, not patched on top.
 ├─────────────────────────────────────────────────────┤
 │  Product Layer                                       │
 │  MonkeyClaw — assistants · workspaces · experiments  │
-│  scheduling · user modeling · webhooks · notifs ·    │
-│  channels                                            │
+│  scheduling · user modeling · webhooks · notifs ·     │
+│  channels · vault · model registry                   │
 ├─────────────────────────────────────────────────────┤
 │  Extension Layer                                    │
 │  Plug pipelines — hooks · contexts · pipelines      │
@@ -80,8 +80,10 @@ Clean separation of concerns, connected through a public Elixir API.
 | **Webhooks**  | `MonkeyClaw.Webhooks`                | Multi-source webhook ingress (16 built-in sources) with source-specific signature verification, replay detection, rate limiting, and async agent dispatch |
 | **Notifications** | `MonkeyClaw.Notifications`       | Event-driven notification system — routes telemetry events to user-facing alerts via PubSub (real-time) and email (async), with workspace-scoped rules, severity thresholds, and ETS-cached routing |
 | **Channels** | `MonkeyClaw.Channels`                    | Bi-directional platform adapters — Slack, Discord, Telegram, WhatsApp, Web — with adapter behaviour, message recording, webhook verification, and async agent dispatch |
+| **Vault** | `MonkeyClaw.Vault`                           | Encrypted secret and OAuth token storage with `@secret:name` opaque references — model never sees plaintext; AES-256-GCM encryption at rest with HKDF-derived keys |
+| **ModelRegistry** | `MonkeyClaw.ModelRegistry`             | Periodic provider model list cache — GenServer with SQLite persistence, ETS write-through, and configurable refresh intervals |
 
-Contexts (`MonkeyClaw.Assistants`, `MonkeyClaw.Workspaces`, `MonkeyClaw.Webhooks`, `MonkeyClaw.Notifications`, `MonkeyClaw.Channels`) provide the
+Contexts (`MonkeyClaw.Assistants`, `MonkeyClaw.Workspaces`, `MonkeyClaw.Webhooks`, `MonkeyClaw.Notifications`, `MonkeyClaw.Channels`, `MonkeyClaw.Vault`) provide the
 public CRUD API. `MonkeyClaw.AgentBridge` translates domain objects into
 BeamAgent session and thread configurations. `MonkeyClaw.Workflows`
 composes these into user-facing operations.
@@ -305,8 +307,12 @@ Configuration is via application config alongside other plugs:
 
     config :monkey_claw, MonkeyClaw.Extensions,
       hooks: %{
-        query_post: [{MonkeyClaw.UserModeling.ObservationPlug, []}],
+        query_post: [
+          {MonkeyClaw.Vault.SecretScannerPlug, []},
+          {MonkeyClaw.UserModeling.ObservationPlug, []}
+        ],
         query_pre: [
+          {MonkeyClaw.Vault.SecretScannerPlug, []},
           {MonkeyClaw.Recall.Plug, max_results: 10, max_chars: 4000},
           {MonkeyClaw.Skills.Plug, max_skills: 5, max_chars: 2000},
           {MonkeyClaw.UserModeling.InjectionPlug, min_query_length: 10}
@@ -478,6 +484,75 @@ maps (API tokens, channel IDs, signing secrets). The web adapter is the
 default channel for every workspace, requiring no external credentials.
 A LiveView management interface provides CRUD for channel configs with
 adapter-specific form fields and enable/disable toggling.
+
+### Vault & Secret Management
+
+Encrypted storage for API keys and OAuth tokens with opaque references
+that prevent the AI model from ever seeing plaintext secret values.
+Configuration references secrets via `@secret:name` strings; resolution
+to plaintext occurs only at HTTP call boundaries in the process making
+the external API call.
+
+Four-layer architecture:
+
+| Layer | Module | Owns |
+|-------|--------|------|
+| **Vault** | `MonkeyClaw.Vault` | Secret and token CRUD, encryption, resolution |
+| **Crypto** | `MonkeyClaw.Vault.Crypto` | AES-256-GCM encrypt/decrypt with HKDF key derivation from BEAM cookie |
+| **Reference** | `MonkeyClaw.Vault.Reference` | `@secret:name` validation, extraction, recursive resolution |
+| **SecretScanner** | `MonkeyClaw.Vault.SecretScanner` | 14 regex patterns detecting leaked secrets in prompts and responses |
+
+Security design:
+
+- **Encryption at rest** — AES-256-GCM with random 96-bit IVs. Keys
+  derived from the BEAM cookie via HKDF-SHA256 and cached in
+  `:persistent_term`.
+- **Opaque references** — The model sees `@secret:anthropic_key`, never
+  the plaintext. Resolution happens exclusively in
+  `Vault.resolve_secret/2`.
+- **Secret scanning** — Extension plugs scan both inbound prompts
+  (`query_pre`) and outbound responses (`query_post`) for 14 secret
+  patterns (AWS, GitHub, Slack, Stripe, OpenAI, Anthropic, etc.),
+  redacting matches before they reach the model.
+- **OAuth tokens** — Auto-encrypted via `EncryptedField` custom Ecto
+  type with expiry tracking and upsert semantics (one token per
+  provider per workspace).
+
+Secrets are data entities, not processes. The vault context is a
+stateless Ecto-backed module — no GenServer overhead. The secret
+scanner runs as extension plugs in the compiled pipeline.
+
+A LiveView management interface at `/vault` provides three tabs:
+Secrets (create, list, delete — values never displayed after creation),
+Tokens (list with active/expired status, delete), and Models (browse
+cached models grouped by provider, trigger refresh).
+
+### Model Registry
+
+Periodic refresh of available AI models from provider APIs, with
+SQLite persistence and ETS write-through cache for low-latency reads.
+
+Two-layer architecture:
+
+| Layer | Module | Owns |
+|-------|--------|------|
+| **ModelRegistry** | `MonkeyClaw.ModelRegistry` | GenServer — ETS table lifecycle, periodic refresh timer, serialized writes |
+| **Provider** | `MonkeyClaw.ModelRegistry.Provider` | HTTP fetching via Req for Anthropic, OpenAI, and Google APIs |
+
+The GenServer is justified because it manages concurrent state (ETS
+table ownership), periodic work (configurable refresh interval), and
+serialized writes (preventing concurrent refresh races). Reads bypass
+the GenServer entirely — ETS with `:read_concurrency` enabled.
+
+Graceful degradation: provider API failures log warnings and preserve
+stale cache. Vault resolution failures skip that provider. The
+GenServer never crashes on refresh failure. The LiveView handles
+a missing ModelRegistry process (disabled in test config) by showing
+an empty state.
+
+Runtime reconfiguration via `ModelRegistry.configure/1` allows changing
+the workspace ID and provider secret mappings without restarting the
+process.
 
 ### Dashboard
 

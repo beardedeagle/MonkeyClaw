@@ -32,6 +32,7 @@ defmodule MonkeyClaw.Factory do
   alias MonkeyClaw.Sessions
   alias MonkeyClaw.Skills
   alias MonkeyClaw.UserModeling
+  alias MonkeyClaw.Vault
   alias MonkeyClaw.Webhooks
   alias MonkeyClaw.Workspaces
 
@@ -485,6 +486,71 @@ defmodule MonkeyClaw.Factory do
   def insert_notification_rule!(workspace, overrides \\ %{}) do
     {:ok, rule} = Notifications.create_rule(workspace, notification_rule_attrs(overrides))
     rule
+  end
+
+  # ──────────────────────────────────────────────
+  # Vault Builders
+  # ──────────────────────────────────────────────
+
+  @doc """
+  Build a map of valid vault secret attributes.
+
+  Generates a unique name with a test value. The `:value` field
+  is the plaintext that `Vault.create_secret/2` encrypts.
+  """
+  @spec vault_secret_attrs(Enumerable.t()) :: map()
+  def vault_secret_attrs(overrides \\ %{}) do
+    Map.merge(
+      %{
+        name: "secret-#{System.unique_integer([:positive])}",
+        value: "test-secret-value-#{System.unique_integer([:positive])}",
+        description: "A test secret"
+      },
+      Map.new(overrides)
+    )
+  end
+
+  @doc """
+  Build a map of valid vault token attributes.
+
+  Generates test OAuth token values.
+  """
+  @spec vault_token_attrs(Enumerable.t()) :: map()
+  def vault_token_attrs(overrides \\ %{}) do
+    Map.merge(
+      %{
+        provider: "anthropic",
+        access_token: "test-access-token-#{System.unique_integer([:positive])}",
+        token_type: "Bearer"
+      },
+      Map.new(overrides)
+    )
+  end
+
+  @doc """
+  Insert a vault secret into the database within a workspace.
+
+  Delegates to `MonkeyClaw.Vault.create_secret/2`.
+  Raises on validation failure.
+  """
+  @spec insert_vault_secret!(MonkeyClaw.Workspaces.Workspace.t(), map() | keyword()) ::
+          MonkeyClaw.Vault.Secret.t()
+  def insert_vault_secret!(workspace, overrides \\ %{}) do
+    {:ok, secret} = Vault.create_secret(workspace, vault_secret_attrs(overrides))
+    secret
+  end
+
+  @doc """
+  Insert a vault token into the database within a workspace.
+
+  Delegates to `MonkeyClaw.Vault.store_token/2`.
+  Raises on validation failure.
+  """
+  @spec insert_vault_token!(MonkeyClaw.Workspaces.Workspace.t(), map() | keyword()) ::
+          MonkeyClaw.Vault.Token.t()
+  def insert_vault_token!(workspace, overrides \\ %{}) do
+    {:ok, token} = Vault.store_token(workspace, vault_token_attrs(overrides))
+    token
   end
 
   # ──────────────────────────────────────────────

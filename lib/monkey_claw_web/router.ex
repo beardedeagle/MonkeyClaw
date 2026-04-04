@@ -79,6 +79,8 @@ defmodule MonkeyClawWeb.Router do
       live "/chat/:workspace_id", ChatLive
       live "/channels", ChannelLive
       live "/channels/:workspace_id", ChannelLive
+      live "/vault", VaultLive
+      live "/vault/:workspace_id", VaultLive
     end
   end
 

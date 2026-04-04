@@ -322,6 +322,16 @@
         <h3>Channel Adapters</h3>
         <p>Bi-directional messaging with Slack, Discord, Telegram, WhatsApp, and the web UI. Stateless adapter behaviour with platform-specific webhook verification (HMAC-SHA256, Ed25519), inbound parsing, outbound delivery via supervised async tasks, and global notifications across all pages.</p>
       </div>
+      <div class="feature">
+        <div class="feature-icon">&#128273;</div>
+        <h3>Vault &amp; Secret Management</h3>
+        <p>Encrypted API key and OAuth token storage with <code>@secret:name</code> opaque references &mdash; the AI model never sees plaintext. AES-256-GCM encryption at rest, HKDF-derived keys, secret scanning guardrails (14 patterns), and a LiveView management UI.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">&#129302;</div>
+        <h3>Model Registry</h3>
+        <p>Periodic provider model list cache with SQLite persistence and ETS write-through for low-latency reads. GenServer-managed refresh cycles for Anthropic, OpenAI, and Google APIs with graceful degradation on failures.</p>
+      </div>
     </div>
   </section>
 
@@ -341,7 +351,7 @@
       <div class="arch-arrow">&#9660;</div>
       <div class="arch-layer arch-product">
         <div class="arch-label">Product Layer</div>
-        <div class="arch-content">MonkeyClaw &mdash; assistants &middot; workspaces &middot; experiments &middot; scheduling &middot; user modeling &middot; webhooks &middot; notifications &middot; channels</div>
+        <div class="arch-content">MonkeyClaw &mdash; assistants &middot; workspaces &middot; experiments &middot; scheduling &middot; user modeling &middot; webhooks &middot; notifications &middot; channels &middot; vault &middot; model registry</div>
       </div>
       <div class="arch-arrow">&#9660;</div>
       <div class="arch-layer arch-bridge">

@@ -7,8 +7,16 @@ import Config
 # Run `mix help test` for more information.
 config :monkey_claw, MonkeyClaw.Repo,
   database: Path.expand("../monkey_claw_test.db", __DIR__),
-  pool_size: 5,
-  pool: Ecto.Adapters.SQL.Sandbox
+  # SQLite allows one writer at a time. pool_size: 1 ensures a single
+  # DB connection, eliminating write contention entirely. Tests are
+  # serialized for DB access but non-DB tests run concurrently. This
+  # is the only reliable approach for SQLite + Sandbox on slow CI
+  # runners where contention windows can exceed 90 seconds.
+  pool_size: 1,
+  pool: Ecto.Adapters.SQL.Sandbox,
+  busy_timeout: 2_000,
+  timeout: 60_000,
+  ownership_timeout: 120_000
 
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
@@ -30,6 +38,7 @@ config :swoosh, :api_client, false
 config :monkey_claw, :start_notification_router, false
 config :monkey_claw, :start_scheduler, false
 config :monkey_claw, :start_observer, false
+config :monkey_claw, :start_model_registry, false
 
 # Print only warnings and errors during test
 config :logger, level: :warning
