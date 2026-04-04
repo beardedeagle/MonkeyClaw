@@ -207,23 +207,28 @@ defmodule MonkeyClawWeb.VaultLive do
   def handle_event("refresh_models", _params, socket) do
     case Process.whereis(ModelRegistry) do
       nil ->
-        {:noreply, put_flash(socket, :error, "Failed to refresh models: Model registry is not running")}
+        {:noreply,
+         put_flash(socket, :error, "Failed to refresh models: Model registry is not running")}
 
       _pid ->
         lv = self()
 
-        Task.Supervisor.start_child(MonkeyClaw.TaskSupervisor, fn ->
-          result =
-            try do
-              safe_refresh_models()
-            catch
-              kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
-            end
+        case Task.Supervisor.start_child(MonkeyClaw.TaskSupervisor, fn ->
+               result =
+                 try do
+                   safe_refresh_models()
+                 catch
+                   kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
+                 end
 
-          send(lv, {:refresh_models_result, result})
-        end)
+               send(lv, {:refresh_models_result, result})
+             end) do
+          {:ok, _child} ->
+            {:noreply, assign(socket, :refreshing_models, true)}
 
-        {:noreply, assign(socket, :refreshing_models, true)}
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, "Failed to refresh models: #{inspect(reason)}")}
+        end
     end
   end
 
