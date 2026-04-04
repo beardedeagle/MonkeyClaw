@@ -8,7 +8,12 @@ import Config
 config :monkey_claw, MonkeyClaw.Repo,
   database: Path.expand("../monkey_claw_test.db", __DIR__),
   pool_size: 5,
-  pool: Ecto.Adapters.SQL.Sandbox
+  pool: Ecto.Adapters.SQL.Sandbox,
+  # SQLite allows one writer at a time. With Sandbox mode, write locks
+  # are held for entire test durations. A higher busy_timeout lets
+  # concurrent async tests wait for each other rather than failing
+  # with "Database busy".
+  busy_timeout: 10_000
 
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
