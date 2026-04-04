@@ -278,18 +278,15 @@ defmodule MonkeyClaw.ModelRegistry do
   defp do_refresh_provider(provider, %State{} = state) do
     opts = build_provider_opts(provider, state)
 
-    case Provider.fetch_models(provider, opts) do
-      {:ok, model_attrs_list} ->
-        now = DateTime.utc_now()
-        upsert_models(provider, model_attrs_list, now)
-        delete_stale_models(provider, model_attrs_list)
-        models = load_from_sqlite(provider)
-        ets_put(provider, models)
-        :ok
-
+    with {:ok, model_attrs_list} <- Provider.fetch_models(provider, opts),
+         {:ok, _} <- persist_models(provider, model_attrs_list) do
+      models = load_from_sqlite(provider)
+      ets_put(provider, models)
+      :ok
+    else
       {:error, reason} ->
         Logger.warning(
-          "ModelRegistry: provider #{provider} fetch failed: #{inspect(reason)}, keeping stale cache"
+          "ModelRegistry: provider #{provider} refresh failed: #{inspect(reason)}, keeping stale cache"
         )
 
         {:error, reason}
@@ -315,6 +312,15 @@ defmodule MonkeyClaw.ModelRegistry do
 
   # ── Private — SQLite Persistence ────────────────────────────
 
+  defp persist_models(provider, model_attrs_list) do
+    now = DateTime.utc_now()
+
+    Repo.transaction(fn ->
+      upsert_models(provider, model_attrs_list, now)
+      delete_stale_models(provider, model_attrs_list)
+    end)
+  end
+
   defp upsert_models(provider, model_attrs_list, now) do
     Enum.each(model_attrs_list, fn attrs ->
       upsert_single_model(provider, attrs, now)
@@ -322,18 +328,26 @@ defmodule MonkeyClaw.ModelRegistry do
   end
 
   defp upsert_single_model(provider, attrs, now) do
-    %CachedModel{}
-    |> CachedModel.create_changeset(%{
-      provider: provider,
-      model_id: attrs.model_id,
-      display_name: attrs.display_name,
-      capabilities: attrs.capabilities,
-      refreshed_at: now
-    })
-    |> Repo.insert!(
-      on_conflict: {:replace, [:display_name, :capabilities, :refreshed_at, :updated_at]},
-      conflict_target: [:provider, :model_id]
-    )
+    changeset =
+      %CachedModel{}
+      |> CachedModel.create_changeset(%{
+        provider: provider,
+        model_id: attrs.model_id,
+        display_name: attrs.display_name,
+        capabilities: attrs.capabilities,
+        refreshed_at: now
+      })
+
+    case Repo.insert(changeset,
+           on_conflict: {:replace, [:display_name, :capabilities, :refreshed_at, :updated_at]},
+           conflict_target: [:provider, :model_id]
+         ) do
+      {:ok, model} ->
+        model
+
+      {:error, changeset} ->
+        Repo.rollback({:upsert_failed, changeset})
+    end
   end
 
   defp delete_stale_models(provider, model_attrs_list) do

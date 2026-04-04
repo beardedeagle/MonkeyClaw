@@ -38,7 +38,10 @@ defmodule MonkeyClaw.Vault.EncryptedField do
   def dump(nil), do: {:ok, nil}
 
   def dump(value) when is_binary(value) and byte_size(value) > 0 do
-    Crypto.encrypt(value)
+    case Crypto.encrypt(value) do
+      {:ok, ciphertext} -> {:ok, ciphertext}
+      {:error, _} -> :error
+    end
   end
 
   def dump(_), do: :error

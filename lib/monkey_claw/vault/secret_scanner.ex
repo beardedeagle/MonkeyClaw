@@ -194,7 +194,10 @@ defmodule MonkeyClaw.Vault.SecretScanner do
     if byte_size(content) > max_bytes do
       {:error, :content_too_large}
     else
-      task = Task.async(fn -> run_scan(content) end)
+      # Use async_nolink so a crash in run_scan does not propagate to
+      # the caller via the linked-task exit signal. This lets the
+      # {:exit, _reason} branch reliably return {:error, :scan_crashed}.
+      task = Task.Supervisor.async_nolink(MonkeyClaw.TaskSupervisor, fn -> run_scan(content) end)
 
       case Task.yield(task, timeout_ms) do
         {:ok, findings} ->
