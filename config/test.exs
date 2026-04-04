@@ -12,8 +12,9 @@ config :monkey_claw, MonkeyClaw.Repo,
   # SQLite allows one writer at a time. With Sandbox mode, write locks
   # are held for entire test durations. A higher busy_timeout lets
   # concurrent async tests wait for each other rather than failing
-  # with "Database busy".
-  busy_timeout: 10_000
+  # with "Database busy". 30s accommodates slow CI runners (GitHub
+  # Actions) where contention is significantly worse than local dev.
+  busy_timeout: 30_000
 
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
