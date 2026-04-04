@@ -521,8 +521,19 @@ defmodule MonkeyClawWeb.VaultLiveTest do
 
       {:ok, view, _html} = live(conn, "/vault")
 
-      # Simulate a PubSub notification message arriving
-      send(view.pid, {:notification_created, %{id: "fake"}})
+      # Simulate a PubSub notification message arriving.
+      # Must include :workspace_id — NotificationHook intercepts this
+      # message and forwards to NotificationLive which accesses that field.
+      fake_notification = %{
+        id: Ecto.UUID.generate(),
+        workspace_id: Ecto.UUID.generate(),
+        title: "test",
+        body: "test notification",
+        level: :info,
+        inserted_at: DateTime.utc_now()
+      }
+
+      send(view.pid, {:notification_created, fake_notification})
 
       # LiveView should still be alive and rendering
       html = render(view)
