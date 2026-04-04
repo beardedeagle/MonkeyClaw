@@ -16,7 +16,12 @@ config :monkey_claw, MonkeyClaw.Repo,
   # With Sandbox mode, write locks are held for entire test durations.
   # A high busy_timeout lets blocked writers wait rather than failing
   # with "Database busy".
-  busy_timeout: 30_000
+  busy_timeout: 30_000,
+  # DBConnection's default timeout (15s) kills connections before
+  # SQLite's busy_timeout (30s) can resolve. Set higher so the busy
+  # wait completes without DBConnection disconnecting the connection.
+  timeout: 60_000,
+  ownership_timeout: 120_000
 
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
