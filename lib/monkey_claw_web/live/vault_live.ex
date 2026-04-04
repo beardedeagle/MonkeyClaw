@@ -619,8 +619,11 @@ defmodule MonkeyClawWeb.VaultLive do
     |> Enum.map(& &1.refreshed_at)
     |> Enum.reject(&is_nil/1)
     |> case do
-      [] -> "Never"
-      timestamps -> timestamps |> Enum.max(fn a, b -> DateTime.compare(a, b) != :lt end) |> format_datetime()
+      [] ->
+        "Never"
+
+      timestamps ->
+        timestamps |> Enum.max(fn a, b -> DateTime.compare(a, b) != :lt end) |> format_datetime()
     end
   end
 
