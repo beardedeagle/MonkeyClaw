@@ -20,6 +20,10 @@ defmodule MonkeyClaw.Vault.SecretScanner do
       (default 100 ms). If the task exceeds the timeout it is shut
       down and `{:error, :timeout}` is returned, preventing slow
       regexes from blocking the caller.
+    * When a regex contains a capture group, findings target the
+      captured substring (the sensitive value) rather than the full
+      match, avoiding redaction of surrounding context such as URL
+      schemes or `api_key=` prefixes.
     * Redaction processes findings in reverse byte-offset order so
       that replacing earlier matches does not invalidate the offsets
       of later ones.
@@ -272,7 +276,14 @@ defmodule MonkeyClaw.Vault.SecretScanner do
   defp scan_pattern(content, %{name: name, pattern: regex, label: label, severity: severity}) do
     regex
     |> Regex.scan(content, return: :index)
-    |> Enum.map(fn [{start, length} | _captures] ->
+    |> Enum.map(fn matches ->
+      # Prefer the deepest capture group (the sensitive value) over the
+      # full match. Patterns like PASSWORD_URL and GENERIC_API_KEY include
+      # surrounding context (URL scheme, "api_key=" prefix) in the full
+      # match but isolate just the secret in the capture group. Patterns
+      # without capture groups (PRIVATE_KEY, SLACK_WEBHOOK) return only
+      # the full match, which List.last/1 returns unchanged.
+      {start, length} = List.last(matches)
       matched = binary_part(content, start, length)
 
       %{
