@@ -205,30 +205,12 @@ defmodule MonkeyClawWeb.VaultLive do
   # ── Model Events ───────────────────────────────────────────
 
   def handle_event("refresh_models", _params, socket) do
-    case Process.whereis(ModelRegistry) do
-      nil ->
-        {:noreply,
-         put_flash(socket, :error, "Failed to refresh models: Model registry is not running")}
+    case spawn_refresh_task() do
+      {:ok, _child} ->
+        {:noreply, assign(socket, :refreshing_models, true)}
 
-      _pid ->
-        lv = self()
-
-        case Task.Supervisor.start_child(MonkeyClaw.TaskSupervisor, fn ->
-               result =
-                 try do
-                   safe_refresh_models()
-                 catch
-                   kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
-                 end
-
-               send(lv, {:refresh_models_result, result})
-             end) do
-          {:ok, _child} ->
-            {:noreply, assign(socket, :refreshing_models, true)}
-
-          {:error, reason} ->
-            {:noreply, put_flash(socket, :error, "Failed to refresh models: #{inspect(reason)}")}
-        end
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to refresh models: #{reason}")}
     end
   end
 
@@ -639,6 +621,32 @@ defmodule MonkeyClawWeb.VaultLive do
       ModelRegistry.refresh_all()
     else
       {:error, "Model registry is not running"}
+    end
+  end
+
+  # Spawn an async task for model refresh. Returns {:ok, pid} on
+  # success or {:error, reason} if the registry or supervisor is
+  # unavailable. Extracted from handle_event to satisfy Credo's
+  # max nesting depth of 2.
+  @spec spawn_refresh_task() :: {:ok, pid()} | {:error, String.t()}
+  defp spawn_refresh_task do
+    case Process.whereis(ModelRegistry) do
+      nil ->
+        {:error, "Model registry is not running"}
+
+      _pid ->
+        lv = self()
+
+        Task.Supervisor.start_child(MonkeyClaw.TaskSupervisor, fn ->
+          result =
+            try do
+              safe_refresh_models()
+            catch
+              kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
+            end
+
+          send(lv, {:refresh_models_result, result})
+        end)
     end
   end
 
