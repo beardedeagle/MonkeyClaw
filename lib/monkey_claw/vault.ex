@@ -151,14 +151,13 @@ defmodule MonkeyClaw.Vault do
       when is_binary(workspace_id) and is_binary(name) do
     with {:ok, secret} <- get_secret_by_name(workspace_id, name),
          {:ok, plaintext} <- Crypto.decrypt(secret.encrypted_value) do
-      # Update last_used_at asynchronously to avoid blocking the caller.
-      # Fire-and-forget is acceptable — audit timestamp is best-effort.
+      # Update last_used_at synchronously. This is a single indexed UPDATE
+      # on SQLite — microseconds. Async Task.start would risk write contention
+      # under SQLite's single-writer model and violate process discipline.
       _ =
-        Task.start(fn ->
-          secret
-          |> Secret.touch_changeset()
-          |> Repo.update()
-        end)
+        secret
+        |> Secret.touch_changeset()
+        |> Repo.update()
 
       {:ok, plaintext}
     else
