@@ -626,27 +626,34 @@ defmodule MonkeyClawWeb.VaultLive do
 
   # Spawn an async task for model refresh. Returns {:ok, pid} on
   # success or {:error, reason} if the registry or supervisor is
-  # unavailable. Extracted from handle_event to satisfy Credo's
-  # max nesting depth of 2.
+  # unavailable. Split into two functions to satisfy Credo's max
+  # nesting depth of 2.
   @spec spawn_refresh_task() :: {:ok, pid()} | {:error, String.t()}
   defp spawn_refresh_task do
     case Process.whereis(ModelRegistry) do
-      nil ->
-        {:error, "Model registry is not running"}
+      nil -> {:error, "Model registry is not running"}
+      _pid -> start_refresh_child()
+    end
+  end
 
-      _pid ->
-        lv = self()
+  defp start_refresh_child do
+    lv = self()
 
-        Task.Supervisor.start_child(MonkeyClaw.TaskSupervisor, fn ->
-          result =
-            try do
-              safe_refresh_models()
-            catch
-              kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
-            end
+    case Task.Supervisor.start_child(MonkeyClaw.TaskSupervisor, fn ->
+           result =
+             try do
+               safe_refresh_models()
+             catch
+               kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
+             end
 
-          send(lv, {:refresh_models_result, result})
-        end)
+           send(lv, {:refresh_models_result, result})
+         end) do
+      {:ok, pid} ->
+        {:ok, pid}
+
+      {:error, reason} ->
+        {:error, "Failed to start model refresh task: #{inspect(reason)}"}
     end
   end
 
