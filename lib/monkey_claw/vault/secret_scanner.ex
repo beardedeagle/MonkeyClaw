@@ -216,7 +216,10 @@ defmodule MonkeyClaw.Vault.SecretScanner do
   @doc """
   Redact all `findings` from `content`.
 
-  Replaces each matched secret with `[REDACTED:LABEL]`. Findings are
+  Replaces each matched secret with `[REDACTED:LABEL]`. Overlapping
+  findings are deduplicated first — when multiple patterns match the
+  same byte range (e.g., an OpenAI key inside an auth header), the
+  narrowest (most specific) match is kept. Remaining findings are
   processed in reverse byte-offset order so that substituting a match
   does not shift the byte positions of earlier matches.
 
@@ -226,6 +229,7 @@ defmodule MonkeyClaw.Vault.SecretScanner do
   @spec redact(String.t(), [finding()]) :: String.t()
   def redact(content, findings) when is_binary(content) and is_list(findings) do
     findings
+    |> deduplicate_findings()
     |> Enum.sort_by(& &1.start_byte, :desc)
     |> Enum.reduce(content, fn finding, acc ->
       placeholder = "[REDACTED:#{finding.label}]"
@@ -299,6 +303,45 @@ defmodule MonkeyClaw.Vault.SecretScanner do
       }
     end)
   end
+
+  # Resolve overlapping findings to prevent double-redaction.
+  # When multiple patterns match overlapping byte ranges (e.g., an
+  # OpenAI key inside a Bearer auth header), keep the narrowest
+  # (most specific) match. Ties broken by severity rank.
+  @spec deduplicate_findings([finding()]) :: [finding()]
+  defp deduplicate_findings([]), do: []
+
+  defp deduplicate_findings(findings) do
+    findings
+    |> Enum.uniq_by(&{&1.start_byte, &1.end_byte})
+    |> Enum.sort_by(&{&1.start_byte, &1.end_byte})
+    |> Enum.reduce([], fn finding, acc ->
+      case acc do
+        [prev | rest] when finding.start_byte < prev.end_byte ->
+          [pick_narrower(prev, finding) | rest]
+
+        _ ->
+          [finding | acc]
+      end
+    end)
+    |> Enum.reverse()
+  end
+
+  defp pick_narrower(a, b) do
+    a_span = a.end_byte - a.start_byte
+    b_span = b.end_byte - b.start_byte
+
+    cond do
+      a_span < b_span -> a
+      b_span < a_span -> b
+      severity_rank(a.severity) >= severity_rank(b.severity) -> a
+      true -> b
+    end
+  end
+
+  defp severity_rank(:critical), do: 2
+  defp severity_rank(:high), do: 1
+  defp severity_rank(_), do: 0
 
   @spec binary_replace(String.t(), non_neg_integer(), non_neg_integer(), String.t()) :: String.t()
   defp binary_replace(content, start_byte, end_byte, replacement) do

@@ -32,6 +32,8 @@ defmodule MonkeyClaw.Vault do
   and cached in `:persistent_term`.
   """
 
+  require Logger
+
   import Ecto.Query
 
   alias MonkeyClaw.Repo
@@ -154,10 +156,15 @@ defmodule MonkeyClaw.Vault do
       # Update last_used_at synchronously. This is a single indexed UPDATE
       # on SQLite — microseconds. Async Task.start would risk write contention
       # under SQLite's single-writer model and violate process discipline.
-      _ =
-        secret
-        |> Secret.touch_changeset()
-        |> Repo.update()
+      case secret |> Secret.touch_changeset() |> Repo.update() do
+        {:ok, _} ->
+          :ok
+
+        {:error, changeset} ->
+          Logger.warning(
+            "Vault: failed to update last_used_at for secret #{secret.id}: #{inspect(changeset.errors)}"
+          )
+      end
 
       {:ok, plaintext}
     else
