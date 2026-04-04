@@ -297,7 +297,7 @@ defmodule MonkeyClaw.VaultTest do
       assert {:error, :not_found} = Vault.resolve_secret(w2.id, "isolated_key")
     end
 
-    test "resolve_secret updates last_used_at asynchronously" do
+    test "resolve_secret updates last_used_at" do
       workspace = insert_workspace!()
       secret = insert_vault_secret!(workspace, %{name: "touch_me", value: "value"})
       assert secret.last_used_at == nil

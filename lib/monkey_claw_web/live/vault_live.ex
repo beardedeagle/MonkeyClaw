@@ -147,21 +147,25 @@ defmodule MonkeyClawWeb.VaultLive do
   end
 
   def handle_event("delete_secret", %{"id" => id}, socket) do
-    workspace = socket.assigns.workspace
+    case socket.assigns.workspace do
+      nil ->
+        {:noreply, put_flash(socket, :error, "Workspace not found")}
 
-    with {:ok, secret} <- Vault.get_secret(id),
-         true <- secret.workspace_id == workspace.id,
-         {:ok, _} <- Vault.delete_secret(secret) do
-      {:noreply, assign(socket, :secrets, list_secrets(workspace))}
-    else
-      false ->
-        {:noreply, put_flash(socket, :error, "Secret not found")}
+      workspace ->
+        with {:ok, secret} <- Vault.get_secret(id),
+             true <- secret.workspace_id == workspace.id,
+             {:ok, _} <- Vault.delete_secret(secret) do
+          {:noreply, assign(socket, :secrets, list_secrets(workspace))}
+        else
+          false ->
+            {:noreply, put_flash(socket, :error, "Secret not found")}
 
-      {:error, :not_found} ->
-        {:noreply, put_flash(socket, :error, "Secret not found")}
+          {:error, :not_found} ->
+            {:noreply, put_flash(socket, :error, "Secret not found")}
 
-      {:error, changeset} ->
-        {:noreply, put_flash(socket, :error, format_errors(changeset))}
+          {:error, changeset} ->
+            {:noreply, put_flash(socket, :error, format_errors(changeset))}
+        end
     end
   end
 

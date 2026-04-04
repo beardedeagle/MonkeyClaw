@@ -269,6 +269,10 @@ defmodule MonkeyClaw.Vault do
   defp encrypt_value(attrs) do
     {value, rest} = pop_value(attrs)
 
+    # Strip any caller-supplied :encrypted_value to prevent bypass
+    # of the encryption layer via direct ciphertext injection.
+    rest = Map.delete(rest, :encrypted_value) |> Map.delete("encrypted_value")
+
     case value do
       nil ->
         {:ok, rest}

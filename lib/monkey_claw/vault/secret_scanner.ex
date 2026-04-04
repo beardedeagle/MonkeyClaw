@@ -1,12 +1,14 @@
 defmodule MonkeyClaw.Vault.SecretScanner do
   @moduledoc """
-  Regex-based secret detection and redaction for outbound content.
+  Regex-based secret detection and redaction for content flowing
+  through the extension pipeline.
 
   SecretScanner scans arbitrary text for 14 categories of secrets —
   API keys, tokens, private keys, passwords, and webhook URLs — and
   can redact discovered values with opaque `[REDACTED:LABEL]`
-  placeholders before content reaches the AI model or external
-  services.
+  placeholders. Used by `SecretScannerPlug` on both inbound prompts
+  (`:query_pre`) and outbound assistant responses (`:query_post`)
+  to prevent secret leakage in either direction.
 
   ## Security Properties
 
@@ -189,6 +191,9 @@ defmodule MonkeyClaw.Vault.SecretScanner do
       case Task.yield(task, timeout_ms) do
         {:ok, findings} ->
           {:ok, findings}
+
+        {:exit, _reason} ->
+          {:error, :scan_crashed}
 
         nil ->
           _ = Task.shutdown(task, :brutal_kill)
