@@ -372,7 +372,7 @@ defmodule MonkeyClaw.ModelRegistry do
       refreshed_at =
         models
         |> Enum.map(& &1.refreshed_at)
-        |> Enum.max(DateTime, fn -> DateTime.utc_now() end)
+        |> Enum.max(fn a, b -> DateTime.compare(a, b) != :lt end, fn -> DateTime.utc_now() end)
 
       :ets.insert(ets_table, {provider, models, refreshed_at})
     end)
