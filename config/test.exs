@@ -14,14 +14,12 @@ config :monkey_claw, MonkeyClaw.Repo,
   pool_size: 2,
   pool: Ecto.Adapters.SQL.Sandbox,
   # With Sandbox mode, write locks are held for entire test durations.
-  # On the slowest CI runners (Elixir 1.17/OTP 27), individual tests
-  # can hold write locks for 30+ seconds. busy_timeout must exceed
-  # the longest possible lock hold time.
-  busy_timeout: 120_000,
-  # DBConnection timeout must exceed busy_timeout so the busy wait
-  # completes without DBConnection disconnecting the connection.
-  timeout: 180_000,
-  ownership_timeout: 300_000
+  # The slowest CI runner (Elixir 1.17/OTP 27) takes 130+ seconds for
+  # the async portion. These timeouts are safety nets — not normal-path
+  # values. Genuine deadlocks are caught by ExUnit's test timeout.
+  busy_timeout: 600_000,
+  timeout: 600_000,
+  ownership_timeout: 600_000
 
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
