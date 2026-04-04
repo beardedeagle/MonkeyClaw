@@ -22,8 +22,10 @@ defmodule MonkeyClaw.ModelRegistry do
 
   The ETS table stores `{provider, [%CachedModel{}], refreshed_at}`
   tuples. Read-concurrency is enabled since reads dominate. The table
-  is `:public` for direct read access from any process; writes go
-  through the GenServer.
+  is `:public` for direct read access from any process. Refresh writes
+  go through the GenServer to serialize provider updates. Cache-miss
+  warming in `list_models/1` writes from the caller process — this is
+  safe because ETS `:set` tables provide atomic single-key inserts.
 
   ## Graceful Degradation
 

@@ -236,9 +236,9 @@ defmodule MonkeyClawWeb.VaultLive do
     {:noreply, socket}
   end
 
-  # Forward notification PubSub messages to the NotificationLive component.
-  # The NotificationHook subscribes to the global topic. Messages arrive
-  # in the parent LiveView process and are forwarded via send_update/3.
+  # NotificationHook handles :notification_created messages before they reach
+  # this LiveView. Keep this clause as a defensive no-op fallback in case a
+  # notification message is delivered directly to the parent process.
   def handle_info({:notification_created, _notification} = _msg, socket) do
     {:noreply, socket}
   end
