@@ -77,15 +77,16 @@ config :monkey_claw, :default_model, "claude-sonnet-4-6"
 
 # Extension plug pipeline — hooks for query pre/post processing.
 # Plug execution order within a hook point is declaration order.
-# query_post: ObservationPlug records user interactions for modeling.
+# query_post: SecretScannerPlug runs FIRST to redact secrets before
+#   ObservationPlug records the response for user modeling.
 # query_pre: Recall.Plug injects cross-session recall context,
 #   Skills.Plug injects relevant skill procedures,
 #   InjectionPlug prepends personalized user context.
 config :monkey_claw, MonkeyClaw.Extensions,
   hooks: %{
     query_post: [
-      {MonkeyClaw.UserModeling.ObservationPlug, []},
-      {MonkeyClaw.Vault.SecretScannerPlug, []}
+      {MonkeyClaw.Vault.SecretScannerPlug, []},
+      {MonkeyClaw.UserModeling.ObservationPlug, []}
     ],
     query_pre: [
       {MonkeyClaw.Vault.SecretScannerPlug, []},

@@ -176,9 +176,13 @@ defmodule MonkeyClaw.Vault.SecretScanner do
     * `{:ok, findings}` — Scan completed; `findings` may be empty.
     * `{:error, :content_too_large}` — `content` exceeds `max_bytes`.
     * `{:error, :timeout}` — Scan exceeded `timeout_ms`.
+    * `{:error, :scan_crashed}` — Scan task exited abnormally.
   """
   @spec scan(String.t(), keyword()) ::
-          {:ok, [finding()]} | {:error, :content_too_large} | {:error, :timeout}
+          {:ok, [finding()]}
+          | {:error, :content_too_large}
+          | {:error, :timeout}
+          | {:error, :scan_crashed}
   def scan(content, opts \\ []) when is_binary(content) and is_list(opts) do
     timeout_ms = Keyword.get(opts, :timeout_ms, @default_timeout_ms)
     max_bytes = Keyword.get(opts, :max_bytes, @default_max_bytes)

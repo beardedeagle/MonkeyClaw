@@ -308,8 +308,8 @@ Configuration is via application config alongside other plugs:
     config :monkey_claw, MonkeyClaw.Extensions,
       hooks: %{
         query_post: [
-          {MonkeyClaw.UserModeling.ObservationPlug, []},
-          {MonkeyClaw.Vault.SecretScannerPlug, []}
+          {MonkeyClaw.Vault.SecretScannerPlug, []},
+          {MonkeyClaw.UserModeling.ObservationPlug, []}
         ],
         query_pre: [
           {MonkeyClaw.Vault.SecretScannerPlug, []},

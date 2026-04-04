@@ -111,7 +111,8 @@ defmodule MonkeyClaw.Vault.SecretScannerPlug do
     messages = Map.get(context.data, :messages, [])
 
     case List.last(messages) do
-      %{role: "assistant", content: content} when is_binary(content) ->
+      %{role: role, content: content}
+      when role in ["assistant", :assistant] and is_binary(content) ->
         redact_last_message(context, messages, content, opts)
 
       _other ->
