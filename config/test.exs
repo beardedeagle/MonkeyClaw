@@ -7,20 +7,16 @@ import Config
 # Run `mix help test` for more information.
 config :monkey_claw, MonkeyClaw.Repo,
   database: Path.expand("../monkey_claw_test.db", __DIR__),
-  # SQLite allows one writer at a time. Fewer pool connections means
-  # fewer concurrent writers contending for the single write lock.
-  # pool_size: 2 balances async test parallelism with contention
-  # avoidance on slow CI runners (GitHub Actions).
-  pool_size: 2,
+  # SQLite allows one writer at a time. pool_size: 1 ensures a single
+  # DB connection, eliminating write contention entirely. Tests are
+  # serialized for DB access but non-DB tests run concurrently. This
+  # is the only reliable approach for SQLite + Sandbox on slow CI
+  # runners where contention windows can exceed 90 seconds.
+  pool_size: 1,
   pool: Ecto.Adapters.SQL.Sandbox,
-  # SQLite busy_timeout must be LESS than ExUnit's test timeout (120s)
-  # to prevent cascade failures. If busy_timeout > test timeout,
-  # ExUnit kills the test process while the connection is still
-  # busy-waiting, leaving orphaned connections that block the pool.
-  # Layer order: busy_timeout (90s) < ExUnit timeout (120s) < ownership_timeout (180s).
-  busy_timeout: 90_000,
-  timeout: 90_000,
-  ownership_timeout: 180_000
+  busy_timeout: 2_000,
+  timeout: 60_000,
+  ownership_timeout: 120_000
 
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
