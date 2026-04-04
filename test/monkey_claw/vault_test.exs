@@ -304,10 +304,7 @@ defmodule MonkeyClaw.VaultTest do
 
       {:ok, _plaintext} = Vault.resolve_secret(workspace.id, "touch_me")
 
-      # resolve_secret/2 fires a fire-and-forget Task.start to touch last_used_at.
-      # The DataCase sandbox runs in shared mode so the task shares the connection.
-      # A brief wait lets the task complete its DB write before we assert.
-      Process.sleep(50)
+      # resolve_secret/2 updates last_used_at synchronously.
 
       {:ok, refreshed} = Vault.get_secret(secret.id)
       assert refreshed.last_used_at != nil

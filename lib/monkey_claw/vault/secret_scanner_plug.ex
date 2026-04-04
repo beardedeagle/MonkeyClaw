@@ -98,8 +98,12 @@ defmodule MonkeyClaw.Vault.SecretScannerPlug do
       {:ok, _prompt, 0} ->
         context
 
-      {:error, _reason} ->
+      {:error, reason} ->
+        # Fail-closed: if scanning fails, do not allow potentially
+        # secret-laden content through to the model.
         context
+        |> Context.assign(:secret_scan_error, reason)
+        |> Context.halt()
     end
   end
 
@@ -133,8 +137,12 @@ defmodule MonkeyClaw.Vault.SecretScannerPlug do
       {:ok, _content, 0} ->
         context
 
-      {:error, _reason} ->
+      {:error, reason} ->
+        # Fail-closed: if scanning the assistant response fails,
+        # halt to prevent potential secret leakage to the caller.
         context
+        |> Context.assign(:secret_scan_error, reason)
+        |> Context.halt()
     end
   end
 end

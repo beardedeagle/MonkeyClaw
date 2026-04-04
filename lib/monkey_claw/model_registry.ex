@@ -188,6 +188,10 @@ defmodule MonkeyClaw.ModelRegistry do
   @impl true
   @spec init(keyword()) :: {:ok, State.t()}
   def init(opts) when is_list(opts) do
+    # Merge Application config with explicit opts (opts take precedence).
+    app_config = Application.get_env(:monkey_claw, __MODULE__, [])
+    opts = Keyword.merge(app_config, opts)
+
     refresh_interval =
       Keyword.get(opts, :refresh_interval_ms, @default_refresh_interval_ms)
 
@@ -318,31 +322,18 @@ defmodule MonkeyClaw.ModelRegistry do
   end
 
   defp upsert_single_model(provider, attrs, now) do
-    case Repo.one(
-           from(m in CachedModel,
-             where: m.provider == ^provider and m.model_id == ^attrs.model_id
-           )
-         ) do
-      nil ->
-        %CachedModel{}
-        |> CachedModel.create_changeset(%{
-          provider: provider,
-          model_id: attrs.model_id,
-          display_name: attrs.display_name,
-          capabilities: attrs.capabilities,
-          refreshed_at: now
-        })
-        |> Repo.insert!()
-
-      existing ->
-        existing
-        |> CachedModel.update_changeset(%{
-          display_name: attrs.display_name,
-          capabilities: attrs.capabilities,
-          refreshed_at: now
-        })
-        |> Repo.update!()
-    end
+    %CachedModel{}
+    |> CachedModel.create_changeset(%{
+      provider: provider,
+      model_id: attrs.model_id,
+      display_name: attrs.display_name,
+      capabilities: attrs.capabilities,
+      refreshed_at: now
+    })
+    |> Repo.insert!(
+      on_conflict: {:replace, [:display_name, :capabilities, :refreshed_at, :updated_at]},
+      conflict_target: [:provider, :model_id]
+    )
   end
 
   defp delete_stale_models(provider, model_attrs_list) do

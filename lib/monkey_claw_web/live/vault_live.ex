@@ -36,6 +36,8 @@ defmodule MonkeyClawWeb.VaultLive do
 
   use MonkeyClawWeb, :live_view
 
+  import Ecto.Query
+
   alias MonkeyClaw.ModelRegistry
   alias MonkeyClaw.Repo
   alias MonkeyClaw.Vault
@@ -166,21 +168,25 @@ defmodule MonkeyClawWeb.VaultLive do
   # ── Token Events ───────────────────────────────────────────
 
   def handle_event("delete_token", %{"id" => id}, socket) do
-    workspace = socket.assigns.workspace
+    case socket.assigns.workspace do
+      nil ->
+        {:noreply, put_flash(socket, :error, "Workspace not found")}
 
-    with {:ok, token} <- fetch_token_by_id(id),
-         true <- token.workspace_id == workspace.id,
-         {:ok, _} <- Vault.delete_token(token) do
-      {:noreply, assign(socket, :tokens, list_tokens(workspace))}
-    else
-      false ->
-        {:noreply, put_flash(socket, :error, "Token not found")}
+      workspace ->
+        with {:ok, token} <- fetch_token_by_id(id),
+             true <- token.workspace_id == workspace.id,
+             {:ok, _} <- Vault.delete_token(token) do
+          {:noreply, assign(socket, :tokens, list_tokens(workspace))}
+        else
+          false ->
+            {:noreply, put_flash(socket, :error, "Token not found")}
 
-      {:error, :not_found} ->
-        {:noreply, put_flash(socket, :error, "Token not found")}
+          {:error, :not_found} ->
+            {:noreply, put_flash(socket, :error, "Token not found")}
 
-      {:error, changeset} ->
-        {:noreply, put_flash(socket, :error, format_errors(changeset))}
+          {:error, changeset} ->
+            {:noreply, put_flash(socket, :error, format_errors(changeset))}
+        end
     end
   end
 
@@ -584,8 +590,15 @@ defmodule MonkeyClawWeb.VaultLive do
 
   # Vault context only exposes get_token(workspace_id, provider).
   # For deletion by ID we look up the token directly via Repo.
+  # Uses a select to avoid decrypting EncryptedField values — we
+  # only need id and workspace_id for authorization + deletion.
   defp fetch_token_by_id(id) when is_binary(id) do
-    case Repo.get(Token, id) do
+    query =
+      from t in Token,
+        where: t.id == ^id,
+        select: struct(t, [:id, :workspace_id, :provider, :inserted_at, :updated_at])
+
+    case Repo.one(query) do
       nil -> {:error, :not_found}
       token -> {:ok, token}
     end
