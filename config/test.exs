@@ -30,6 +30,7 @@ config :swoosh, :api_client, false
 config :monkey_claw, :start_notification_router, false
 config :monkey_claw, :start_scheduler, false
 config :monkey_claw, :start_observer, false
+config :monkey_claw, :start_model_registry, false
 
 # Print only warnings and errors during test
 config :logger, level: :warning

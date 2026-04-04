@@ -33,6 +33,7 @@ defmodule MonkeyClawWeb.Layouts do
         <nav class="flex items-center gap-2 text-sm">
           <a href="/chat" class="btn btn-ghost btn-sm">Chat</a>
           <a href="/channels" class="btn btn-ghost btn-sm">Channels</a>
+          <a href="/vault" class="btn btn-ghost btn-sm">Vault</a>
         </nav>
       </div>
       <div class="flex-none">

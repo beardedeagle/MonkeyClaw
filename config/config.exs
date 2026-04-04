@@ -84,14 +84,23 @@ config :monkey_claw, :default_model, "claude-sonnet-4-6"
 config :monkey_claw, MonkeyClaw.Extensions,
   hooks: %{
     query_post: [
-      {MonkeyClaw.UserModeling.ObservationPlug, []}
+      {MonkeyClaw.UserModeling.ObservationPlug, []},
+      {MonkeyClaw.Vault.SecretScannerPlug, []}
     ],
     query_pre: [
+      {MonkeyClaw.Vault.SecretScannerPlug, []},
       {MonkeyClaw.Recall.Plug, max_results: 10, max_chars: 4000},
       {MonkeyClaw.Skills.Plug, max_skills: 5, max_chars: 2000},
       {MonkeyClaw.UserModeling.InjectionPlug, min_query_length: 10}
     ]
   }
+
+# Model registry — periodic refresh of available models from provider APIs.
+# Disabled by default; configure workspace_id and provider_secrets to enable.
+config :monkey_claw, MonkeyClaw.ModelRegistry,
+  refresh_interval_ms: 3_600_000,
+  workspace_id: nil,
+  provider_secrets: %{}
 
 # Configure Elixir's Logger
 config :logger, :default_formatter,
