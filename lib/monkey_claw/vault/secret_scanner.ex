@@ -251,7 +251,8 @@ defmodule MonkeyClaw.Vault.SecretScanner do
     * `{:ok, redacted_content, finding_count}` — Scan completed.
       `redacted_content` has all secrets replaced with
       `[REDACTED:LABEL]` placeholders. `finding_count` is the
-      number of secrets found (0 when content is clean).
+      number of deduplicated secrets redacted (0 when content is
+      clean). Overlapping matches are resolved before counting.
     * `{:error, :content_too_large}` — Content exceeds `max_bytes`.
     * `{:error, :timeout}` — Scan exceeded `timeout_ms`.
   """
@@ -262,8 +263,9 @@ defmodule MonkeyClaw.Vault.SecretScanner do
   def scan_and_redact(content, opts \\ []) when is_binary(content) and is_list(opts) do
     case scan(content, opts) do
       {:ok, findings} ->
-        redacted = redact(content, findings)
-        {:ok, redacted, length(findings)}
+        deduped = deduplicate_findings(findings)
+        redacted = redact(content, deduped)
+        {:ok, redacted, length(deduped)}
 
       {:error, _} = error ->
         error
