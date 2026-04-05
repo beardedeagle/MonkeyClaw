@@ -921,9 +921,19 @@ defmodule MonkeyClaw.AgentBridge.Session do
     :ok
   end
 
+  @spec infer_backend_name(module()) :: String.t()
   defp infer_backend_name(MonkeyClaw.AgentBridge.Backend.Test), do: "test"
   defp infer_backend_name(MonkeyClaw.AgentBridge.Backend.BeamAgent), do: "claude"
-  defp infer_backend_name(_), do: "unknown"
+
+  defp infer_backend_name(other) do
+    Logger.warning(
+      "Session: unknown backend module #{inspect(other)} in fire_model_hook; " <>
+        "ModelRegistry rows will be written under backend \"unknown\". " <>
+        "Pass :backend_name in session_opts to set an explicit name."
+    )
+
+    "unknown"
+  end
 
   # Kill an active stream task and clean up its state.
   # Safe to call when no stream is active (returns state unchanged).

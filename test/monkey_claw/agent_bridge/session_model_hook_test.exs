@@ -62,9 +62,17 @@ defmodule MonkeyClaw.AgentBridge.SessionModelHookTest do
 
       _pid = start_supervised!({Session, config})
 
-      # Allow the async Task + cast to land. The Task spawns concurrently
-      # with session init; 100ms is generous for a test-backend response.
-      :timer.sleep(100)
+      # Poll until the async Task fires the cast and ModelRegistry writes
+      # the row. Bounded to 100 attempts × 10ms = 1 second.
+      wait_until(
+        fn ->
+          Enum.any?(ModelRegistry.list_for_backend("test"), fn m ->
+            m.model_id == "claude-sonnet-4-6"
+          end)
+        end,
+        100,
+        "session hook did not land claude-sonnet-4-6 in registry within 1s"
+      )
 
       models = ModelRegistry.list_for_backend("test")
       assert models != []
@@ -98,5 +106,15 @@ defmodule MonkeyClaw.AgentBridge.SessionModelHookTest do
 
   defp unique_session_id do
     "test-session-hook-#{System.unique_integer([:positive])}"
+  end
+
+  # Poll until `fun.()` returns truthy. Mirrors the pattern in
+  # model_registry_test.exs to avoid flaky timing-based assertions.
+  defp wait_until(fun, attempts, msg) do
+    cond do
+      attempts == 0 -> flunk(msg)
+      fun.() -> :ok
+      true -> :timer.sleep(10) && wait_until(fun, attempts - 1, msg)
+    end
   end
 end

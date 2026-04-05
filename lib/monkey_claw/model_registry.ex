@@ -907,6 +907,7 @@ defmodule MonkeyClaw.ModelRegistry do
   # Returns true when the given pid is registered in SessionRegistry,
   # meaning the cast originates from a live AgentBridge session process.
   # Unregistered pids are rejected to prevent unauthenticated writes.
+  @spec session_registered?(pid()) :: boolean()
   defp session_registered?(pid) do
     case Registry.keys(MonkeyClaw.AgentBridge.SessionRegistry, pid) do
       [] -> false
