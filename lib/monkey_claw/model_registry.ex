@@ -412,7 +412,8 @@ defmodule MonkeyClaw.ModelRegistry do
     state |> reset_backoff(backend) |> mark_probed(backend)
   end
 
-  defp handle_probe_result(backend, {:ok, model_attrs_list}, state) when is_list(model_attrs_list) do
+  defp handle_probe_result(backend, {:ok, model_attrs_list}, state)
+       when is_list(model_attrs_list) do
     now = DateTime.utc_now()
     mono = System.monotonic_time()
 
