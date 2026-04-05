@@ -198,7 +198,7 @@ defmodule MonkeyClaw.ModelRegistry do
     safe_ets_tab2list(@ets_table)
     |> Enum.reduce(%{}, fn
       {{:row, backend, provider}, row}, acc ->
-        enriched = Enum.map(row.models, &enrich(&1, backend, provider))
+        enriched = Enum.map(row.models, &enrich(&1, backend, provider, row.refreshed_at))
         Map.update(acc, backend, enriched, &(&1 ++ enriched))
 
       _, acc ->
@@ -214,7 +214,7 @@ defmodule MonkeyClaw.ModelRegistry do
     safe_ets_tab2list(@ets_table)
     |> Enum.reduce(%{}, fn
       {{:row, backend, provider}, row}, acc ->
-        enriched = Enum.map(row.models, &enrich(&1, backend, provider))
+        enriched = Enum.map(row.models, &enrich(&1, backend, provider, row.refreshed_at))
         Map.update(acc, provider, enriched, &(&1 ++ enriched))
 
       _, acc ->
@@ -673,7 +673,7 @@ defmodule MonkeyClaw.ModelRegistry do
     safe_ets_tab2list(@ets_table)
     |> Enum.flat_map(fn
       {{:row, ^backend, provider}, row} ->
-        Enum.map(row.models, &enrich(&1, backend, provider))
+        Enum.map(row.models, &enrich(&1, backend, provider, row.refreshed_at))
 
       _ ->
         []
@@ -684,20 +684,21 @@ defmodule MonkeyClaw.ModelRegistry do
     safe_ets_tab2list(@ets_table)
     |> Enum.flat_map(fn
       {{:row, backend, ^provider}, row} ->
-        Enum.map(row.models, &enrich(&1, backend, provider))
+        Enum.map(row.models, &enrich(&1, backend, provider, row.refreshed_at))
 
       _ ->
         []
     end)
   end
 
-  defp enrich(model, backend, provider) do
+  defp enrich(model, backend, provider, refreshed_at) do
     %{
       backend: backend,
       provider: provider,
       model_id: model.model_id,
       display_name: model.display_name,
-      capabilities: model.capabilities
+      capabilities: model.capabilities,
+      refreshed_at: refreshed_at
     }
   end
 

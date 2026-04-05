@@ -608,9 +608,17 @@ defmodule MonkeyClawWeb.VaultLive do
     Vault.list_tokens(workspace.id)
   end
 
-  defp list_models, do: %{}
+  defp list_models do
+    ModelRegistry.list_all_by_provider()
+  rescue
+    _ -> %{}
+  end
 
-  defp safe_refresh_models, do: {:error, "Model registry refresh not available"}
+  defp safe_refresh_models do
+    ModelRegistry.refresh_all()
+  rescue
+    e -> {:error, Exception.message(e)}
+  end
 
   # Spawn an async task for model refresh. Returns {:ok, pid} on
   # success or {:error, reason} if the registry or supervisor is
