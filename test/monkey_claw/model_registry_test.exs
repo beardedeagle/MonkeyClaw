@@ -355,7 +355,19 @@ defmodule MonkeyClaw.ModelRegistryTest do
 
   describe "probe task result handling" do
     setup do
+      original_baseline = Application.get_env(:monkey_claw, MonkeyClaw.ModelRegistry.Baseline)
+      Application.put_env(:monkey_claw, MonkeyClaw.ModelRegistry.Baseline, entries: [])
+
+      on_exit(fn ->
+        if original_baseline do
+          Application.put_env(:monkey_claw, MonkeyClaw.ModelRegistry.Baseline, original_baseline)
+        else
+          Application.delete_env(:monkey_claw, MonkeyClaw.ModelRegistry.Baseline)
+        end
+      end)
+
       start_supervised!(MonkeyClaw.ModelRegistry.EtsHeir)
+
       :ok
     end
 
@@ -381,7 +393,11 @@ defmodule MonkeyClaw.ModelRegistryTest do
          ]}
       )
 
-      :timer.sleep(200)
+      wait_until(
+        fn -> MonkeyClaw.ModelRegistry.list_for_backend("test_be") != [] end,
+        100,
+        "probe result never landed in cache"
+      )
 
       models = MonkeyClaw.ModelRegistry.list_for_backend("test_be")
       assert [%{model_id: "m1", provider: "anthropic"}] = models
@@ -405,7 +421,11 @@ defmodule MonkeyClaw.ModelRegistryTest do
          ]}
       )
 
-      :timer.sleep(100)
+      wait_until(
+        fn -> Map.has_key?(:sys.get_state(MonkeyClaw.ModelRegistry).backoff, "flaky_be") end,
+        100,
+        "backoff never applied for flaky_be"
+      )
 
       state = :sys.get_state(MonkeyClaw.ModelRegistry)
       assert Map.has_key?(state.backoff, "flaky_be")
@@ -430,7 +450,11 @@ defmodule MonkeyClaw.ModelRegistryTest do
          ]}
       )
 
-      :timer.sleep(100)
+      wait_until(
+        fn -> Map.has_key?(:sys.get_state(MonkeyClaw.ModelRegistry).backoff, "crash_be") end,
+        100,
+        "backoff never applied for crash_be after crash"
+      )
 
       # Registry should still be alive.
       assert Process.alive?(Process.whereis(MonkeyClaw.ModelRegistry))
@@ -477,6 +501,15 @@ defmodule MonkeyClaw.ModelRegistryTest do
       _ ->
         :timer.sleep(10)
         wait_for_ets_owner(table, expected_pid, attempts - 1)
+    end
+  end
+
+  # Poll until `fun.()` returns a truthy value, bounded to 100 × 10 ms = 1 second.
+  defp wait_until(fun, attempts, msg) do
+    cond do
+      attempts == 0 -> flunk(msg)
+      fun.() -> :ok
+      true -> :timer.sleep(10) && wait_until(fun, attempts - 1, msg)
     end
   end
 end

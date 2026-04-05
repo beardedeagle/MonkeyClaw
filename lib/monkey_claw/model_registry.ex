@@ -178,14 +178,27 @@ defmodule MonkeyClaw.ModelRegistry do
     opts = Keyword.merge(app_config, opts)
 
     default_interval = Keyword.get(opts, :default_interval_ms, @default_interval_ms)
+    backend_intervals = Keyword.get(opts, :backend_intervals, %{})
     backends = Keyword.get(opts, :backends, [])
+
+    unless is_integer(default_interval) and default_interval > 0 do
+      raise ArgumentError,
+            "ModelRegistry: default_interval_ms must be a positive integer, got: #{inspect(default_interval)}"
+    end
+
+    Enum.each(backend_intervals, fn {backend, interval} ->
+      unless is_integer(interval) and interval > 0 do
+        raise ArgumentError,
+              "ModelRegistry: backend_intervals[#{inspect(backend)}] must be a positive integer, got: #{inspect(interval)}"
+      end
+    end)
 
     ets_table = ensure_ets_table()
 
     state = %State{
       ets_table: ets_table,
       default_interval: default_interval,
-      backend_intervals: Keyword.get(opts, :backend_intervals, %{}),
+      backend_intervals: backend_intervals,
       backends: backends,
       workspace_id: Keyword.get(opts, :workspace_id),
       backend_configs: Keyword.get(opts, :backend_configs, %{}),
@@ -307,6 +320,11 @@ defmodule MonkeyClaw.ModelRegistry do
 
   # ── Private — Probe result handling ─────────────────────────
 
+  defp handle_probe_result(backend, {:ok, []}, state) do
+    Logger.debug("ModelRegistry: probe for #{backend} returned empty list, marking healthy")
+    state |> reset_backoff(backend) |> mark_probed(backend)
+  end
+
   defp handle_probe_result(backend, {:ok, model_attrs_list}, state) do
     now = DateTime.utc_now()
     mono = System.monotonic_time()
@@ -335,6 +353,15 @@ defmodule MonkeyClaw.ModelRegistry do
   defp handle_probe_result(backend, {:error, reason}, state) do
     Logger.warning(
       "ModelRegistry: probe failed for #{backend}: #{inspect(reason)}, keeping stale cache"
+    )
+
+    apply_backoff(backend, state)
+  end
+
+  defp handle_probe_result(backend, other, state) do
+    Logger.warning(
+      "ModelRegistry: probe for #{backend} returned malformed result: #{inspect(other)}, " <>
+        "treating as error"
     )
 
     apply_backoff(backend, state)
