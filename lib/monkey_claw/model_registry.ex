@@ -724,10 +724,23 @@ defmodule MonkeyClaw.ModelRegistry do
   defp load_sqlite_rows do
     {:ok, Repo.all(CachedModel)}
   rescue
-    # Degraded mode triggers only on environmental DB failures
-    # (connection down, file locked, corrupt page) — not on
-    # programming bugs like schema mismatches.
+    # Primary: environmental DB failures (connection down, file locked,
+    # corrupt page, pool timeout).
     e in [DBConnection.ConnectionError, Exqlite.Error] ->
+      {:error, e}
+
+    # Fallback: any other exception (e.g. DBConnection.OwnershipError
+    # during supervisor restart when the Ecto sandbox reclaims the
+    # checkout from the killed process). Without this clause the
+    # GenServer restart-loops until the supervisor gives up, which is
+    # worse than degraded mode.
+    e ->
+      Logger.warning(
+        "ModelRegistry: unexpected error loading SQLite rows " <>
+          "(#{inspect(e.__struct__)}): #{Exception.message(e)}, " <>
+          "falling back to degraded mode"
+      )
+
       {:error, e}
   end
 
