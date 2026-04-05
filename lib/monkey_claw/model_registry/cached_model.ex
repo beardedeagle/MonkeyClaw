@@ -38,7 +38,7 @@ defmodule MonkeyClaw.ModelRegistry.CachedModel do
           source: String.t() | nil,
           refreshed_at: DateTime.t() | nil,
           refreshed_mono: integer() | nil,
-          models: [Model.t()],
+          models: [__MODULE__.Model.t()],
           inserted_at: DateTime.t() | nil,
           updated_at: DateTime.t() | nil
         }
@@ -68,20 +68,25 @@ defmodule MonkeyClaw.ModelRegistry.CachedModel do
   end
 
   @doc """
-  Build a changeset — validations are added in subsequent tasks.
-  This stub exists so the module compiles during the incremental
-  cutover. Task 3 replaces this with the full validation chain.
+  Build a changeset for a cached_models row.
+
+  Validates presence of every top-level required field, casts the
+  embedded models list through `model_changeset/2`, and requires at
+  least one embedded model.
   """
   @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(%__MODULE__{} = row, attrs) when is_map(attrs) do
     row
     |> cast(attrs, [:backend, :provider, :source, :refreshed_at, :refreshed_mono])
-    |> cast_embed(:models, with: &model_changeset/2)
+    |> validate_required([:backend, :provider, :source, :refreshed_at, :refreshed_mono])
+    |> cast_embed(:models, with: &model_changeset/2, required: true)
   end
 
   @doc false
   @spec model_changeset(struct(), map()) :: Ecto.Changeset.t()
   def model_changeset(model, attrs) do
-    cast(model, attrs, [:model_id, :display_name, :capabilities])
+    model
+    |> cast(attrs, [:model_id, :display_name, :capabilities])
+    |> validate_required([:model_id, :display_name])
   end
 end
