@@ -67,6 +67,7 @@ defmodule MonkeyClaw.AgentBridge.Backend do
   registry can fan multi-provider backends out into one row per
   `(backend, provider)` pair.
   """
+  # Loose shape by design — CachedModel.changeset/2 performs full trust-boundary validation.
   @type model_attrs :: %{
           provider: String.t(),
           model_id: String.t(),
