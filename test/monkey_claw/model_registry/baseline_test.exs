@@ -71,5 +71,17 @@ defmodule MonkeyClaw.ModelRegistry.BaselineTest do
       Application.put_env(:monkey_claw, Baseline, entries: [bad])
       assert {:ok, []} = Baseline.load!()
     end
+
+    test "drops non-map entries without crashing" do
+      valid = %{
+        backend: "claude",
+        provider: "anthropic",
+        models: [%{model_id: "m", display_name: "M", capabilities: %{}}]
+      }
+
+      entries = ["not a map", {:tuple, :form}, :atom, nil, valid]
+      Application.put_env(:monkey_claw, Baseline, entries: entries)
+      assert {:ok, [^valid]} = Baseline.load!()
+    end
   end
 end

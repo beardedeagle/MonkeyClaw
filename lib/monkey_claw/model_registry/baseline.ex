@@ -30,6 +30,7 @@ defmodule MonkeyClaw.ModelRegistry.Baseline do
 
   require Logger
 
+  # Loose shape by design — CachedModel.changeset/2 performs full trust-boundary validation.
   @type entry :: %{
           required(:backend) => String.t(),
           required(:provider) => String.t(),
