@@ -311,7 +311,7 @@ defmodule MonkeyClaw.ModelRegistry do
   def handle_cast({:session_hook, session_pid, writes}, %State{} = state)
       when is_pid(session_pid) and is_list(writes) do
     if session_registered?(session_pid) do
-      {:ok, _applied} = do_upsert(writes, state)
+      _result = do_upsert(writes, state)
       {:noreply, state}
     else
       Logger.debug(
@@ -403,10 +403,24 @@ defmodule MonkeyClaw.ModelRegistry do
     end
   end
 
-  defp dispatch_probe(backend, state) do
+  # Builds the {adapter, opts} tuple for a probe, injecting :backend
+  # and :workspace_id so adapters always have the identity context they
+  # need without requiring redundant keys in backend_configs.
+  defp probe_opts(backend, state) do
     config = Map.get(state.backend_configs, backend, %{})
     adapter = Map.get(config, :adapter, MonkeyClaw.AgentBridge.Backend.BeamAgent)
-    opts = Map.delete(config, :adapter)
+
+    opts =
+      config
+      |> Map.delete(:adapter)
+      |> Map.put_new(:backend, backend)
+      |> Map.put_new(:workspace_id, state.workspace_id)
+
+    {adapter, opts}
+  end
+
+  defp dispatch_probe(backend, state) do
+    {adapter, opts} = probe_opts(backend, state)
 
     task =
       Task.Supervisor.async_nolink(MonkeyClaw.TaskSupervisor, fn ->
@@ -419,19 +433,19 @@ defmodule MonkeyClaw.ModelRegistry do
   # ── Private — Synchronous probe ─────────────────────────────
 
   defp do_synchronous_probe(backend, state) do
-    config = Map.get(state.backend_configs, backend, %{})
-    adapter = Map.get(config, :adapter, MonkeyClaw.AgentBridge.Backend.BeamAgent)
-    opts = Map.delete(config, :adapter)
+    {adapter, opts} = probe_opts(backend, state)
 
     task =
       Task.Supervisor.async_nolink(MonkeyClaw.TaskSupervisor, fn ->
         adapter.list_models(opts)
       end)
 
+    deadline = Map.get(opts, :probe_deadline_ms, @per_backend_refresh_timeout_ms)
+
     timeout =
-      opts
-      |> Map.get(:probe_deadline_ms, @per_backend_refresh_timeout_ms)
-      |> min(@per_backend_refresh_timeout_ms)
+      if is_integer(deadline),
+        do: min(deadline, @per_backend_refresh_timeout_ms),
+        else: @per_backend_refresh_timeout_ms
 
     case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
       {:ok, {:ok, models}} when is_list(models) ->
@@ -482,8 +496,20 @@ defmodule MonkeyClaw.ModelRegistry do
         }
       end)
 
-    {:ok, _applied} = do_upsert(writes, state)
+    case do_upsert(writes, state) do
+      {:ok, _applied} ->
+        :ok
 
+      {:error, reason} ->
+        Logger.warning(
+          "ModelRegistry: probe upsert failed for #{backend}: #{inspect(reason)}, " <>
+            "ETS cache unchanged"
+        )
+    end
+
+    # Mark probed regardless — the probe itself succeeded (we got models),
+    # only persistence failed. Retrying the probe on the next tick will
+    # attempt the upsert again.
     state
     |> reset_backoff(backend)
     |> mark_probed(backend)
@@ -547,13 +573,18 @@ defmodule MonkeyClaw.ModelRegistry do
       Logger.warning("ModelRegistry: dropped #{dropped} invalid upsert writes")
     end
 
-    {:ok, applied} = Repo.transaction(fn -> apply_upserts(valid_changesets) end)
+    case Repo.transaction(fn -> apply_upserts(valid_changesets) end) do
+      {:ok, applied} ->
+        Enum.each(applied, fn row ->
+          :ets.insert(state.ets_table, {{:row, row.backend, row.provider}, row})
+        end)
 
-    Enum.each(applied, fn row ->
-      :ets.insert(state.ets_table, {{:row, row.backend, row.provider}, row})
-    end)
+        {:ok, applied}
 
-    {:ok, applied}
+      {:error, reason} ->
+        Logger.warning("ModelRegistry: upsert transaction failed: #{inspect(reason)}")
+        {:error, reason}
+    end
   end
 
   defp validate_writes(writes) do
