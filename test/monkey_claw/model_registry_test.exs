@@ -92,6 +92,9 @@ defmodule MonkeyClaw.ModelRegistryTest do
 
       # The new registry must own the ETS table, proving the claim
       # round-trip (EtsHeir → give_away → new registry) succeeded.
+      # Poll until ownership settles — give_away is async relative to
+      # the pid being registered under __MODULE__.
+      wait_for_ets_owner(:monkey_claw_model_registry, new_pid)
       assert :ets.info(:monkey_claw_model_registry, :owner) == new_pid
     end
   end
@@ -350,6 +353,93 @@ defmodule MonkeyClaw.ModelRegistryTest do
     end
   end
 
+  describe "probe task result handling" do
+    setup do
+      start_supervised!(MonkeyClaw.ModelRegistry.EtsHeir)
+      :ok
+    end
+
+    test "successful probe result lands in the cache via upsert" do
+      backend_configs = %{
+        "test_be" => %{
+          adapter: MonkeyClaw.AgentBridge.Backend.Test,
+          list_models_response:
+            {:ok,
+             [
+               %{provider: "anthropic", model_id: "m1", display_name: "M1", capabilities: %{}}
+             ]}
+        }
+      }
+
+      start_supervised!(
+        {MonkeyClaw.ModelRegistry,
+         [
+           backends: ["test_be"],
+           backend_configs: backend_configs,
+           default_interval_ms: :timer.hours(24),
+           startup_delay_ms: 20
+         ]}
+      )
+
+      :timer.sleep(200)
+
+      models = MonkeyClaw.ModelRegistry.list_for_backend("test_be")
+      assert [%{model_id: "m1", provider: "anthropic"}] = models
+    end
+
+    test "error probe result increments backoff and keeps stale cache" do
+      backend_configs = %{
+        "flaky_be" => %{
+          adapter: MonkeyClaw.AgentBridge.Backend.Test,
+          list_models_response: {:error, :upstream_down}
+        }
+      }
+
+      start_supervised!(
+        {MonkeyClaw.ModelRegistry,
+         [
+           backends: ["flaky_be"],
+           backend_configs: backend_configs,
+           default_interval_ms: :timer.hours(24),
+           startup_delay_ms: 20
+         ]}
+      )
+
+      :timer.sleep(100)
+
+      state = :sys.get_state(MonkeyClaw.ModelRegistry)
+      assert Map.has_key?(state.backoff, "flaky_be")
+      assert state.backoff["flaky_be"] >= 5_000
+    end
+
+    test "crash in backend list_models is caught via DOWN with abnormal reason" do
+      backend_configs = %{
+        "crash_be" => %{
+          adapter: MonkeyClaw.AgentBridge.Backend.Test,
+          list_models_response: {:crash, "boom"}
+        }
+      }
+
+      start_supervised!(
+        {MonkeyClaw.ModelRegistry,
+         [
+           backends: ["crash_be"],
+           backend_configs: backend_configs,
+           default_interval_ms: :timer.hours(24),
+           startup_delay_ms: 20
+         ]}
+      )
+
+      :timer.sleep(100)
+
+      # Registry should still be alive.
+      assert Process.alive?(Process.whereis(MonkeyClaw.ModelRegistry))
+
+      state = :sys.get_state(MonkeyClaw.ModelRegistry)
+      assert Map.has_key?(state.backoff, "crash_be")
+    end
+  end
+
   # Poll until a new pid is registered for ModelRegistry (distinct from
   # old_pid). Bounded to 100 attempts × 10 ms = 1 second max wait.
   defp wait_for_new_registry(old_pid, attempts \\ 100)
@@ -369,6 +459,24 @@ defmodule MonkeyClaw.ModelRegistryTest do
 
       new_pid when is_pid(new_pid) ->
         new_pid
+    end
+  end
+
+  # Poll until the ETS table is owned by expected_pid. Bounded to
+  # 100 attempts × 10 ms = 1 second max wait.
+  defp wait_for_ets_owner(table, expected_pid, attempts \\ 100)
+
+  defp wait_for_ets_owner(_table, _expected_pid, 0),
+    do: flunk("ETS table did not transfer ownership within 1 second")
+
+  defp wait_for_ets_owner(table, expected_pid, attempts) do
+    case :ets.info(table, :owner) do
+      ^expected_pid ->
+        :ok
+
+      _ ->
+        :timer.sleep(10)
+        wait_for_ets_owner(table, expected_pid, attempts - 1)
     end
   end
 end

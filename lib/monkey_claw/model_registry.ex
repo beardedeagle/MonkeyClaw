@@ -36,6 +36,8 @@ defmodule MonkeyClaw.ModelRegistry do
   @default_interval_ms :timer.hours(24)
   @startup_delay_ms_default 5_000
   @claim_timeout_ms 1_000
+  @backoff_initial_ms 5_000
+  @backoff_max_ms 300_000
 
   # ── State ───────────────────────────────────────────────────
 
@@ -218,6 +220,37 @@ defmodule MonkeyClaw.ModelRegistry do
     {:noreply, state}
   end
 
+  def handle_info({ref, result}, %State{in_flight: in_flight} = state) when is_reference(ref) do
+    case Map.pop(in_flight, ref) do
+      {nil, _} ->
+        # Not one of ours — probably a late reply after shutdown.
+        {:noreply, state}
+
+      {backend, remaining} ->
+        # Flush the DOWN message that will follow a successful task.
+        Process.demonitor(ref, [:flush])
+
+        state = %{state | in_flight: remaining}
+        state = handle_probe_result(backend, result, state)
+        {:noreply, state}
+    end
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %State{in_flight: in_flight} = state)
+      when is_reference(ref) do
+    case Map.pop(in_flight, ref) do
+      {nil, _} ->
+        {:noreply, state}
+
+      {backend, remaining} ->
+        Logger.warning("ModelRegistry: probe task for #{backend} crashed: #{inspect(reason)}")
+
+        state = %{state | in_flight: remaining}
+        state = apply_backoff(backend, state)
+        {:noreply, state}
+    end
+  end
+
   def handle_info({:"ETS-TRANSFER", _tid, _from, :model_registry}, %State{} = state) do
     Logger.info("ModelRegistry received ETS-TRANSFER of :monkey_claw_model_registry")
     {:noreply, state}
@@ -270,6 +303,73 @@ defmodule MonkeyClaw.ModelRegistry do
       end)
 
     %{state | in_flight: Map.put(state.in_flight, task.ref, backend)}
+  end
+
+  # ── Private — Probe result handling ─────────────────────────
+
+  defp handle_probe_result(backend, {:ok, model_attrs_list}, state) do
+    now = DateTime.utc_now()
+    mono = System.monotonic_time()
+
+    writes =
+      model_attrs_list
+      |> Enum.group_by(& &1.provider)
+      |> Enum.map(fn {provider, attrs_list} ->
+        %{
+          backend: backend,
+          provider: provider,
+          source: "probe",
+          refreshed_at: now,
+          refreshed_mono: mono,
+          models: Enum.map(attrs_list, &Map.delete(&1, :provider))
+        }
+      end)
+
+    {:ok, _applied} = do_upsert(writes, state)
+
+    state
+    |> reset_backoff(backend)
+    |> mark_probed(backend)
+  end
+
+  defp handle_probe_result(backend, {:error, reason}, state) do
+    Logger.warning(
+      "ModelRegistry: probe failed for #{backend}: #{inspect(reason)}, keeping stale cache"
+    )
+
+    apply_backoff(backend, state)
+  end
+
+  defp mark_probed(state, backend) do
+    %{
+      state
+      | last_probe_at: Map.put(state.last_probe_at, backend, System.monotonic_time(:millisecond))
+    }
+  end
+
+  defp reset_backoff(state, backend) do
+    %{state | backoff: Map.delete(state.backoff, backend)}
+  end
+
+  defp apply_backoff(backend, state) do
+    next =
+      case Map.get(state.backoff, backend) do
+        nil -> @backoff_initial_ms
+        current -> min(current * 2, @backoff_max_ms)
+      end
+
+    # Bump last_probe_at so due?/2 skips this backend until `next` ms have passed.
+    # due?/2 returns true when `now - last >= interval`. We want it to return
+    # false for `next` ms, so we set last such that `now - last = interval - next`.
+    interval = Map.get(state.backend_intervals, backend, state.default_interval)
+    now_ms = System.monotonic_time(:millisecond)
+    bumped_last = now_ms - interval + next
+
+    %{
+      state
+      | backoff: Map.put(state.backoff, backend, next),
+        last_probe_at: Map.put(state.last_probe_at, backend, bumped_last)
+    }
   end
 
   # ── Private — Upsert funnel ──────────────────────────────────
