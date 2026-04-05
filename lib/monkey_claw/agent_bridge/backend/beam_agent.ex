@@ -14,6 +14,8 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
 
   @behaviour MonkeyClaw.AgentBridge.Backend
 
+  alias MonkeyClaw.ModelRegistry.Provider
+
   @impl true
   def start_session(opts), do: BeamAgent.start_session(opts)
 
@@ -79,6 +81,44 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
 
   @impl true
   def thread_list(pid), do: BeamAgent.Threads.thread_list(pid)
+
+  @impl true
+  def list_models(opts) when is_map(opts) do
+    backend = Map.get(opts, :backend)
+    provider = backend_to_provider(backend)
+
+    provider_opts =
+      opts
+      |> Map.to_list()
+      |> Keyword.take([:workspace_id, :secret_name, :api_key, :base_url])
+
+    case Provider.fetch_models(provider, provider_opts) do
+      {:ok, models} ->
+        {:ok, Enum.map(models, &annotate_provider(&1, provider))}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  # Map the MonkeyClaw backend identifier to the upstream provider name.
+  # Static table — future SDK and local backends extend this.
+  defp backend_to_provider("claude"), do: "anthropic"
+  defp backend_to_provider("codex"), do: "openai"
+  defp backend_to_provider("gemini"), do: "google"
+  defp backend_to_provider("opencode"), do: "anthropic"
+  defp backend_to_provider("copilot"), do: "github_copilot"
+  defp backend_to_provider(nil), do: "anthropic"
+  defp backend_to_provider(other) when is_binary(other), do: other
+
+  defp annotate_provider(%{model_id: id, display_name: name, capabilities: caps}, provider) do
+    %{
+      provider: provider,
+      model_id: id,
+      display_name: name,
+      capabilities: caps
+    }
+  end
 
   # ── Checkpoint Operations ────────────────────────────────────
 
