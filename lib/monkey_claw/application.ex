@@ -62,6 +62,7 @@ defmodule MonkeyClaw.Application do
         maybe_child(MonkeyClaw.Notifications.Router, :start_notification_router) ++
         maybe_child(MonkeyClaw.Scheduling.Scheduler, :start_scheduler) ++
         maybe_child(MonkeyClaw.UserModeling.Observer, :start_observer) ++
+        maybe_child(MonkeyClaw.ModelRegistry.EtsHeir, :start_model_registry) ++
         maybe_child(ModelRegistry, :start_model_registry) ++
         [
           # Start to serve requests, typically the last entry

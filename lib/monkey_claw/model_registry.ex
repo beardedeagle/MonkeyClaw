@@ -27,6 +27,8 @@ defmodule MonkeyClaw.ModelRegistry do
 
   require Logger
 
+  alias MonkeyClaw.ModelRegistry.EtsHeir
+
   @ets_table :monkey_claw_model_registry
   @default_interval_ms :timer.hours(24)
 
@@ -165,6 +167,12 @@ defmodule MonkeyClaw.ModelRegistry do
   end
 
   @impl true
+  def handle_info({:"ETS-TRANSFER", _tid, _from, :model_registry}, %State{} = state) do
+    # Late ETS-TRANSFER (e.g., re-transfer after a heir restart). No-op
+    # beyond keeping the state consistent.
+    {:noreply, state}
+  end
+
   def handle_info(msg, %State{} = state) do
     Logger.debug("ModelRegistry received unexpected message: #{inspect(msg)}")
     {:noreply, state}
@@ -173,12 +181,27 @@ defmodule MonkeyClaw.ModelRegistry do
   # ── Private — ETS ───────────────────────────────────────────
 
   defp ensure_ets_table do
-    case :ets.whereis(@ets_table) do
-      :undefined ->
-        :ets.new(@ets_table, [:set, :public, :named_table, read_concurrency: true])
+    case Process.whereis(EtsHeir) do
+      nil ->
+        # Standalone start (tests without the full tree) — create directly.
+        case :ets.whereis(@ets_table) do
+          :undefined ->
+            :ets.new(@ets_table, [:set, :public, :named_table, read_concurrency: true])
 
-      ref ->
-        ref
+          ref ->
+            ref
+        end
+
+      _pid ->
+        :ok = EtsHeir.claim(self())
+        # Wait for the give_away message before returning.
+        receive do
+          {:"ETS-TRANSFER", _tid, _from, :model_registry} -> :ok
+        after
+          1_000 -> raise "ModelRegistry: timeout claiming ETS table from EtsHeir"
+        end
+
+        :ets.whereis(@ets_table)
     end
   end
 

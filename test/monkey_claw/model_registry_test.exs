@@ -34,4 +34,31 @@ defmodule MonkeyClaw.ModelRegistryTest do
       assert Process.alive?(pid)
     end
   end
+
+  describe "ETS heir crash survival" do
+    setup do
+      start_supervised!(MonkeyClaw.ModelRegistry.EtsHeir)
+
+      start_supervised!(
+        {MonkeyClaw.ModelRegistry, [backends: [], default_interval_ms: :timer.hours(24)]}
+      )
+
+      :ok
+    end
+
+    test "ETS table survives a ModelRegistry crash" do
+      tid_before = :ets.whereis(:monkey_claw_model_registry)
+      assert tid_before != :undefined
+
+      pid = Process.whereis(MonkeyClaw.ModelRegistry)
+      ref = Process.monitor(pid)
+      Process.exit(pid, :kill)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :killed}, 500
+
+      # Supervisor restarts the registry; ETS table should be handed back.
+      :timer.sleep(100)
+      tid_after = :ets.whereis(:monkey_claw_model_registry)
+      assert tid_after != :undefined
+    end
+  end
 end
