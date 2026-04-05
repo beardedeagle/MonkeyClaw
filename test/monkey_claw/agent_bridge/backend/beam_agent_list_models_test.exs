@@ -15,7 +15,7 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgentListModelsTest do
   alias MonkeyClaw.AgentBridge.Backend.BeamAgent
 
   describe "list_models/1" do
-    test "returns {:error, _} when workspace not set" do
+    test "returns {:error, :missing_workspace_id} when workspace not set" do
       assert {:error, _reason} = BeamAgent.list_models(%{})
     end
 
