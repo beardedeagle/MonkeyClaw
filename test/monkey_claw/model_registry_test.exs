@@ -584,6 +584,31 @@ defmodule MonkeyClaw.ModelRegistryTest do
       assert state.default_interval == 5_000
       assert state.backend_intervals == %{"a" => 10_000}
     end
+
+    test "rejects unknown options via allowlist fast-fail" do
+      assert {:error, {:invalid_option, :potato, 1}} =
+               MonkeyClaw.ModelRegistry.configure(potato: 1)
+    end
+
+    test "accepts valid workspace_id UUID" do
+      uuid = Ecto.UUID.generate()
+      assert :ok = MonkeyClaw.ModelRegistry.configure(workspace_id: uuid)
+
+      state = :sys.get_state(MonkeyClaw.ModelRegistry)
+      assert state.workspace_id == uuid
+    end
+
+    test "accepts workspace_id = nil" do
+      assert :ok = MonkeyClaw.ModelRegistry.configure(workspace_id: nil)
+
+      state = :sys.get_state(MonkeyClaw.ModelRegistry)
+      assert state.workspace_id == nil
+    end
+
+    test "rejects malformed workspace_id string" do
+      assert {:error, {:invalid_option, :workspace_id, "not-a-uuid"}} =
+               MonkeyClaw.ModelRegistry.configure(workspace_id: "not-a-uuid")
+    end
   end
 
   describe "refresh/1 and refresh_all/0" do
