@@ -27,7 +27,10 @@ defmodule MonkeyClaw.ModelRegistry do
 
   require Logger
 
+  alias MonkeyClaw.ModelRegistry.Baseline
+  alias MonkeyClaw.ModelRegistry.CachedModel
   alias MonkeyClaw.ModelRegistry.EtsHeir
+  alias MonkeyClaw.Repo
 
   @ets_table :monkey_claw_model_registry
   @default_interval_ms :timer.hours(24)
@@ -141,7 +144,7 @@ defmodule MonkeyClaw.ModelRegistry do
   # ── GenServer Callbacks ─────────────────────────────────────
 
   @impl true
-  @spec init(keyword()) :: {:ok, State.t()}
+  @spec init(keyword()) :: {:ok, State.t(), {:continue, :load}}
   def init(opts) when is_list(opts) do
     app_config = Application.get_env(:monkey_claw, __MODULE__, [])
     opts = Keyword.merge(app_config, opts)
@@ -161,10 +164,17 @@ defmodule MonkeyClaw.ModelRegistry do
       last_probe_at: Map.new(backends, &{&1, 0}),
       in_flight: %{},
       backoff: %{},
-      tick_timer_ref: nil
+      tick_timer_ref: nil,
+      degraded: false
     }
 
-    {:ok, state}
+    {:ok, state, {:continue, :load}}
+  end
+
+  @impl true
+  def handle_continue(:load, %State{} = state) do
+    state = load_existing_and_seed_baseline(state)
+    {:noreply, state}
   end
 
   @impl true
@@ -247,5 +257,94 @@ defmodule MonkeyClaw.ModelRegistry do
       display_name: model.display_name,
       capabilities: model.capabilities
     }
+  end
+
+  # ── Private — Boot sequence ──────────────────────────────────
+
+  defp load_existing_and_seed_baseline(state) do
+    case load_sqlite_rows() do
+      {:ok, rows} ->
+        populate_ets(state.ets_table, rows)
+        seed_baseline_delta(state, rows)
+
+      {:error, reason} ->
+        Logger.warning(
+          "ModelRegistry: SQLite load failed (#{inspect(reason)}), falling back to baseline-only ETS"
+        )
+
+        :ok = seed_baseline_ets_only(state)
+        %{state | degraded: true}
+    end
+  end
+
+  defp load_sqlite_rows do
+    {:ok, Repo.all(CachedModel)}
+  rescue
+    error -> {:error, error}
+  end
+
+  defp populate_ets(table, rows) do
+    Enum.each(rows, fn %CachedModel{} = row ->
+      :ets.insert(table, {{:row, row.backend, row.provider}, row})
+    end)
+  end
+
+  defp seed_baseline_delta(state, existing_rows) do
+    existing_keys =
+      MapSet.new(existing_rows, fn %CachedModel{backend: b, provider: p} -> {b, p} end)
+
+    {:ok, entries} = Baseline.load!()
+    now = DateTime.utc_now()
+    mono = System.monotonic_time()
+
+    entries
+    |> Enum.reject(fn entry -> MapSet.member?(existing_keys, {entry.backend, entry.provider}) end)
+    |> Enum.each(fn entry ->
+      attrs = %{
+        backend: entry.backend,
+        provider: entry.provider,
+        source: "baseline",
+        refreshed_at: now,
+        refreshed_mono: mono,
+        models: entry.models
+      }
+
+      case %CachedModel{} |> CachedModel.changeset(attrs) |> Repo.insert() do
+        {:ok, row} ->
+          :ets.insert(state.ets_table, {{:row, row.backend, row.provider}, row})
+
+        {:error, changeset} ->
+          Logger.warning(
+            "ModelRegistry: baseline entry rejected by changeset: #{inspect(changeset.errors)}"
+          )
+      end
+    end)
+
+    state
+  end
+
+  defp seed_baseline_ets_only(state) do
+    {:ok, entries} = Baseline.load!()
+    now = DateTime.utc_now()
+
+    Enum.each(entries, fn entry ->
+      models =
+        Enum.map(entry.models, fn m ->
+          struct(CachedModel.Model, m)
+        end)
+
+      row = %CachedModel{
+        backend: entry.backend,
+        provider: entry.provider,
+        source: "baseline",
+        refreshed_at: now,
+        refreshed_mono: System.monotonic_time(),
+        models: models
+      }
+
+      :ets.insert(state.ets_table, {{:row, entry.backend, entry.provider}, row})
+    end)
+
+    :ok
   end
 end
