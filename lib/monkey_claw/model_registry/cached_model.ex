@@ -46,6 +46,10 @@ defmodule MonkeyClaw.ModelRegistry.CachedModel do
   @identifier_pattern ~r/\A[a-z][a-z0-9_]*\z/
   @max_identifier_length 64
   @allowed_sources ~w(baseline probe session)
+  @max_models_per_row 500
+  @max_model_field_length 256
+  @max_capabilities_bytes 8 * 1024
+  @model_field_pattern ~r/\A[\p{L}\p{N}._\-: \/]+\z/u
 
   @primary_key {:id, :binary_id, autogenerate: true}
   schema "cached_models" do
@@ -91,6 +95,7 @@ defmodule MonkeyClaw.ModelRegistry.CachedModel do
     |> validate_format(:provider, @identifier_pattern, message: "must match ^[a-z][a-z0-9_]*$")
     |> validate_inclusion(:source, @allowed_sources)
     |> cast_embed(:models, with: &model_changeset/2, required: true)
+    |> validate_length(:models, max: @max_models_per_row)
   end
 
   @doc """
@@ -105,5 +110,48 @@ defmodule MonkeyClaw.ModelRegistry.CachedModel do
     model
     |> cast(attrs, [:model_id, :display_name, :capabilities])
     |> validate_required([:model_id, :display_name])
+    |> validate_length(:model_id, min: 1, max: @max_model_field_length)
+    |> validate_length(:display_name, min: 1, max: @max_model_field_length)
+    |> validate_model_field(:model_id)
+    |> validate_model_field(:display_name)
+    |> validate_capabilities_size()
+  end
+
+  defp validate_model_field(changeset, field) do
+    validate_change(changeset, field, fn ^field, value ->
+      cond do
+        not String.valid?(value) ->
+          [{field, "must be valid UTF-8"}]
+
+        not Regex.match?(@model_field_pattern, value) ->
+          [{field, "contains invalid characters"}]
+
+        true ->
+          []
+      end
+    end)
+  end
+
+  defp validate_capabilities_size(changeset) do
+    case get_field(changeset, :capabilities) do
+      caps when is_map(caps) ->
+        case Jason.encode(caps) do
+          {:ok, json} when byte_size(json) <= @max_capabilities_bytes ->
+            changeset
+
+          {:ok, _} ->
+            add_error(
+              changeset,
+              :capabilities,
+              "encoded size exceeds #{@max_capabilities_bytes} bytes"
+            )
+
+          {:error, _} ->
+            add_error(changeset, :capabilities, "is not JSON-encodable")
+        end
+
+      _ ->
+        changeset
+    end
   end
 end

@@ -123,4 +123,73 @@ defmodule MonkeyClaw.ModelRegistry.CachedModelTest do
       end
     end
   end
+
+  describe "changeset/2 embedded model constraints" do
+    @embed_attrs %{
+      backend: "claude",
+      provider: "anthropic",
+      source: "probe",
+      refreshed_at: DateTime.utc_now(),
+      refreshed_mono: System.monotonic_time(),
+      models: [
+        %{model_id: "claude-sonnet-4-5", display_name: "Claude Sonnet 4.5", capabilities: %{}}
+      ]
+    }
+
+    test "rejects >500 embedded models" do
+      too_many =
+        Enum.map(1..501, fn i ->
+          %{model_id: "m-#{i}", display_name: "M #{i}", capabilities: %{}}
+        end)
+
+      cs = CachedModel.changeset(%CachedModel{}, %{@embed_attrs | models: too_many})
+      refute cs.valid?
+      assert errors_on(cs)[:models]
+    end
+
+    test "accepts exactly 500 embedded models" do
+      exact =
+        Enum.map(1..500, fn i ->
+          %{model_id: "m-#{i}", display_name: "M #{i}", capabilities: %{}}
+        end)
+
+      cs = CachedModel.changeset(%CachedModel{}, %{@embed_attrs | models: exact})
+      assert cs.valid?
+    end
+
+    test "rejects model_id longer than 256 bytes" do
+      long = String.duplicate("a", 257)
+      models = [%{model_id: long, display_name: "D", capabilities: %{}}]
+      cs = CachedModel.changeset(%CachedModel{}, %{@embed_attrs | models: models})
+      refute cs.valid?
+    end
+
+    test "rejects non-UTF8 model_id" do
+      models = [%{model_id: <<0xFF, 0xFE>>, display_name: "D", capabilities: %{}}]
+      cs = CachedModel.changeset(%CachedModel{}, %{@embed_attrs | models: models})
+      refute cs.valid?
+    end
+
+    test "rejects model_id with control chars" do
+      models = [%{model_id: "bad\x00id", display_name: "D", capabilities: %{}}]
+      cs = CachedModel.changeset(%CachedModel{}, %{@embed_attrs | models: models})
+      refute cs.valid?
+    end
+
+    test "accepts model_id with unicode letters and allowed punctuation" do
+      models = [
+        %{model_id: "claude-sonnet-4.5:preview", display_name: "Claude", capabilities: %{}}
+      ]
+
+      cs = CachedModel.changeset(%CachedModel{}, %{@embed_attrs | models: models})
+      assert cs.valid?
+    end
+
+    test "rejects capabilities larger than 8 KiB when encoded" do
+      giant = %{blob: String.duplicate("x", 9_000)}
+      models = [%{model_id: "m", display_name: "M", capabilities: giant}]
+      cs = CachedModel.changeset(%CachedModel{}, %{@embed_attrs | models: models})
+      refute cs.valid?
+    end
+  end
 end
