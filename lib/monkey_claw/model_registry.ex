@@ -3,12 +3,13 @@ defmodule MonkeyClaw.ModelRegistry do
   Unified model registry keyed on `(backend, provider)`.
 
   Owns the ETS read-through cache and serializes all writes through
-  a single `upsert/1` funnel. Three independent writers populate the
+  a single `upsert/1` funnel. Four independent writers populate the
   cache: the `Baseline` boot loader, a periodic per-backend probe
   dispatched as `Task.Supervisor` tasks from the registry's own tick
-  handler, and an authenticated post-start hook from
-  `AgentBridge.Session`. All three validate through the same
-  changeset before touching SQLite or ETS.
+  handler, an authenticated post-start hook from `AgentBridge.Session`,
+  and on-demand synchronous probes via `refresh/1` and `refresh_all/0`.
+  All four validate through the same changeset before touching SQLite
+  or ETS.
 
   ## Process Justification
 
@@ -38,6 +39,8 @@ defmodule MonkeyClaw.ModelRegistry do
   @claim_timeout_ms 1_000
   @backoff_initial_ms 5_000
   @backoff_max_ms 300_000
+  @per_backend_refresh_timeout_ms 30_000
+  @refresh_buffer_ms 5_000
 
   # ── State ───────────────────────────────────────────────────
 
@@ -138,6 +141,40 @@ defmodule MonkeyClaw.ModelRegistry do
   end
 
   @doc """
+  Force an immediate synchronous probe for a single backend.
+
+  Blocks the caller until the probe task completes or times out.
+  Bypasses the tick schedule. Returns `:ok` on success,
+  `{:error, reason}` on backend failure or timeout.
+  """
+  @spec refresh(atom() | String.t()) :: :ok | {:error, term()}
+  def refresh(backend) do
+    backend_str = to_string(backend)
+    GenServer.call(__MODULE__, {:refresh, backend_str}, @per_backend_refresh_timeout_ms + 1_000)
+  end
+
+  @doc """
+  Force-probe every configured backend sequentially.
+
+  Call timeout scales with the backend count to avoid spurious
+  `GenServer.call` timeouts on large backend sets (spec I5).
+  """
+  @spec refresh_all() :: :ok
+  def refresh_all do
+    timeout = computed_refresh_all_timeout()
+    GenServer.call(__MODULE__, :refresh_all, timeout)
+  end
+
+  defp computed_refresh_all_timeout do
+    backends =
+      :monkey_claw
+      |> Application.get_env(__MODULE__, [])
+      |> Keyword.get(:backends, [])
+
+    length(backends) * @per_backend_refresh_timeout_ms + @refresh_buffer_ms
+  end
+
+  @doc """
   Return a map of `backend => [enriched_model]` for every cached row.
   """
   @spec list_all_by_backend() :: %{String.t() => [map()]}
@@ -224,6 +261,23 @@ defmodule MonkeyClaw.ModelRegistry do
   def handle_call({:upsert, writes}, _from, %State{} = state) do
     result = do_upsert(writes, state)
     {:reply, result, state}
+  end
+
+  def handle_call({:refresh, backend}, _from, %State{} = state) do
+    case do_synchronous_probe(backend, state) do
+      {:ok, new_state} -> {:reply, :ok, new_state}
+      {{:error, reason}, new_state} -> {:reply, {:error, reason}, new_state}
+    end
+  end
+
+  def handle_call(:refresh_all, _from, %State{} = state) do
+    state =
+      Enum.reduce(state.backends, state, fn backend, acc ->
+        {_result, new_state} = do_synchronous_probe(backend, acc)
+        new_state
+      end)
+
+    {:reply, :ok, state}
   end
 
   @impl true
@@ -316,6 +370,39 @@ defmodule MonkeyClaw.ModelRegistry do
       end)
 
     %{state | in_flight: Map.put(state.in_flight, task.ref, backend)}
+  end
+
+  # ── Private — Synchronous probe ─────────────────────────────
+
+  defp do_synchronous_probe(backend, state) do
+    config = Map.get(state.backend_configs, backend, %{})
+    adapter = Map.get(config, :adapter, MonkeyClaw.AgentBridge.Backend.BeamAgent)
+    opts = Map.delete(config, :adapter)
+
+    task =
+      Task.Supervisor.async_nolink(MonkeyClaw.TaskSupervisor, fn ->
+        adapter.list_models(opts)
+      end)
+
+    timeout = Map.get(opts, :probe_deadline_ms, @per_backend_refresh_timeout_ms)
+
+    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+      {:ok, {:ok, models}} ->
+        new_state = handle_probe_result(backend, {:ok, models}, state)
+        {:ok, new_state}
+
+      {:ok, {:error, reason}} ->
+        new_state = handle_probe_result(backend, {:error, reason}, state)
+        {{:error, reason}, new_state}
+
+      {:exit, reason} ->
+        new_state = apply_backoff(backend, state)
+        {{:error, {:probe_crashed, reason}}, new_state}
+
+      nil ->
+        new_state = apply_backoff(backend, state)
+        {{:error, :probe_timeout}, new_state}
+    end
   end
 
   # ── Private — Probe result handling ─────────────────────────

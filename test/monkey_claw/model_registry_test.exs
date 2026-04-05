@@ -512,4 +512,104 @@ defmodule MonkeyClaw.ModelRegistryTest do
       true -> :timer.sleep(10) && wait_until(fun, attempts - 1, msg)
     end
   end
+
+  describe "refresh/1 and refresh_all/0" do
+    setup do
+      original_baseline = Application.get_env(:monkey_claw, MonkeyClaw.ModelRegistry.Baseline)
+      Application.put_env(:monkey_claw, MonkeyClaw.ModelRegistry.Baseline, entries: [])
+
+      on_exit(fn ->
+        if original_baseline do
+          Application.put_env(:monkey_claw, MonkeyClaw.ModelRegistry.Baseline, original_baseline)
+        else
+          Application.delete_env(:monkey_claw, MonkeyClaw.ModelRegistry.Baseline)
+        end
+      end)
+
+      start_supervised!(MonkeyClaw.ModelRegistry.EtsHeir)
+      :ok
+    end
+
+    test "refresh/1 runs a synchronous probe and returns :ok" do
+      backend_configs = %{
+        "test_be" => %{
+          adapter: MonkeyClaw.AgentBridge.Backend.Test,
+          list_models_response:
+            {:ok,
+             [
+               %{
+                 provider: "anthropic",
+                 model_id: "refreshed",
+                 display_name: "R",
+                 capabilities: %{}
+               }
+             ]}
+        }
+      }
+
+      start_supervised!(
+        {MonkeyClaw.ModelRegistry,
+         [
+           backends: ["test_be"],
+           backend_configs: backend_configs,
+           default_interval_ms: :timer.hours(24),
+           startup_delay_ms: :timer.hours(24)
+         ]}
+      )
+
+      assert :ok = MonkeyClaw.ModelRegistry.refresh("test_be")
+      assert [%{model_id: "refreshed"}] = MonkeyClaw.ModelRegistry.list_for_backend("test_be")
+    end
+
+    test "refresh/1 returns {:error, reason} when backend returns an error" do
+      backend_configs = %{
+        "flaky" => %{
+          adapter: MonkeyClaw.AgentBridge.Backend.Test,
+          list_models_response: {:error, :boom}
+        }
+      }
+
+      start_supervised!(
+        {MonkeyClaw.ModelRegistry,
+         [
+           backends: ["flaky"],
+           backend_configs: backend_configs,
+           default_interval_ms: :timer.hours(24),
+           startup_delay_ms: :timer.hours(24)
+         ]}
+      )
+
+      assert {:error, :boom} = MonkeyClaw.ModelRegistry.refresh("flaky")
+    end
+
+    test "refresh_all/0 iterates every configured backend" do
+      backend_configs = %{
+        "a" => %{
+          adapter: MonkeyClaw.AgentBridge.Backend.Test,
+          list_models_response:
+            {:ok,
+             [%{provider: "anthropic", model_id: "a1", display_name: "A1", capabilities: %{}}]}
+        },
+        "b" => %{
+          adapter: MonkeyClaw.AgentBridge.Backend.Test,
+          list_models_response:
+            {:ok, [%{provider: "openai", model_id: "b1", display_name: "B1", capabilities: %{}}]}
+        }
+      }
+
+      start_supervised!(
+        {MonkeyClaw.ModelRegistry,
+         [
+           backends: ["a", "b"],
+           backend_configs: backend_configs,
+           default_interval_ms: :timer.hours(24),
+           startup_delay_ms: :timer.hours(24)
+         ]}
+      )
+
+      assert :ok = MonkeyClaw.ModelRegistry.refresh_all()
+      assert length(MonkeyClaw.ModelRegistry.list_for_backend("a")) == 1
+      assert length(MonkeyClaw.ModelRegistry.list_for_backend("b")) == 1
+    end
+  end
 end
