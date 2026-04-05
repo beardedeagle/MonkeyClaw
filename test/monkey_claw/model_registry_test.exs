@@ -513,6 +513,79 @@ defmodule MonkeyClaw.ModelRegistryTest do
     end
   end
 
+  describe "configure/1" do
+    setup do
+      start_supervised!(MonkeyClaw.ModelRegistry.EtsHeir)
+
+      start_supervised!(
+        {MonkeyClaw.ModelRegistry,
+         [
+           backends: ["a"],
+           default_interval_ms: :timer.hours(24),
+           startup_delay_ms: :timer.hours(24)
+         ]}
+      )
+
+      :ok
+    end
+
+    test "accepts valid opts and applies them" do
+      assert :ok =
+               MonkeyClaw.ModelRegistry.configure(
+                 backends: ["a", "b"],
+                 default_interval_ms: :timer.hours(12)
+               )
+
+      state = :sys.get_state(MonkeyClaw.ModelRegistry)
+      assert state.backends == ["a", "b"]
+      assert state.default_interval == :timer.hours(12)
+    end
+
+    test "rejects non-positive default_interval_ms" do
+      assert {:error, {:invalid_option, :default_interval_ms, _}} =
+               MonkeyClaw.ModelRegistry.configure(default_interval_ms: 0)
+    end
+
+    test "rejects non-list backends" do
+      assert {:error, {:invalid_option, :backends, _}} =
+               MonkeyClaw.ModelRegistry.configure(backends: "not-a-list")
+    end
+
+    test "rejects backend_intervals value smaller than default" do
+      assert {:error, {:invalid_option, :backend_intervals, _}} =
+               MonkeyClaw.ModelRegistry.configure(backend_intervals: %{"a" => 1_000})
+    end
+
+    test "rejects non-map backend_configs" do
+      assert {:error, {:invalid_option, :backend_configs, _}} =
+               MonkeyClaw.ModelRegistry.configure(backend_configs: [])
+    end
+
+    test "leaves state unchanged on validation failure" do
+      before = :sys.get_state(MonkeyClaw.ModelRegistry)
+
+      {:error, _} = MonkeyClaw.ModelRegistry.configure(default_interval_ms: -1)
+
+      after_state = :sys.get_state(MonkeyClaw.ModelRegistry)
+      assert before.default_interval == after_state.default_interval
+      assert before.backends == after_state.backends
+    end
+
+    test "accepts combined default_interval_ms + backend_intervals update where pending default makes it valid" do
+      # current state: default_interval = 24h. We're dropping default to 5s and
+      # setting backend_intervals["a"] = 10s. 10s >= 5s, so this must succeed.
+      assert :ok =
+               MonkeyClaw.ModelRegistry.configure(
+                 default_interval_ms: 5_000,
+                 backend_intervals: %{"a" => 10_000}
+               )
+
+      state = :sys.get_state(MonkeyClaw.ModelRegistry)
+      assert state.default_interval == 5_000
+      assert state.backend_intervals == %{"a" => 10_000}
+    end
+  end
+
   describe "refresh/1 and refresh_all/0" do
     setup do
       original_baseline = Application.get_env(:monkey_claw, MonkeyClaw.ModelRegistry.Baseline)

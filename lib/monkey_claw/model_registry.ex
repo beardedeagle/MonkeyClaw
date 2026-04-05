@@ -168,6 +168,29 @@ defmodule MonkeyClaw.ModelRegistry do
   end
 
   @doc """
+  Update runtime configuration without restarting the GenServer.
+
+  ## Options
+
+    * `:backends` — List of backend identifier strings
+    * `:default_interval_ms` — Positive integer
+    * `:backend_intervals` — Map of backend => interval (all values ≥ effective default)
+    * `:backend_configs` — Map of backend => opts map
+    * `:workspace_id` — UUID or nil
+
+  Every option is validated before any change is applied. Invalid
+  input returns `{:error, {:invalid_option, key, reason}}` and leaves
+  state fully unchanged (no partial application). When both
+  `:default_interval_ms` and `:backend_intervals` are supplied in the
+  same call, interval values are validated against the pending new
+  default, not the current state value.
+  """
+  @spec configure(keyword()) :: :ok | {:error, {:invalid_option, atom(), term()}}
+  def configure(opts) when is_list(opts) do
+    GenServer.call(__MODULE__, {:configure, opts})
+  end
+
+  @doc """
   Return a map of `backend => [enriched_model]` for every cached row.
   """
   @spec list_all_by_backend() :: %{String.t() => [map()]}
@@ -271,6 +294,17 @@ defmodule MonkeyClaw.ModelRegistry do
       end)
 
     {:reply, :ok, state}
+  end
+
+  def handle_call({:configure, opts}, _from, %State{} = state) do
+    case validate_configure_opts(opts, state) do
+      :ok ->
+        new_state = apply_configure_opts(opts, state)
+        {:reply, :ok, new_state}
+
+      {:error, _} = error ->
+        {:reply, error, state}
+    end
   end
 
   @impl true
@@ -742,5 +776,112 @@ defmodule MonkeyClaw.ModelRegistry do
     end)
 
     :ok
+  end
+
+  # ── Private — configure/1 validation ────────────────────────
+
+  defp validate_configure_opts(opts, state) do
+    effective_default = effective_default_interval(opts, state)
+
+    with :ok <- validate_opt_keys(opts),
+         :ok <- validate_default_interval_if_present(opts) do
+      validate_rest(opts, state, effective_default)
+    end
+  end
+
+  defp validate_opt_keys(opts) do
+    allowed = [
+      :backends,
+      :default_interval_ms,
+      :backend_intervals,
+      :backend_configs,
+      :workspace_id
+    ]
+
+    Enum.reduce_while(opts, :ok, fn {key, value}, :ok ->
+      if key in allowed do
+        {:cont, :ok}
+      else
+        {:halt, {:error, {:invalid_option, key, value}}}
+      end
+    end)
+  end
+
+  defp validate_default_interval_if_present(opts) do
+    case Keyword.fetch(opts, :default_interval_ms) do
+      {:ok, value} -> validate_option(:default_interval_ms, value, nil)
+      :error -> :ok
+    end
+  end
+
+  defp effective_default_interval(opts, state) do
+    Keyword.get(opts, :default_interval_ms, state.default_interval)
+  end
+
+  defp validate_rest(opts, state, effective_default) do
+    Enum.reduce_while(opts, :ok, fn {key, value}, :ok ->
+      case validate_option(key, value, %{state | default_interval: effective_default}) do
+        :ok -> {:cont, :ok}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp validate_option(:default_interval_ms, value, _state)
+       when is_integer(value) and value > 0,
+       do: :ok
+
+  defp validate_option(:default_interval_ms, value, _state),
+    do: {:error, {:invalid_option, :default_interval_ms, value}}
+
+  defp validate_option(:backends, value, _state) when is_list(value) do
+    if Enum.all?(value, &is_binary/1) do
+      :ok
+    else
+      {:error, {:invalid_option, :backends, value}}
+    end
+  end
+
+  defp validate_option(:backends, value, _state),
+    do: {:error, {:invalid_option, :backends, value}}
+
+  defp validate_option(:backend_intervals, value, state) when is_map(value) do
+    min = state.default_interval
+
+    if Enum.all?(value, fn {k, v} -> is_binary(k) and is_integer(v) and v >= min end) do
+      :ok
+    else
+      {:error, {:invalid_option, :backend_intervals, value}}
+    end
+  end
+
+  defp validate_option(:backend_intervals, value, _state),
+    do: {:error, {:invalid_option, :backend_intervals, value}}
+
+  defp validate_option(:backend_configs, value, _state) when is_map(value), do: :ok
+
+  defp validate_option(:backend_configs, value, _state),
+    do: {:error, {:invalid_option, :backend_configs, value}}
+
+  defp validate_option(:workspace_id, nil, _state), do: :ok
+
+  defp validate_option(:workspace_id, value, _state) when is_binary(value) do
+    case Ecto.UUID.cast(value) do
+      {:ok, _} -> :ok
+      :error -> {:error, {:invalid_option, :workspace_id, value}}
+    end
+  end
+
+  defp validate_option(key, value, _state),
+    do: {:error, {:invalid_option, key, value}}
+
+  defp apply_configure_opts(opts, state) do
+    Enum.reduce(opts, state, fn
+      {:backends, v}, acc -> %{acc | backends: v}
+      {:default_interval_ms, v}, acc -> %{acc | default_interval: v}
+      {:backend_intervals, v}, acc -> %{acc | backend_intervals: v}
+      {:backend_configs, v}, acc -> %{acc | backend_configs: v}
+      {:workspace_id, v}, acc -> %{acc | workspace_id: v}
+    end)
   end
 end
