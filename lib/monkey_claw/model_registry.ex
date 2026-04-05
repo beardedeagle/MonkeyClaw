@@ -265,7 +265,8 @@ defmodule MonkeyClaw.ModelRegistry do
     case load_sqlite_rows() do
       {:ok, rows} ->
         populate_ets(state.ets_table, rows)
-        seed_baseline_delta(state, rows)
+        :ok = seed_baseline_delta(state, rows)
+        state
 
       {:error, reason} ->
         Logger.warning(
@@ -280,7 +281,11 @@ defmodule MonkeyClaw.ModelRegistry do
   defp load_sqlite_rows do
     {:ok, Repo.all(CachedModel)}
   rescue
-    error -> {:error, error}
+    # Degraded mode triggers only on environmental DB failures
+    # (connection down, file locked, corrupt page) — not on
+    # programming bugs like schema mismatches.
+    e in [DBConnection.ConnectionError, Exqlite.Error] ->
+      {:error, e}
   end
 
   defp populate_ets(table, rows) do
@@ -320,7 +325,7 @@ defmodule MonkeyClaw.ModelRegistry do
       end
     end)
 
-    state
+    :ok
   end
 
   defp seed_baseline_ets_only(state) do

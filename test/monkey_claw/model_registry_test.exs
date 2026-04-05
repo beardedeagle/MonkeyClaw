@@ -9,7 +9,6 @@ defmodule MonkeyClaw.ModelRegistryTest do
 
   use MonkeyClaw.DataCase, async: false
 
-  alias Ecto.Adapters.SQL.Sandbox
   alias MonkeyClaw.ModelRegistry
   alias MonkeyClaw.ModelRegistry.CachedModel
   alias MonkeyClaw.ModelRegistry.EtsHeir
@@ -126,15 +125,11 @@ defmodule MonkeyClaw.ModelRegistryTest do
       start_supervised!(EtsHeir)
 
       registry_pid =
-        start_supervised!(
-          {ModelRegistry, [backends: [], default_interval_ms: :timer.hours(24)]}
-        )
+        start_supervised!({ModelRegistry, [backends: [], default_interval_ms: :timer.hours(24)]})
 
-      Sandbox.allow(Repo, self(), registry_pid)
-
-      # handle_continue runs before any handle_call, so by the time
-      # :sys.get_state/1 returns we know the boot sequence has completed.
-      :sys.get_state(registry_pid)
+      # Shared-mode sandbox via DataCase (async: false) — no allow needed.
+      # :sys.get_state gates on handle_continue(:load, _) draining.
+      _state = :sys.get_state(registry_pid)
 
       models = ModelRegistry.list_for_backend("claude")
       assert length(models) == 1
@@ -149,12 +144,11 @@ defmodule MonkeyClaw.ModelRegistryTest do
       start_supervised!(EtsHeir)
 
       registry_pid =
-        start_supervised!(
-          {ModelRegistry, [backends: [], default_interval_ms: :timer.hours(24)]}
-        )
+        start_supervised!({ModelRegistry, [backends: [], default_interval_ms: :timer.hours(24)]})
 
-      Sandbox.allow(Repo, self(), registry_pid)
-      :sys.get_state(registry_pid)
+      # Shared-mode sandbox via DataCase (async: false) — no allow needed.
+      # :sys.get_state gates on handle_continue(:load, _) draining.
+      _state = :sys.get_state(registry_pid)
 
       assert length(ModelRegistry.list_for_backend("claude")) == 1
       row_count_before = Repo.aggregate(CachedModel, :count)
@@ -163,12 +157,11 @@ defmodule MonkeyClaw.ModelRegistryTest do
       stop_supervised!(ModelRegistry)
 
       registry_pid2 =
-        start_supervised!(
-          {ModelRegistry, [backends: [], default_interval_ms: :timer.hours(24)]}
-        )
+        start_supervised!({ModelRegistry, [backends: [], default_interval_ms: :timer.hours(24)]})
 
-      Sandbox.allow(Repo, self(), registry_pid2)
-      :sys.get_state(registry_pid2)
+      # Shared-mode sandbox via DataCase (async: false) — no allow needed.
+      # :sys.get_state gates on handle_continue(:load, _) draining.
+      _state2 = :sys.get_state(registry_pid2)
 
       row_count_after = Repo.aggregate(CachedModel, :count)
       assert row_count_before == row_count_after
