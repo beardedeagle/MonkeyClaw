@@ -68,4 +68,59 @@ defmodule MonkeyClaw.ModelRegistry.CachedModelTest do
       refute changeset.valid?
     end
   end
+
+  describe "changeset/2 top-level value constraints" do
+    @constraint_attrs %{
+      backend: "claude",
+      provider: "anthropic",
+      source: "probe",
+      refreshed_at: DateTime.utc_now(),
+      refreshed_mono: System.monotonic_time(),
+      models: [%{model_id: "m", display_name: "M", capabilities: %{}}]
+    }
+
+    test "rejects backend with uppercase" do
+      cs = CachedModel.changeset(%CachedModel{}, %{@constraint_attrs | backend: "Claude"})
+      refute cs.valid?
+      assert errors_on(cs)[:backend]
+    end
+
+    test "rejects backend starting with digit" do
+      cs = CachedModel.changeset(%CachedModel{}, %{@constraint_attrs | backend: "1claude"})
+      refute cs.valid?
+      assert errors_on(cs)[:backend]
+    end
+
+    test "rejects provider with hyphen" do
+      cs = CachedModel.changeset(%CachedModel{}, %{@constraint_attrs | provider: "anthro-pic"})
+      refute cs.valid?
+      assert errors_on(cs)[:provider]
+    end
+
+    test "rejects backend longer than 64 bytes" do
+      long = String.duplicate("a", 65)
+      cs = CachedModel.changeset(%CachedModel{}, %{@constraint_attrs | backend: long})
+      refute cs.valid?
+      assert errors_on(cs)[:backend]
+    end
+
+    test "rejects empty backend" do
+      cs = CachedModel.changeset(%CachedModel{}, %{@constraint_attrs | backend: ""})
+      refute cs.valid?
+      assert errors_on(cs)[:backend]
+    end
+
+    test "rejects unknown source" do
+      cs = CachedModel.changeset(%CachedModel{}, %{@constraint_attrs | source: "other"})
+      refute cs.valid?
+      assert errors_on(cs)[:source]
+    end
+
+    for source <- ["baseline", "probe", "session"] do
+      test "accepts source=#{source}" do
+        cs = CachedModel.changeset(%CachedModel{}, %{@constraint_attrs | source: unquote(source)})
+        assert cs.valid?
+      end
+    end
+  end
 end

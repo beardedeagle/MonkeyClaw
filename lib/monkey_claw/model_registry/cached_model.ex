@@ -43,6 +43,10 @@ defmodule MonkeyClaw.ModelRegistry.CachedModel do
           updated_at: DateTime.t() | nil
         }
 
+  @identifier_pattern ~r/\A[a-z][a-z0-9_]*\z/
+  @max_identifier_length 64
+  @allowed_sources ~w(baseline probe session)
+
   @primary_key {:id, :binary_id, autogenerate: true}
   schema "cached_models" do
     field :backend, :string
@@ -68,19 +72,32 @@ defmodule MonkeyClaw.ModelRegistry.CachedModel do
   end
 
   @doc """
-  Build a changeset for a cached_models row.
+  Build a validated changeset for a cached_models row.
 
-  Validates presence of every top-level required field, casts the
-  embedded models list through `model_changeset/2`, and requires at
-  least one embedded model.
+  Enforces the trust-boundary invariants from the spec §Schema:
+  identifier charset + length caps on `backend`/`provider`, enum
+  constraint on `source`, presence of every required top-level
+  field, and cast of the embedded models list through
+  `model_changeset/2`.
   """
   @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(%__MODULE__{} = row, attrs) when is_map(attrs) do
     row
     |> cast(attrs, [:backend, :provider, :source, :refreshed_at, :refreshed_mono])
     |> validate_required([:backend, :provider, :source, :refreshed_at, :refreshed_mono])
+    |> validate_length(:backend, min: 1, max: @max_identifier_length)
+    |> validate_length(:provider, min: 1, max: @max_identifier_length)
+    |> validate_format(:backend, @identifier_pattern, message: "must match ^[a-z][a-z0-9_]*$")
+    |> validate_format(:provider, @identifier_pattern, message: "must match ^[a-z][a-z0-9_]*$")
+    |> validate_inclusion(:source, @allowed_sources)
     |> cast_embed(:models, with: &model_changeset/2, required: true)
   end
+
+  @doc """
+  Returns the allowed values for the `source` column.
+  """
+  @spec allowed_sources() :: [String.t()]
+  def allowed_sources, do: @allowed_sources
 
   @doc false
   @spec model_changeset(struct(), map()) :: Ecto.Changeset.t()
