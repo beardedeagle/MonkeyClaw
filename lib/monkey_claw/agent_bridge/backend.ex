@@ -44,6 +44,36 @@ defmodule MonkeyClaw.AgentBridge.Backend do
   @type thread_info :: map()
   @type permission_mode :: :default | :accept_edits | :bypass_permissions | :plan | :dont_ask
 
+  @typedoc """
+  Options for listing models. Adapter-specific keys are permitted.
+
+  Common keys used by MonkeyClaw adapters:
+
+    * `:workspace_id` — Vault workspace for secret resolution
+    * `:secret_name` — Vault secret name for the backend's API key
+    * `:probe_deadline_ms` — Hard wall-clock deadline for the probe
+  """
+  @type list_models_opts :: %{
+          optional(:workspace_id) => Ecto.UUID.t(),
+          optional(:secret_name) => String.t(),
+          optional(:probe_deadline_ms) => pos_integer(),
+          optional(atom()) => term()
+        }
+
+  @typedoc """
+  Single model descriptor returned by `list_models/1`.
+
+  The `:provider` field MUST be present on every entry so the
+  registry can fan multi-provider backends out into one row per
+  `(backend, provider)` pair.
+  """
+  @type model_attrs :: %{
+          provider: String.t(),
+          model_id: String.t(),
+          display_name: String.t(),
+          capabilities: map()
+        }
+
   @doc """
   Start a new agent session.
 
@@ -51,6 +81,27 @@ defmodule MonkeyClaw.AgentBridge.Backend do
   The Session GenServer will call `Process.monitor/1` on this pid.
   """
   @callback start_session(opts :: map()) :: {:ok, session_pid()} | {:error, term()}
+
+  @doc """
+  List the models this backend currently supports.
+
+  Called by `MonkeyClaw.ModelRegistry` during boot (baseline delta),
+  periodic probes, and on-demand refreshes. Does NOT require a live
+  session — adapters decide internally how to satisfy the request
+  (HTTP API call, transient CLI init handshake, local manifest
+  read, etc.).
+
+  Implementations should respect their own deadline; the registry
+  also enforces a hard outer deadline via `Task.shutdown/2` as a
+  safety net.
+
+  Returns a flat list of `model_attrs` maps. A single adapter may
+  return models from multiple providers in one list (e.g., Copilot
+  routing both OpenAI and Anthropic); the registry groups by
+  `:provider` at write time.
+  """
+  @callback list_models(opts :: list_models_opts()) ::
+              {:ok, [model_attrs()]} | {:error, term()}
 
   @doc """
   Stop an agent session.
