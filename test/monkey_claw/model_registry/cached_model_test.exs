@@ -21,7 +21,7 @@ defmodule MonkeyClaw.ModelRegistry.CachedModelTest do
       assert Map.has_key?(struct, :models)
     end
 
-    test "has no legacy top-level model fields" do
+    test "rejects top-level model fields from the prior shape" do
       struct = %CachedModel{}
       refute Map.has_key?(struct, :model_id)
       refute Map.has_key?(struct, :display_name)
