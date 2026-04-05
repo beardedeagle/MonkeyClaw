@@ -169,6 +169,140 @@ defmodule MonkeyClaw.ModelRegistryTest do
     end
   end
 
+  describe "upsert/1 write funnel" do
+    setup do
+      original_baseline = Application.get_env(:monkey_claw, MonkeyClaw.ModelRegistry.Baseline)
+      Application.put_env(:monkey_claw, MonkeyClaw.ModelRegistry.Baseline, entries: [])
+
+      on_exit(fn ->
+        if original_baseline do
+          Application.put_env(:monkey_claw, MonkeyClaw.ModelRegistry.Baseline, original_baseline)
+        else
+          Application.delete_env(:monkey_claw, MonkeyClaw.ModelRegistry.Baseline)
+        end
+      end)
+
+      start_supervised!(MonkeyClaw.ModelRegistry.EtsHeir)
+
+      registry_pid =
+        start_supervised!(
+          {MonkeyClaw.ModelRegistry, [backends: [], default_interval_ms: :timer.hours(24)]}
+        )
+
+      # Gate on handle_continue(:load, _) completion before tests run assertions.
+      _ = :sys.get_state(registry_pid)
+
+      :ok
+    end
+
+    test "accepts valid writes and exposes them via read API" do
+      now = DateTime.utc_now()
+      mono = System.monotonic_time()
+
+      writes = [
+        %{
+          backend: "claude",
+          provider: "anthropic",
+          source: "probe",
+          refreshed_at: now,
+          refreshed_mono: mono,
+          models: [
+            %{model_id: "claude-sonnet-4-6", display_name: "Claude Sonnet 4.6", capabilities: %{}}
+          ]
+        }
+      ]
+
+      assert {:ok, [_]} = MonkeyClaw.ModelRegistry.upsert(writes)
+      assert [model] = MonkeyClaw.ModelRegistry.list_for_backend("claude")
+      assert model.model_id == "claude-sonnet-4-6"
+    end
+
+    test "rejects stale writes when a newer version exists" do
+      older = DateTime.add(DateTime.utc_now(), -10, :second)
+      newer = DateTime.utc_now()
+      mono_old = System.monotonic_time()
+      mono_new = System.monotonic_time() + 1
+
+      fresh = %{
+        backend: "claude",
+        provider: "anthropic",
+        source: "probe",
+        refreshed_at: newer,
+        refreshed_mono: mono_new,
+        models: [%{model_id: "fresh", display_name: "Fresh", capabilities: %{}}]
+      }
+
+      stale = %{
+        fresh
+        | refreshed_at: older,
+          refreshed_mono: mono_old,
+          models: [%{model_id: "stale", display_name: "Stale", capabilities: %{}}]
+      }
+
+      assert {:ok, [_]} = MonkeyClaw.ModelRegistry.upsert([fresh])
+      assert {:ok, []} = MonkeyClaw.ModelRegistry.upsert([stale])
+
+      [model] = MonkeyClaw.ModelRegistry.list_for_backend("claude")
+      assert model.model_id == "fresh"
+    end
+
+    test "drops invalid writes with a log, applies the valid ones" do
+      now = DateTime.utc_now()
+
+      valid = %{
+        backend: "claude",
+        provider: "anthropic",
+        source: "probe",
+        refreshed_at: now,
+        refreshed_mono: System.monotonic_time(),
+        models: [%{model_id: "m", display_name: "M", capabilities: %{}}]
+      }
+
+      invalid = Map.put(valid, :backend, "BadBackend")
+
+      assert {:ok, [_]} = MonkeyClaw.ModelRegistry.upsert([invalid, valid])
+      assert [_] = MonkeyClaw.ModelRegistry.list_for_backend("claude")
+    end
+
+    test "fans out a single write with multiple providers into multiple rows" do
+      now = DateTime.utc_now()
+      mono = System.monotonic_time()
+
+      writes = [
+        %{
+          backend: "copilot",
+          provider: "openai",
+          source: "probe",
+          refreshed_at: now,
+          refreshed_mono: mono,
+          models: [%{model_id: "gpt-5", display_name: "GPT-5", capabilities: %{}}]
+        },
+        %{
+          backend: "copilot",
+          provider: "anthropic",
+          source: "probe",
+          refreshed_at: now,
+          refreshed_mono: mono,
+          models: [
+            %{
+              model_id: "claude-sonnet-4-6",
+              display_name: "Claude Sonnet 4.6",
+              capabilities: %{}
+            }
+          ]
+        }
+      ]
+
+      assert {:ok, applied} = MonkeyClaw.ModelRegistry.upsert(writes)
+      assert length(applied) == 2
+
+      copilot_models = MonkeyClaw.ModelRegistry.list_for_backend("copilot")
+      assert length(copilot_models) == 2
+      assert Enum.any?(copilot_models, &(&1.provider == "openai"))
+      assert Enum.any?(copilot_models, &(&1.provider == "anthropic"))
+    end
+  end
+
   # Poll until a new pid is registered for ModelRegistry (distinct from
   # old_pid). Bounded to 100 attempts × 10 ms = 1 second max wait.
   defp wait_for_new_registry(old_pid, attempts \\ 100)

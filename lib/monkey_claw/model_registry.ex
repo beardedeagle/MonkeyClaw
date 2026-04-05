@@ -90,6 +90,26 @@ defmodule MonkeyClaw.ModelRegistry do
   end
 
   @doc """
+  Apply a batch of writes to the cache.
+
+  Each write is a map with keys `:backend`, `:provider`, `:source`,
+  `:refreshed_at`, `:refreshed_mono`, `:models`. Every write is
+  validated through `CachedModel.changeset/2` — invalid writes are
+  dropped with a log. Valid writes go through a single SQLite
+  transaction with conditional upsert precedence on
+  `(refreshed_at, refreshed_mono)`. Returns the list of rows that
+  actually won their conditional upsert (stale writes are silently
+  dropped).
+
+  This is the single write funnel — every writer (baseline, probe,
+  session) ends here.
+  """
+  @spec upsert([map()]) :: {:ok, [CachedModel.t()]} | {:error, term()}
+  def upsert(writes) when is_list(writes) do
+    GenServer.call(__MODULE__, {:upsert, writes}, 30_000)
+  end
+
+  @doc """
   Return all cached models for a single backend.
 
   Accepts atom or string `backend`. Normalizes via `to_string/1`.
@@ -178,6 +198,12 @@ defmodule MonkeyClaw.ModelRegistry do
   end
 
   @impl true
+  def handle_call({:upsert, writes}, _from, %State{} = state) do
+    result = do_upsert(writes, state)
+    {:reply, result, state}
+  end
+
+  @impl true
   def handle_info({:"ETS-TRANSFER", _tid, _from, :model_registry}, %State{} = state) do
     Logger.info("ModelRegistry received ETS-TRANSFER of :monkey_claw_model_registry")
     {:noreply, state}
@@ -186,6 +212,93 @@ defmodule MonkeyClaw.ModelRegistry do
   def handle_info(msg, %State{} = state) do
     Logger.debug("ModelRegistry received unexpected message: #{inspect(msg)}")
     {:noreply, state}
+  end
+
+  # ── Private — Upsert funnel ──────────────────────────────────
+
+  defp do_upsert(writes, state) do
+    {valid_changesets, dropped} = validate_writes(writes)
+
+    if dropped > 0 do
+      Logger.warning("ModelRegistry: dropped #{dropped} invalid upsert writes")
+    end
+
+    case Repo.transaction(fn -> apply_upserts(valid_changesets, state) end) do
+      {:ok, applied} -> {:ok, applied}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp validate_writes(writes) do
+    Enum.reduce(writes, {[], 0}, fn write, {acc, dropped} ->
+      changeset = CachedModel.changeset(%CachedModel{}, write)
+
+      if changeset.valid? do
+        {[{write, changeset} | acc], dropped}
+      else
+        Logger.warning(
+          "ModelRegistry: rejecting write for #{inspect({write[:backend], write[:provider]})}: " <>
+            "#{inspect(changeset.errors)}"
+        )
+
+        {acc, dropped + 1}
+      end
+    end)
+    |> then(fn {valid, dropped} -> {Enum.reverse(valid), dropped} end)
+  end
+
+  defp apply_upserts(valid_changesets, state) do
+    Enum.reduce(valid_changesets, [], fn {write, changeset}, applied ->
+      case upsert_single_row(write, changeset) do
+        {:ok, row} ->
+          :ets.insert(state.ets_table, {{:row, row.backend, row.provider}, row})
+          [row | applied]
+
+        :skipped ->
+          applied
+
+        {:error, reason} ->
+          Logger.warning(
+            "ModelRegistry: upsert failed for #{inspect({write.backend, write.provider})}: " <>
+              inspect(reason)
+          )
+
+          applied
+      end
+    end)
+    |> Enum.reverse()
+  end
+
+  # Serialized writes run entirely inside the GenServer, so the
+  # conditional precedence check does not need to live in raw SQL.
+  # An in-process read-then-compare-then-write is race-free here
+  # because no other process writes to cached_models. The spec's
+  # ON CONFLICT ... WHERE SQL is an equivalent expression of the
+  # same precedence rule.
+  defp upsert_single_row(write, changeset) do
+    existing =
+      Repo.get_by(CachedModel, backend: write.backend, provider: write.provider)
+
+    cond do
+      is_nil(existing) ->
+        Repo.insert(changeset)
+
+      newer?(write, existing) ->
+        existing
+        |> CachedModel.changeset(write)
+        |> Repo.update()
+
+      true ->
+        :skipped
+    end
+  end
+
+  defp newer?(write, %CachedModel{refreshed_at: existing_at, refreshed_mono: existing_mono}) do
+    case DateTime.compare(write.refreshed_at, existing_at) do
+      :gt -> true
+      :lt -> false
+      :eq -> write.refreshed_mono > existing_mono
+    end
   end
 
   # ── Private — ETS ───────────────────────────────────────────
