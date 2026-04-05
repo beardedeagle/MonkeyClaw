@@ -9,7 +9,12 @@ defmodule MonkeyClaw.AgentBridge.Backend.TestModelsTest do
     test "default response returns a canned list" do
       assert {:ok, models} = TestBackend.list_models(%{})
       assert is_list(models)
-      assert Enum.all?(models, &match?(%{provider: _, model_id: _, display_name: _}, &1))
+      assert models != []
+
+      assert Enum.all?(
+               models,
+               &match?(%{provider: _, model_id: _, display_name: _, capabilities: _}, &1)
+             )
     end
 
     test "configurable success response via :list_models_response" do
