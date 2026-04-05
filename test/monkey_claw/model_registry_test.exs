@@ -304,6 +304,52 @@ defmodule MonkeyClaw.ModelRegistryTest do
     end
   end
 
+  describe "tick handler and probe scheduling" do
+    setup do
+      original_baseline = Application.get_env(:monkey_claw, MonkeyClaw.ModelRegistry.Baseline)
+      Application.put_env(:monkey_claw, MonkeyClaw.ModelRegistry.Baseline, entries: [])
+
+      on_exit(fn ->
+        if original_baseline do
+          Application.put_env(:monkey_claw, MonkeyClaw.ModelRegistry.Baseline, original_baseline)
+        else
+          Application.delete_env(:monkey_claw, MonkeyClaw.ModelRegistry.Baseline)
+        end
+      end)
+
+      start_supervised!(MonkeyClaw.ModelRegistry.EtsHeir)
+
+      :ok
+    end
+
+    test "first tick dispatches probe tasks into in_flight map" do
+      backend_configs = %{
+        "test_be" => %{
+          adapter: MonkeyClaw.AgentBridge.Backend.Test,
+          list_models_delay_ms: 100
+        }
+      }
+
+      start_supervised!(
+        {MonkeyClaw.ModelRegistry,
+         [
+           backends: ["test_be"],
+           backend_configs: backend_configs,
+           default_interval_ms: 200,
+           startup_delay_ms: 20
+         ]}
+      )
+
+      # Wait long enough for the first tick to dispatch but not long
+      # enough for the slow backend to finish. Inspect in_flight via
+      # the sys:get_state introspection for test-only visibility.
+      :timer.sleep(50)
+
+      state = :sys.get_state(MonkeyClaw.ModelRegistry)
+      assert map_size(state.in_flight) == 1
+    end
+  end
+
   # Poll until a new pid is registered for ModelRegistry (distinct from
   # old_pid). Bounded to 100 attempts × 10 ms = 1 second max wait.
   defp wait_for_new_registry(old_pid, attempts \\ 100)

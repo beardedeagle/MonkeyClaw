@@ -34,6 +34,7 @@ defmodule MonkeyClaw.ModelRegistry do
 
   @ets_table :monkey_claw_model_registry
   @default_interval_ms :timer.hours(24)
+  @startup_delay_ms_default 5_000
   @claim_timeout_ms 1_000
 
   # ── State ───────────────────────────────────────────────────
@@ -53,7 +54,8 @@ defmodule MonkeyClaw.ModelRegistry do
       in_flight: %{},
       backoff: %{},
       tick_timer_ref: nil,
-      degraded: false
+      degraded: false,
+      startup_delay_ms: 5_000
     ]
 
     @type t :: %__MODULE__{
@@ -63,11 +65,12 @@ defmodule MonkeyClaw.ModelRegistry do
             backends: [String.t()],
             workspace_id: Ecto.UUID.t() | nil,
             backend_configs: %{String.t() => map()},
-            last_probe_at: %{String.t() => integer()},
+            last_probe_at: %{String.t() => integer() | nil},
             in_flight: %{reference() => String.t()},
             backoff: %{String.t() => pos_integer()},
             tick_timer_ref: reference() | nil,
-            degraded: boolean()
+            degraded: boolean(),
+            startup_delay_ms: non_neg_integer()
           }
   end
 
@@ -184,11 +187,12 @@ defmodule MonkeyClaw.ModelRegistry do
       backends: backends,
       workspace_id: Keyword.get(opts, :workspace_id),
       backend_configs: Keyword.get(opts, :backend_configs, %{}),
-      last_probe_at: Map.new(backends, &{&1, 0}),
+      last_probe_at: Map.new(backends, &{&1, nil}),
       in_flight: %{},
       backoff: %{},
       tick_timer_ref: nil,
-      degraded: false
+      degraded: false,
+      startup_delay_ms: Keyword.get(opts, :startup_delay_ms, @startup_delay_ms_default)
     }
 
     {:ok, state, {:continue, :load}}
@@ -197,6 +201,7 @@ defmodule MonkeyClaw.ModelRegistry do
   @impl true
   def handle_continue(:load, %State{} = state) do
     state = load_existing_and_seed_baseline(state)
+    state = schedule_tick(state, state.startup_delay_ms)
     {:noreply, state}
   end
 
@@ -207,6 +212,12 @@ defmodule MonkeyClaw.ModelRegistry do
   end
 
   @impl true
+  def handle_info(:tick, %State{} = state) do
+    state = Enum.reduce(state.backends, state, &maybe_dispatch_probe/2)
+    state = schedule_tick(state, state.default_interval)
+    {:noreply, state}
+  end
+
   def handle_info({:"ETS-TRANSFER", _tid, _from, :model_registry}, %State{} = state) do
     Logger.info("ModelRegistry received ETS-TRANSFER of :monkey_claw_model_registry")
     {:noreply, state}
@@ -215,6 +226,50 @@ defmodule MonkeyClaw.ModelRegistry do
   def handle_info(msg, %State{} = state) do
     Logger.debug("ModelRegistry received unexpected message: #{inspect(msg)}")
     {:noreply, state}
+  end
+
+  # ── Private — Tick scheduler ─────────────────────────────────
+
+  defp schedule_tick(state, delay_ms) do
+    ref = Process.send_after(self(), :tick, delay_ms)
+    %{state | tick_timer_ref: ref}
+  end
+
+  defp maybe_dispatch_probe(backend, state) do
+    cond do
+      in_flight?(backend, state) -> state
+      not due?(backend, state) -> state
+      true -> dispatch_probe(backend, state)
+    end
+  end
+
+  defp in_flight?(backend, %State{in_flight: map}) do
+    Enum.any?(map, fn {_ref, b} -> b == backend end)
+  end
+
+  defp due?(backend, state) do
+    case Map.get(state.last_probe_at, backend) do
+      nil ->
+        true
+
+      last ->
+        now = System.monotonic_time(:millisecond)
+        personal = Map.get(state.backend_intervals, backend, state.default_interval)
+        now - last >= personal
+    end
+  end
+
+  defp dispatch_probe(backend, state) do
+    config = Map.get(state.backend_configs, backend, %{})
+    adapter = Map.get(config, :adapter, MonkeyClaw.AgentBridge.Backend.BeamAgent)
+    opts = Map.delete(config, :adapter)
+
+    task =
+      Task.Supervisor.async_nolink(MonkeyClaw.TaskSupervisor, fn ->
+        adapter.list_models(opts)
+      end)
+
+    %{state | in_flight: Map.put(state.in_flight, task.ref, backend)}
   end
 
   # ── Private — Upsert funnel ──────────────────────────────────
