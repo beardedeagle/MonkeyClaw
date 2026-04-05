@@ -95,6 +95,54 @@ defmodule MonkeyClaw.AgentBridge.Backend.Test do
     GenServer.call(pid, {:checkpoint_rewind, checkpoint_id})
   end
 
+  @impl MonkeyClaw.AgentBridge.Backend
+  def list_models(opts) when is_map(opts) do
+    delay_ms = Map.get(opts, :list_models_delay_ms, 0)
+    deadline_ms = Map.get(opts, :probe_deadline_ms, :infinity)
+
+    cond do
+      deadline_ms != :infinity and delay_ms > deadline_ms ->
+        {:error, :deadline_exceeded}
+
+      delay_ms > 0 ->
+        Process.sleep(delay_ms)
+        respond(opts)
+
+      true ->
+        respond(opts)
+    end
+  end
+
+  defp respond(opts) do
+    case Map.get(opts, :list_models_response, :default) do
+      :default ->
+        {:ok,
+         [
+           %{
+             provider: "anthropic",
+             model_id: "claude-sonnet-4-6",
+             display_name: "Claude Sonnet 4.6",
+             capabilities: %{}
+           },
+           %{
+             provider: "anthropic",
+             model_id: "claude-opus-4-6",
+             display_name: "Claude Opus 4.6",
+             capabilities: %{}
+           }
+         ]}
+
+      {:ok, models} when is_list(models) ->
+        {:ok, models}
+
+      {:error, reason} ->
+        {:error, reason}
+
+      {:crash, message} ->
+        raise message
+    end
+  end
+
   # ── GenServer State ───────────────────────────────────────────────
 
   defstruct [
