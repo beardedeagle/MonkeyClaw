@@ -32,6 +32,7 @@ defmodule MonkeyClaw.Application do
     # starts. Application-owned table survives NotificationRouter restarts.
     :ok = NotificationRouter.init_cache()
 
+    # EtsHeir and ModelRegistry share a lifecycle flag — they are a unit.
     children =
       [
         MonkeyClawWeb.Telemetry,

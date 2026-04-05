@@ -31,6 +31,7 @@ defmodule MonkeyClaw.ModelRegistry do
 
   @ets_table :monkey_claw_model_registry
   @default_interval_ms :timer.hours(24)
+  @claim_timeout_ms 1_000
 
   # ── State ───────────────────────────────────────────────────
 
@@ -168,8 +169,7 @@ defmodule MonkeyClaw.ModelRegistry do
 
   @impl true
   def handle_info({:"ETS-TRANSFER", _tid, _from, :model_registry}, %State{} = state) do
-    # Late ETS-TRANSFER (e.g., re-transfer after a heir restart). No-op
-    # beyond keeping the state consistent.
+    Logger.info("ModelRegistry received ETS-TRANSFER of :monkey_claw_model_registry")
     {:noreply, state}
   end
 
@@ -193,12 +193,17 @@ defmodule MonkeyClaw.ModelRegistry do
         end
 
       _pid ->
-        :ok = EtsHeir.claim(self())
+        case EtsHeir.claim(self()) do
+          :ok -> :ok
+          {:error, reason} -> raise "ModelRegistry: EtsHeir claim failed: #{inspect(reason)}"
+        end
+
         # Wait for the give_away message before returning.
         receive do
           {:"ETS-TRANSFER", _tid, _from, :model_registry} -> :ok
         after
-          1_000 -> raise "ModelRegistry: timeout claiming ETS table from EtsHeir"
+          @claim_timeout_ms ->
+            raise "ModelRegistry: timeout claiming ETS table from EtsHeir after #{@claim_timeout_ms}ms"
         end
 
         :ets.whereis(@ets_table)
