@@ -42,10 +42,11 @@ defmodule MonkeyClaw.ModelRegistry do
   defmodule State do
     @moduledoc false
 
-    @enforce_keys [:ets_table, :default_interval, :backends]
+    @enforce_keys [:ets_table, :default_interval, :backends, :startup_delay_ms]
     defstruct [
       :ets_table,
       :default_interval,
+      :startup_delay_ms,
       backend_intervals: %{},
       backends: [],
       workspace_id: nil,
@@ -54,8 +55,7 @@ defmodule MonkeyClaw.ModelRegistry do
       in_flight: %{},
       backoff: %{},
       tick_timer_ref: nil,
-      degraded: false,
-      startup_delay_ms: 5_000
+      degraded: false
     ]
 
     @type t :: %__MODULE__{
