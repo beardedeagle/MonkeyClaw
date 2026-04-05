@@ -176,9 +176,18 @@ defmodule MonkeyClaw.ModelRegistry.CachedModelTest do
       refute cs.valid?
     end
 
-    test "accepts model_id with unicode letters and allowed punctuation" do
+    test "accepts ASCII allowed punctuation" do
       models = [
         %{model_id: "claude-sonnet-4.5:preview", display_name: "Claude", capabilities: %{}}
+      ]
+
+      cs = CachedModel.changeset(%CachedModel{}, %{@embed_attrs | models: models})
+      assert cs.valid?
+    end
+
+    test "accepts non-ASCII unicode letters" do
+      models = [
+        %{model_id: "claude-日本-α1", display_name: "Claude 日本語 модель", capabilities: %{}}
       ]
 
       cs = CachedModel.changeset(%CachedModel{}, %{@embed_attrs | models: models})
