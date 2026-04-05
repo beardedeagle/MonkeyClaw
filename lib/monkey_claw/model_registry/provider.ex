@@ -33,6 +33,7 @@ defmodule MonkeyClaw.ModelRegistry.Provider do
   require Logger
 
   alias MonkeyClaw.Vault
+  alias MonkeyClaw.Vault.SecretScanner
 
   @default_urls %{
     "anthropic" => "https://api.anthropic.com",
@@ -124,11 +125,11 @@ defmodule MonkeyClaw.ModelRegistry.Provider do
         {:ok, data}
 
       {:ok, %Req.Response{status: status, body: body}} ->
-        Logger.warning("Anthropic models API returned #{status}: #{inspect(body)}")
+        Logger.warning("Anthropic models API returned #{status}: #{sanitize_for_log(body)}")
         {:error, {:http_error, status, body}}
 
       {:error, reason} ->
-        Logger.warning("Anthropic models API request failed: #{inspect(reason)}")
+        Logger.warning("Anthropic models API request failed: #{sanitize_for_log(reason)}")
         {:error, {:request_failed, reason}}
     end
   end
@@ -146,11 +147,11 @@ defmodule MonkeyClaw.ModelRegistry.Provider do
         {:ok, data}
 
       {:ok, %Req.Response{status: status, body: body}} ->
-        Logger.warning("OpenAI models API returned #{status}: #{inspect(body)}")
+        Logger.warning("OpenAI models API returned #{status}: #{sanitize_for_log(body)}")
         {:error, {:http_error, status, body}}
 
       {:error, reason} ->
-        Logger.warning("OpenAI models API request failed: #{inspect(reason)}")
+        Logger.warning("OpenAI models API request failed: #{sanitize_for_log(reason)}")
         {:error, {:request_failed, reason}}
     end
   end
@@ -163,11 +164,11 @@ defmodule MonkeyClaw.ModelRegistry.Provider do
         {:ok, models}
 
       {:ok, %Req.Response{status: status, body: body}} ->
-        Logger.warning("Google models API returned #{status}: #{inspect(body)}")
+        Logger.warning("Google models API returned #{status}: #{sanitize_for_log(body)}")
         {:error, {:http_error, status, body}}
 
       {:error, reason} ->
-        Logger.warning("Google models API request failed: #{inspect(reason)}")
+        Logger.warning("Google models API request failed: #{sanitize_for_log(reason)}")
         {:error, {:request_failed, reason}}
     end
   end
@@ -247,5 +248,24 @@ defmodule MonkeyClaw.ModelRegistry.Provider do
     config = Application.get_env(:monkey_claw, __MODULE__, [])
     urls = Keyword.get(config, :provider_urls, %{})
     Map.get(urls, provider, Map.get(@default_urls, provider))
+  end
+
+  # ── Log Sanitization ────────────────────────────────────────
+
+  @doc false
+  # Public only so the test module can call it directly; not part
+  # of the public API. Sanitize a term for logging by inspecting it
+  # and routing the resulting string through Vault.SecretScanner.
+  # Any matched secret is replaced with [REDACTED:LABEL]. On scan
+  # failure we return a safe placeholder rather than logging raw
+  # content.
+  @spec sanitize_for_log(term()) :: String.t()
+  def sanitize_for_log(term) do
+    inspected = inspect(term, limit: :infinity, printable_limit: 4096)
+
+    case SecretScanner.scan_and_redact(inspected) do
+      {:ok, redacted, _count} -> redacted
+      {:error, _} -> "[LOG_SANITIZE_FAILED]"
+    end
   end
 end
