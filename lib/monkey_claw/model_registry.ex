@@ -101,10 +101,13 @@ defmodule MonkeyClaw.ModelRegistry do
   actually won their conditional upsert (stale writes are silently
   dropped).
 
+  ETS is updated only after the transaction commits, so ETS rows
+  always correspond to persisted SQLite rows.
+
   This is the single write funnel — every writer (baseline, probe,
   session) ends here.
   """
-  @spec upsert([map()]) :: {:ok, [CachedModel.t()]} | {:error, term()}
+  @spec upsert([map()]) :: {:ok, [CachedModel.t()]}
   def upsert(writes) when is_list(writes) do
     GenServer.call(__MODULE__, {:upsert, writes}, 30_000)
   end
@@ -223,35 +226,40 @@ defmodule MonkeyClaw.ModelRegistry do
       Logger.warning("ModelRegistry: dropped #{dropped} invalid upsert writes")
     end
 
-    case Repo.transaction(fn -> apply_upserts(valid_changesets, state) end) do
-      {:ok, applied} -> {:ok, applied}
-      {:error, reason} -> {:error, reason}
-    end
+    {:ok, applied} = Repo.transaction(fn -> apply_upserts(valid_changesets) end)
+
+    Enum.each(applied, fn row ->
+      :ets.insert(state.ets_table, {{:row, row.backend, row.provider}, row})
+    end)
+
+    {:ok, applied}
   end
 
   defp validate_writes(writes) do
-    Enum.reduce(writes, {[], 0}, fn write, {acc, dropped} ->
-      changeset = CachedModel.changeset(%CachedModel{}, write)
+    {valid, dropped} =
+      Enum.reduce(writes, {[], 0}, fn write, {acc, dropped} ->
+        changeset = CachedModel.changeset(%CachedModel{}, write)
 
-      if changeset.valid? do
-        {[{write, changeset} | acc], dropped}
-      else
-        Logger.warning(
-          "ModelRegistry: rejecting write for #{inspect({write[:backend], write[:provider]})}: " <>
-            "#{inspect(changeset.errors)}"
-        )
+        if changeset.valid? do
+          {[{write, changeset} | acc], dropped}
+        else
+          Logger.warning(
+            "ModelRegistry: rejecting write for " <>
+              "#{inspect({Map.get(write, :backend), Map.get(write, :provider)})}: " <>
+              "#{inspect(changeset.errors)}"
+          )
 
-        {acc, dropped + 1}
-      end
-    end)
-    |> then(fn {valid, dropped} -> {Enum.reverse(valid), dropped} end)
+          {acc, dropped + 1}
+        end
+      end)
+
+    {Enum.reverse(valid), dropped}
   end
 
-  defp apply_upserts(valid_changesets, state) do
+  defp apply_upserts(valid_changesets) do
     Enum.reduce(valid_changesets, [], fn {write, changeset}, applied ->
       case upsert_single_row(write, changeset) do
         {:ok, row} ->
-          :ets.insert(state.ets_table, {{:row, row.backend, row.provider}, row})
           [row | applied]
 
         :skipped ->

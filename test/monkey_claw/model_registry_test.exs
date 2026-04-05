@@ -221,7 +221,8 @@ defmodule MonkeyClaw.ModelRegistryTest do
       older = DateTime.add(DateTime.utc_now(), -10, :second)
       newer = DateTime.utc_now()
       mono_old = System.monotonic_time()
-      mono_new = System.monotonic_time() + 1
+      Process.sleep(1)
+      mono_new = System.monotonic_time()
 
       fresh = %{
         backend: "claude",
