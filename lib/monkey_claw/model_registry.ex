@@ -308,6 +308,23 @@ defmodule MonkeyClaw.ModelRegistry do
   end
 
   @impl true
+  def handle_cast({:session_hook, session_pid, writes}, %State{} = state)
+      when is_pid(session_pid) and is_list(writes) do
+    if session_registered?(session_pid) do
+      {:ok, _applied} = do_upsert(writes, state)
+      {:noreply, state}
+    else
+      Logger.debug(
+        "ModelRegistry: rejecting session hook from unregistered pid #{inspect(session_pid)}"
+      )
+
+      {:noreply, state}
+    end
+  end
+
+  def handle_cast(_other, state), do: {:noreply, state}
+
+  @impl true
   def handle_info(:tick, %State{} = state) do
     state = Enum.reduce(state.backends, state, &maybe_dispatch_probe/2)
     state = schedule_tick(state, state.default_interval)
@@ -883,5 +900,19 @@ defmodule MonkeyClaw.ModelRegistry do
       {:backend_configs, v}, acc -> %{acc | backend_configs: v}
       {:workspace_id, v}, acc -> %{acc | workspace_id: v}
     end)
+  end
+
+  # ── Private — Session hook auth ──────────────────────────────
+
+  # Returns true when the given pid is registered in SessionRegistry,
+  # meaning the cast originates from a live AgentBridge session process.
+  # Unregistered pids are rejected to prevent unauthenticated writes.
+  defp session_registered?(pid) do
+    case Registry.keys(MonkeyClaw.AgentBridge.SessionRegistry, pid) do
+      [] -> false
+      _ -> true
+    end
+  rescue
+    _ -> false
   end
 end
