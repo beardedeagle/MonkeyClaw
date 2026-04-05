@@ -135,6 +135,9 @@ defmodule MonkeyClaw.AgentBridge.Backend.Test do
       {:ok, models} when is_list(models) ->
         {:ok, models}
 
+      {:ok, non_list} ->
+        {:ok, non_list}
+
       {:error, reason} ->
         {:error, reason}
 

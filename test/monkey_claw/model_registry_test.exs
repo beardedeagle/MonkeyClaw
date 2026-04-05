@@ -611,5 +611,27 @@ defmodule MonkeyClaw.ModelRegistryTest do
       assert length(MonkeyClaw.ModelRegistry.list_for_backend("a")) == 1
       assert length(MonkeyClaw.ModelRegistry.list_for_backend("b")) == 1
     end
+
+    test "refresh/1 returns {:error, {:malformed_probe_result, _}} when backend returns a non-contract shape" do
+      backend_configs = %{
+        "weird" => %{
+          adapter: MonkeyClaw.AgentBridge.Backend.Test,
+          list_models_response: {:ok, :not_a_list}
+        }
+      }
+
+      start_supervised!(
+        {MonkeyClaw.ModelRegistry,
+         [
+           backends: ["weird"],
+           backend_configs: backend_configs,
+           default_interval_ms: :timer.hours(24),
+           startup_delay_ms: :timer.hours(24)
+         ]}
+      )
+
+      assert {:error, {:malformed_probe_result, {:ok, :not_a_list}}} =
+               MonkeyClaw.ModelRegistry.refresh("weird")
+    end
   end
 end

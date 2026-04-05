@@ -40,7 +40,6 @@ defmodule MonkeyClaw.ModelRegistry do
   @backoff_initial_ms 5_000
   @backoff_max_ms 300_000
   @per_backend_refresh_timeout_ms 30_000
-  @refresh_buffer_ms 5_000
 
   # ── State ───────────────────────────────────────────────────
 
@@ -156,22 +155,16 @@ defmodule MonkeyClaw.ModelRegistry do
   @doc """
   Force-probe every configured backend sequentially.
 
-  Call timeout scales with the backend count to avoid spurious
-  `GenServer.call` timeouts on large backend sets (spec I5).
+  Runs on the GenServer loop, so other calls queue until every
+  configured backend has been probed or timed out. The call
+  deadline is `:infinity` — each inner probe is bounded by
+  `@per_backend_refresh_timeout_ms` (30s), and the reduce is
+  sequential, so the total upper bound is
+  `length(state.backends) * @per_backend_refresh_timeout_ms`.
   """
   @spec refresh_all() :: :ok
   def refresh_all do
-    timeout = computed_refresh_all_timeout()
-    GenServer.call(__MODULE__, :refresh_all, timeout)
-  end
-
-  defp computed_refresh_all_timeout do
-    backends =
-      :monkey_claw
-      |> Application.get_env(__MODULE__, [])
-      |> Keyword.get(:backends, [])
-
-    length(backends) * @per_backend_refresh_timeout_ms + @refresh_buffer_ms
+    GenServer.call(__MODULE__, :refresh_all, :infinity)
   end
 
   @doc """
@@ -384,16 +377,23 @@ defmodule MonkeyClaw.ModelRegistry do
         adapter.list_models(opts)
       end)
 
-    timeout = Map.get(opts, :probe_deadline_ms, @per_backend_refresh_timeout_ms)
+    timeout =
+      opts
+      |> Map.get(:probe_deadline_ms, @per_backend_refresh_timeout_ms)
+      |> min(@per_backend_refresh_timeout_ms)
 
     case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
-      {:ok, {:ok, models}} ->
+      {:ok, {:ok, models}} when is_list(models) ->
         new_state = handle_probe_result(backend, {:ok, models}, state)
         {:ok, new_state}
 
       {:ok, {:error, reason}} ->
         new_state = handle_probe_result(backend, {:error, reason}, state)
         {{:error, reason}, new_state}
+
+      {:ok, malformed} ->
+        new_state = handle_probe_result(backend, malformed, state)
+        {{:error, {:malformed_probe_result, malformed}}, new_state}
 
       {:exit, reason} ->
         new_state = apply_backoff(backend, state)
@@ -412,7 +412,7 @@ defmodule MonkeyClaw.ModelRegistry do
     state |> reset_backoff(backend) |> mark_probed(backend)
   end
 
-  defp handle_probe_result(backend, {:ok, model_attrs_list}, state) do
+  defp handle_probe_result(backend, {:ok, model_attrs_list}, state) when is_list(model_attrs_list) do
     now = DateTime.utc_now()
     mono = System.monotonic_time()
 
