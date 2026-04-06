@@ -103,6 +103,9 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
 
   # Map the MonkeyClaw backend identifier to the upstream provider name.
   # Static table — future SDK and local backends extend this.
+  defp backend_to_provider(atom) when is_atom(atom) and not is_nil(atom),
+    do: backend_to_provider(Atom.to_string(atom))
+
   defp backend_to_provider("claude"), do: "anthropic"
   defp backend_to_provider("codex"), do: "openai"
   defp backend_to_provider("gemini"), do: "google"

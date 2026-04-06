@@ -20,8 +20,8 @@ defmodule MonkeyClaw.ModelRegistry do
     * **Single instance** — registered under `__MODULE__`; one
       registry per node
 
-  See `docs/superpowers/specs/2026-04-05-list-models-per-backend-design.md`
-  for the full design.
+  Design spec: `docs/superpowers/specs/2026-04-05-list-models-per-backend-design.md`
+  (local-only; not committed to the repository).
   """
 
   use GenServer
@@ -107,7 +107,7 @@ defmodule MonkeyClaw.ModelRegistry do
   @doc false
   # Internal write funnel — every writer (baseline, probe, session)
   # ends here. Public only for testing; not part of the stable API.
-  @spec upsert([map()]) :: {:ok, [CachedModel.t()]}
+  @spec upsert([map()]) :: {:ok, [CachedModel.t()]} | {:error, term()}
   def upsert(writes) when is_list(writes) do
     GenServer.call(__MODULE__, {:upsert, writes}, 30_000)
   end
@@ -255,6 +255,12 @@ defmodule MonkeyClaw.ModelRegistry do
       unless is_integer(interval) and interval > 0 do
         raise ArgumentError,
               "ModelRegistry: backend_intervals[#{inspect(backend)}] must be a positive integer, got: #{inspect(interval)}"
+      end
+
+      if interval < default_interval do
+        raise ArgumentError,
+              "ModelRegistry: backend_intervals[#{inspect(backend)}] (#{interval}ms) " <>
+                "must be >= default_interval_ms (#{default_interval}ms)"
       end
     end)
 
