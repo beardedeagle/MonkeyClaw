@@ -17,8 +17,8 @@ defmodule MonkeyClawWeb.VaultLive do
       Encrypted values are never displayed after creation.
     * **Tokens tab** — List and delete OAuth tokens with
       active/expired status indicators.
-    * **Models tab** — Browse cached models grouped by provider,
-      trigger refresh from provider APIs.
+    * **Models tab** — Browse cached models grouped by provider
+      with per-model backend tags, trigger on-demand refresh.
 
   ## Security Invariant
 
@@ -35,6 +35,8 @@ defmodule MonkeyClawWeb.VaultLive do
   """
 
   use MonkeyClawWeb, :live_view
+
+  require Logger
 
   import Ecto.Query
 
@@ -554,7 +556,7 @@ defmodule MonkeyClawWeb.VaultLive do
                 <tr>
                   <th>Model ID</th>
                   <th>Display Name</th>
-                  <th>Provider</th>
+                  <th>Backend</th>
                 </tr>
               </thead>
               <tbody>
@@ -562,8 +564,8 @@ defmodule MonkeyClawWeb.VaultLive do
                   <td class="font-mono text-sm">{model.model_id}</td>
                   <td class="text-sm">{model.display_name}</td>
                   <td>
-                    <span class="badge badge-primary badge-sm">
-                      {provider_label(model.provider)}
+                    <span class="badge badge-secondary badge-sm">
+                      {model.backend}
                     </span>
                   </td>
                 </tr>
@@ -609,19 +611,17 @@ defmodule MonkeyClawWeb.VaultLive do
   end
 
   defp list_models do
-    if Process.whereis(ModelRegistry) do
-      ModelRegistry.list_all_models()
-    else
+    ModelRegistry.list_all_by_provider()
+  rescue
+    e ->
+      Logger.warning("VaultLive: failed to load models: #{Exception.message(e)}")
       %{}
-    end
   end
 
   defp safe_refresh_models do
-    if Process.whereis(ModelRegistry) do
-      ModelRegistry.refresh_all()
-    else
-      {:error, "Model registry is not running"}
-    end
+    ModelRegistry.refresh_all()
+  rescue
+    e -> {:error, Exception.message(e)}
   end
 
   # Spawn an async task for model refresh. Returns {:ok, pid} on

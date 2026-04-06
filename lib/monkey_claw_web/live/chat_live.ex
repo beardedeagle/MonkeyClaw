@@ -9,22 +9,36 @@ defmodule MonkeyClawWeb.ChatLive do
   Conversations are held in-memory for the duration of the LiveView
   session — no persistence layer yet.
 
+  ## Model Selection
+
+  Available models are sourced from `ModelRegistry.list_all_by_backend/0`,
+  which reads the ETS cache directly (no GenServer call). Models are
+  grouped by backend in `<optgroup>` elements so the user can pick any
+  model from any configured backend. When the registry is empty (before
+  first refresh or when no vault secrets are configured), a hardcoded
+  Anthropic default set is used as a fallback.
+
+  Selecting a model updates the LiveView assign and pushes the choice to
+  the active `AgentBridge.Session` via `AgentBridge.set_model/2`.
+
   ## Routes
 
     * `/chat` — Default workspace, default model
     * `/chat/:workspace_id` — Specific workspace
-    * `/chat?backend=claude` — Pre-selects a model matching the backend
+    * `/chat?backend=claude` — Pre-selects the first model for that backend
 
   ## Flow
 
   1. On mount, resolves workspace from URL params (or finds/creates default)
-  2. If a `backend` query param is present, pre-selects a matching model
-  3. User submits a message via the chat form
-  4. Message is dispatched asynchronously through
+  2. Loads available models from `ModelRegistry` (or config fallback)
+  3. If a `backend` query param is present, pre-selects the first model
+     for that backend via direct map lookup
+  4. User submits a message via the chat form
+  5. Message is dispatched asynchronously through
      `Conversation.stream_message/4`
-  5. Streaming chunks are accumulated and displayed progressively
-  6. Final response is appended to the message list when the stream completes
-  7. First user message auto-titles the conversation in the sidebar
+  6. Streaming chunks are accumulated and displayed progressively
+  7. Final response is appended to the message list when the stream completes
+  8. First user message auto-titles the conversation in the sidebar
 
   ## Streaming
 
@@ -46,6 +60,7 @@ defmodule MonkeyClawWeb.ChatLive do
   alias MonkeyClaw.Workflows.Conversation
   alias MonkeyClaw.Workspaces
 
+  alias MonkeyClaw.ModelRegistry
   alias MonkeyClawWeb.ErrorFormatter
 
   @impl true
@@ -1023,9 +1038,9 @@ defmodule MonkeyClawWeb.ChatLive do
   defp maybe_select_backend(socket, nil), do: socket
 
   defp maybe_select_backend(socket, backend) when is_binary(backend) do
-    case Enum.find(available_models(), fn m -> String.starts_with?(m.id, backend) end) do
-      %{id: model_id} -> assign(socket, :selected_model, model_id)
-      nil -> socket
+    case Map.get(socket.assigns.available_models, backend) do
+      [%{id: model_id} | _] -> assign(socket, :selected_model, model_id)
+      _ -> socket
     end
   end
 
@@ -1034,12 +1049,29 @@ defmodule MonkeyClawWeb.ChatLive do
   end
 
   defp available_models do
-    Application.get_env(:monkey_claw, :available_models, [
-      %{id: "claude-opus-4-6", label: "Opus 4.6"},
-      %{id: "claude-sonnet-4-6", label: "Sonnet 4.6"},
-      %{id: "claude-haiku-4-5-20251001", label: "Haiku 4.5"}
-    ])
+    case ModelRegistry.list_all_by_backend() do
+      models when map_size(models) > 0 ->
+        Map.new(models, fn {backend, enriched} ->
+          {backend, Enum.map(enriched, &%{id: &1.model_id, label: &1.display_name})}
+        end)
+
+      _ ->
+        default_available_models()
+    end
   end
+
+  defp default_available_models do
+    Application.get_env(:monkey_claw, :available_models, %{
+      "claude" => [
+        %{id: "claude-opus-4-6", label: "Opus 4.6"},
+        %{id: "claude-sonnet-4-6", label: "Sonnet 4.6"},
+        %{id: "claude-haiku-4-5-20251001", label: "Haiku 4.5"}
+      ]
+    })
+  end
+
+  defp humanize_backend("openai"), do: "OpenAI"
+  defp humanize_backend(backend), do: String.capitalize(backend)
 
   @doc false
   def conversation_title(conversations, id) do

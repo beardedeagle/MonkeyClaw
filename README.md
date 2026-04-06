@@ -81,7 +81,7 @@ Clean separation of concerns, connected through a public Elixir API.
 | **Notifications** | `MonkeyClaw.Notifications`       | Event-driven notification system — routes telemetry events to user-facing alerts via PubSub (real-time) and email (async), with workspace-scoped rules, severity thresholds, and ETS-cached routing |
 | **Channels** | `MonkeyClaw.Channels`                    | Bi-directional platform adapters — Slack, Discord, Telegram, WhatsApp, Web — with adapter behaviour, message recording, webhook verification, and async agent dispatch |
 | **Vault** | `MonkeyClaw.Vault`                           | Encrypted secret and OAuth token storage with `@secret:name` opaque references — model never sees plaintext; AES-256-GCM encryption at rest with HKDF-derived keys |
-| **ModelRegistry** | `MonkeyClaw.ModelRegistry`             | Periodic provider model list cache — GenServer with SQLite persistence, ETS write-through, and configurable refresh intervals |
+| **ModelRegistry** | `MonkeyClaw.ModelRegistry`             | Backend-keyed model registry — GenServer with per-backend probes, SQLite persistence, ETS read-through cache, and configurable refresh intervals per `(backend, provider)` pair |
 
 Contexts (`MonkeyClaw.Assistants`, `MonkeyClaw.Workspaces`, `MonkeyClaw.Webhooks`, `MonkeyClaw.Notifications`, `MonkeyClaw.Channels`, `MonkeyClaw.Vault`) provide the
 public CRUD API. `MonkeyClaw.AgentBridge` translates domain objects into
@@ -529,30 +529,35 @@ cached models grouped by provider, trigger refresh).
 
 ### Model Registry
 
-Periodic refresh of available AI models from provider APIs, with
-SQLite persistence and ETS write-through cache for low-latency reads.
+Unified model cache keyed on `(backend, provider)` with per-backend
+probes, SQLite persistence, and ETS read-through for low-latency reads.
 
-Two-layer architecture:
+Five-layer architecture:
 
 | Layer | Module | Owns |
 |-------|--------|------|
-| **ModelRegistry** | `MonkeyClaw.ModelRegistry` | GenServer — ETS table lifecycle, periodic refresh timer, serialized writes |
-| **Provider** | `MonkeyClaw.ModelRegistry.Provider` | HTTP fetching via Req for Anthropic, OpenAI, and Google APIs |
+| **ModelRegistry** | `MonkeyClaw.ModelRegistry` | GenServer — ETS table lifecycle, tick scheduler, per-backend probe dispatch, serialized writes via single upsert funnel |
+| **CachedModel** | `MonkeyClaw.ModelRegistry.CachedModel` | Ecto schema — `(backend, provider)` unique key, embedded model list, trust-boundary changeset validation |
+| **Baseline** | `MonkeyClaw.ModelRegistry.Baseline` | Boot seed loader — reads baseline model entries from `runtime.exs`, cold-start availability |
+| **EtsHeir** | `MonkeyClaw.ModelRegistry.EtsHeir` | ETS crash survival — heir process reclaims the table when the registry crashes and re-transfers on restart |
+| **Provider** | `MonkeyClaw.ModelRegistry.Provider` | HTTP fetching via Req for Anthropic, OpenAI, and Google APIs; called by the BeamAgent backend adapter |
 
-The GenServer is justified because it manages concurrent state (ETS
-table ownership), periodic work (configurable refresh interval), and
-serialized writes (preventing concurrent refresh races). Reads bypass
-the GenServer entirely — ETS with `:read_concurrency` enabled.
+Four independent writers populate the cache: **Baseline** (boot seed),
+**Probe** (periodic per-backend tasks via `TaskSupervisor`),
+**Session hook** (authenticated cast from `AgentBridge.Session`), and
+**on-demand refresh** (`refresh/1`, `refresh_all/0`). All four funnel
+through a single validated upsert path with conditional precedence on
+`(refreshed_at, refreshed_mono)`.
 
-Graceful degradation: provider API failures log warnings and preserve
-stale cache. Vault resolution failures skip that provider. The
-GenServer never crashes on refresh failure. The LiveView handles
-a missing ModelRegistry process (disabled in test config) by showing
+Graceful degradation: probe failures trigger exponential backoff
+(5s initial, 5min cap) and preserve stale cache. Baseline guarantees
+a floor of known models at boot even if SQLite is unavailable. The
+GenServer never crashes on refresh failure. The LiveView handles a
+missing ModelRegistry process (disabled in test config) by showing
 an empty state.
 
 Runtime reconfiguration via `ModelRegistry.configure/1` allows changing
-the workspace ID and provider secret mappings without restarting the
-process.
+backends, intervals, and backend configs without restarting the process.
 
 ### Dashboard
 

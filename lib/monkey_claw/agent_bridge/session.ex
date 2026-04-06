@@ -428,6 +428,12 @@ defmodule MonkeyClaw.AgentBridge.Session do
       _ = broadcast(id, {:session_started, id})
       Logger.info("AgentBridge session #{id} started (beam_agent: #{beam_session_id})")
 
+      if Process.whereis(MonkeyClaw.ModelRegistry) do
+        hook_token = make_ref()
+        :ok = MonkeyClaw.ModelRegistry.register_hook_token(self(), hook_token)
+        fire_model_hook(backend, session_opts, self(), hook_token)
+      end
+
       {:ok, active_state}
     else
       {:error, reason} ->
@@ -873,6 +879,78 @@ defmodule MonkeyClaw.AgentBridge.Session do
 
   defp broadcast(session_id, message) do
     Phoenix.PubSub.broadcast(MonkeyClaw.PubSub, "agent_session:#{session_id}", message)
+  end
+
+  # Fire an authenticated async cast to ModelRegistry with the freshly
+  # observed model list from this session. Runs under TaskSupervisor
+  # so adapter latency or crashes never block session lifecycle while
+  # retaining OTP-level crash visibility.
+  #
+  # The cast includes a capability token (opaque `make_ref()`) that
+  # was registered with ModelRegistry during session init. Only the
+  # session that registered the token can authorize writes — this
+  # prevents forged casts from arbitrary processes on the node.
+  @spec fire_model_hook(module(), map(), pid(), reference()) :: :ok
+  defp fire_model_hook(backend, session_opts, session_pid, hook_token) do
+    _ =
+      Task.Supervisor.start_child(MonkeyClaw.TaskSupervisor, fn ->
+        try do
+          case backend.list_models(session_opts) do
+            {:ok, model_attrs_list} when is_list(model_attrs_list) ->
+              backend_name = resolve_backend_name(session_opts, backend)
+              now = DateTime.utc_now()
+              mono = System.monotonic_time()
+
+              payload =
+                model_attrs_list
+                |> Enum.group_by(& &1.provider)
+                |> Enum.map(fn {provider, attrs_list} ->
+                  %{
+                    backend: to_string(backend_name),
+                    provider: provider,
+                    source: "session",
+                    refreshed_at: now,
+                    refreshed_mono: mono,
+                    models: Enum.map(attrs_list, &Map.delete(&1, :provider))
+                  }
+                end)
+
+              GenServer.cast(
+                MonkeyClaw.ModelRegistry,
+                {:session_hook, session_pid, hook_token, payload}
+              )
+
+            _ ->
+              :ok
+          end
+        rescue
+          e ->
+            Logger.debug("Session: fire_model_hook failed: #{Exception.message(e)}")
+            :ok
+        end
+      end)
+
+    :ok
+  end
+
+  # Resolve the backend name for ModelRegistry tagging from the
+  # standard `:backend` key produced by `Scope.session_opts/1`
+  # (e.g., `:claude`, `:gemini`, `:codex`). Converts the atom to
+  # a string for the registry's `(backend, provider)` composite key.
+  @spec resolve_backend_name(map(), module()) :: String.t()
+  defp resolve_backend_name(session_opts, backend) do
+    case Map.get(session_opts, :backend) do
+      name when is_atom(name) and not is_nil(name) ->
+        Atom.to_string(name)
+
+      _ ->
+        Logger.warning(
+          "Session: no :backend in session_opts for #{inspect(backend)} in fire_model_hook; " <>
+            "ModelRegistry rows will be written under backend \"unknown\"."
+        )
+
+        "unknown"
+    end
   end
 
   # Kill an active stream task and clean up its state.

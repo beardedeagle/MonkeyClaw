@@ -14,6 +14,8 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
 
   @behaviour MonkeyClaw.AgentBridge.Backend
 
+  alias MonkeyClaw.ModelRegistry.Provider
+
   @impl true
   def start_session(opts), do: BeamAgent.start_session(opts)
 
@@ -80,29 +82,65 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
   @impl true
   def thread_list(pid), do: BeamAgent.Threads.thread_list(pid)
 
+  @impl true
+  def list_models(opts) when is_map(opts) do
+    backend = Map.get(opts, :backend)
+    provider = backend_to_provider(backend)
+
+    provider_opts =
+      opts
+      |> Map.to_list()
+      |> Keyword.take([:workspace_id, :secret_name, :api_key, :base_url])
+
+    case Provider.fetch_models(provider, provider_opts) do
+      {:ok, models} ->
+        {:ok, Enum.map(models, &annotate_provider(&1, provider))}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  # Map the MonkeyClaw backend identifier to the upstream provider name.
+  # Static table — future SDK and local backends extend this.
+  defp backend_to_provider(atom) when is_atom(atom) and not is_nil(atom),
+    do: backend_to_provider(Atom.to_string(atom))
+
+  defp backend_to_provider("claude"), do: "anthropic"
+  defp backend_to_provider("codex"), do: "openai"
+  defp backend_to_provider("gemini"), do: "google"
+  defp backend_to_provider("opencode"), do: "anthropic"
+  defp backend_to_provider("copilot"), do: "github_copilot"
+  defp backend_to_provider(nil), do: "anthropic"
+  defp backend_to_provider(other) when is_binary(other), do: other
+
+  defp annotate_provider(%{model_id: id, display_name: name, capabilities: caps}, provider) do
+    %{
+      provider: provider,
+      model_id: id,
+      display_name: name,
+      capabilities: caps
+    }
+  end
+
   # ── Checkpoint Operations ────────────────────────────────────
 
-  # BeamAgent.Checkpoint may not yet export these functions.
-  # Suppress Dialyzer warnings; function_exported?/3 guard
-  # ensures runtime safety until the API is available.
-
   @impl true
-  def checkpoint_save(pid, label) do
-    if function_exported?(BeamAgent.Checkpoint, :save, 2) do
-      # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      apply(BeamAgent.Checkpoint, :save, [pid, label])
-    else
-      {:error, :not_supported}
+  def checkpoint_save(pid, label, file_paths) do
+    with {:ok, info} <- BeamAgent.session_info(pid) do
+      uuid = "#{label}-#{:erlang.unique_integer([:positive, :monotonic])}"
+
+      case BeamAgent.Checkpoint.snapshot(info.session_id, uuid, file_paths) do
+        {:ok, _cp} -> {:ok, uuid}
+        {:error, _} = error -> error
+      end
     end
   end
 
   @impl true
   def checkpoint_rewind(pid, checkpoint_id) do
-    if function_exported?(BeamAgent.Checkpoint, :rewind, 2) do
-      # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      apply(BeamAgent.Checkpoint, :rewind, [pid, checkpoint_id])
-    else
-      {:error, :not_supported}
+    with {:ok, info} <- BeamAgent.session_info(pid) do
+      BeamAgent.Checkpoint.rewind(info.session_id, checkpoint_id)
     end
   end
 end

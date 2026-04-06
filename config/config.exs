@@ -96,12 +96,15 @@ config :monkey_claw, MonkeyClaw.Extensions,
     ]
   }
 
-# Model registry — periodic refresh of available models from provider APIs.
-# Disabled by default; configure workspace_id and provider_secrets to enable.
+# Model registry — per-backend probe of available models from provider APIs.
+# Configure :backends and :backend_configs to enable periodic probes.
+# See MonkeyClaw.ModelRegistry moduledoc for full option descriptions.
 config :monkey_claw, MonkeyClaw.ModelRegistry,
-  refresh_interval_ms: 3_600_000,
-  workspace_id: nil,
-  provider_secrets: %{}
+  backends: [],
+  default_interval_ms: 3_600_000,
+  backend_intervals: %{},
+  backend_configs: %{},
+  workspace_id: nil
 
 # Configure Elixir's Logger
 config :logger, :default_formatter,

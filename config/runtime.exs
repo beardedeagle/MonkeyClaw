@@ -103,3 +103,42 @@ if config_env() == :prod do
   #
   # See https://hexdocs.pm/swoosh/Swoosh.html#module-installation for details.
 end
+
+# ── MonkeyClaw.ModelRegistry Baseline ────────────────────────
+#
+# Baseline entries seed the registry at boot so the agent has a
+# floor of known models before any probe runs. Entries are
+# structurally validated by MonkeyClaw.ModelRegistry.Baseline.load!/0
+# and then trust-boundary validated by CachedModel.changeset/2 inside
+# the registry's upsert funnel. Users can override or extend this
+# list in their own runtime.exs without rebuilding the release.
+config :monkey_claw, MonkeyClaw.ModelRegistry.Baseline,
+  entries: [
+    %{
+      backend: "claude",
+      provider: "anthropic",
+      models: [
+        %{model_id: "claude-opus-4-6", display_name: "Claude Opus 4.6", capabilities: %{}},
+        %{model_id: "claude-sonnet-4-6", display_name: "Claude Sonnet 4.6", capabilities: %{}},
+        %{
+          model_id: "claude-haiku-4-5-20251001",
+          display_name: "Claude Haiku 4.5",
+          capabilities: %{}
+        }
+      ]
+    },
+    %{
+      backend: "codex",
+      provider: "openai",
+      models: [
+        %{model_id: "gpt-5", display_name: "GPT-5", capabilities: %{}}
+      ]
+    },
+    %{
+      backend: "gemini",
+      provider: "google",
+      models: [
+        %{model_id: "gemini-2.5-pro", display_name: "Gemini 2.5 Pro", capabilities: %{}}
+      ]
+    }
+  ]

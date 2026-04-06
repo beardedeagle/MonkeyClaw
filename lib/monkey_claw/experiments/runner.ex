@@ -1042,10 +1042,14 @@ defmodule MonkeyClaw.Experiments.Runner do
   defp strategy_opts(state, extra), do: Map.merge(strategy_opts(state), extra)
 
   defp prepare_opts(state) do
-    # Save checkpoint before iteration
+    # Snapshot scoped files before iteration for rollback on rejection
     checkpoint_id =
       if state.session_pid do
-        case state.backend.checkpoint_save(state.session_pid, "iteration-#{state.iteration + 1}") do
+        case state.backend.checkpoint_save(
+               state.session_pid,
+               "iteration-#{state.iteration + 1}",
+               state.mutation_scope
+             ) do
           {:ok, id} -> id
           {:error, _} -> nil
         end

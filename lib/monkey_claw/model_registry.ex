@@ -1,255 +1,425 @@
 defmodule MonkeyClaw.ModelRegistry do
   @moduledoc """
-  GenServer that manages the ETS write-through cache and periodic
-  refresh of available AI models from provider APIs.
+  Unified model registry keyed on `(backend, provider)`.
 
-  The registry maintains a local cache of model lists fetched from
-  providers (Anthropic, OpenAI, Google, etc.) with SQLite as the
-  durable store and ETS for low-latency reads.
+  Owns the ETS read-through cache and serializes all writes through
+  a single `upsert/1` funnel. Four independent writers populate the
+  cache: the `Baseline` boot loader, a periodic per-backend probe
+  dispatched as `Task.Supervisor` tasks from the registry's own tick
+  handler, an authenticated post-start hook from `AgentBridge.Session`,
+  and on-demand synchronous probes via `refresh/1` and `refresh_all/0`.
+  All four validate through the same changeset before touching SQLite
+  or ETS.
 
   ## Process Justification
 
-  A GenServer is the correct abstraction because the ModelRegistry is:
+    * **Stateful** — owns ETS table lifecycle via heir and maintains
+      per-backend probe schedules
+    * **Serialized** — writes funnel through a single process to avoid
+      race conditions on the conditional upsert precedence
+    * **Single instance** — registered under `__MODULE__`; one
+      registry per node
 
-    * **Stateful** — owns the ETS table lifecycle and timer reference
-    * **Periodic** — must refresh model lists on a configurable interval
-    * **Serialized** — write access is serialized to prevent concurrent
-      refresh races that could produce inconsistent cache state
-    * **Single instance** — one registry per node; MonkeyClaw is a
-      single-user, single-instance application
-
-  ## ETS Table Design
-
-  The ETS table stores `{provider, [%CachedModel{}], refreshed_at}`
-  tuples. Read-concurrency is enabled since reads dominate. The table
-  is `:public` for direct read access from any process. Refresh writes
-  go through the GenServer to serialize provider updates. Cache-miss
-  warming in `list_models/1` writes from the caller process — this is
-  safe because ETS `:set` tables provide atomic single-key inserts.
-
-  ## Graceful Degradation
-
-    * Provider API failure: log warning, keep stale cache, reschedule
-    * Vault resolution failure: log warning, skip that provider
-    * Never crash the GenServer on refresh failure
-
-  ## Related Modules
-
-    * `MonkeyClaw.ModelRegistry.CachedModel` — Ecto schema
-    * `MonkeyClaw.ModelRegistry.Provider` — HTTP fetching
-    * `MonkeyClaw.Vault` — API key resolution
+  Design spec: `docs/superpowers/specs/2026-04-05-list-models-per-backend-design.md`
+  (local-only; not committed to the repository).
   """
 
   use GenServer
 
   require Logger
 
-  import Ecto.Query
-
+  alias MonkeyClaw.ModelRegistry.Baseline
   alias MonkeyClaw.ModelRegistry.CachedModel
+  alias MonkeyClaw.ModelRegistry.EtsHeir
   alias MonkeyClaw.ModelRegistry.Provider
   alias MonkeyClaw.Repo
 
   @ets_table :monkey_claw_model_registry
-  @default_refresh_interval_ms 3_600_000
-  @startup_refresh_delay_ms 5_000
+  @default_interval_ms :timer.hours(24)
+  @startup_delay_ms_default 5_000
+  @claim_timeout_ms 1_000
+  @backoff_initial_ms 5_000
+  @backoff_max_ms 300_000
+  @per_backend_refresh_timeout_ms 30_000
+  @max_in_flight 10
 
   # ── State ───────────────────────────────────────────────────
 
   defmodule State do
     @moduledoc false
 
-    @enforce_keys [:ets_table, :refresh_interval_ms]
+    @enforce_keys [:ets_table, :default_interval, :backends, :startup_delay_ms]
     defstruct [
       :ets_table,
-      :refresh_interval_ms,
-      :workspace_id,
-      :timer_ref,
-      provider_secrets: %{},
-      refreshing: false
+      :default_interval,
+      :startup_delay_ms,
+      backend_intervals: %{},
+      backends: [],
+      workspace_id: nil,
+      backend_configs: %{},
+      last_probe_at: %{},
+      in_flight: %{},
+      in_flight_backends: %{},
+      backoff: %{},
+      tick_timer_ref: nil,
+      degraded: false,
+      hook_tokens: %{},
+      session_monitors: %{}
     ]
 
     @type t :: %__MODULE__{
             ets_table: :ets.table(),
-            refresh_interval_ms: pos_integer(),
+            default_interval: pos_integer(),
+            backend_intervals: %{String.t() => pos_integer()},
+            backends: [String.t()],
             workspace_id: Ecto.UUID.t() | nil,
-            timer_ref: reference() | nil,
-            provider_secrets: %{String.t() => String.t()},
-            refreshing: boolean()
+            backend_configs: %{String.t() => map()},
+            last_probe_at: %{String.t() => integer() | nil},
+            in_flight: %{reference() => String.t()},
+            in_flight_backends: %{String.t() => reference()},
+            backoff: %{String.t() => pos_integer()},
+            tick_timer_ref: reference() | nil,
+            degraded: boolean(),
+            startup_delay_ms: non_neg_integer(),
+            hook_tokens: %{pid() => reference()},
+            session_monitors: %{reference() => pid()}
           }
   end
 
   # ── Client API ──────────────────────────────────────────────
 
   @doc """
-  Start the ModelRegistry as a linked process.
-
-  Registers as a named process under `__MODULE__` (single instance).
+  Start the ModelRegistry under `__MODULE__`.
 
   ## Options
 
-    * `:refresh_interval_ms` — Override the refresh interval (default: 1 hour)
-    * `:workspace_id` — Workspace ID for vault key resolution
-    * `:provider_secrets` — Map of provider => secret_name
-      (e.g., `%{"anthropic" => "anthropic_key"}`)
+    * `:backends` — List of backend identifier strings (default: `[]`)
+    * `:default_interval_ms` — Tick interval, floor cadence (default: 24h)
+    * `:backend_intervals` — Per-backend interval overrides (must be ≥ default)
+    * `:backend_configs` — Per-backend opts passed to `list_models/1`
+    * `:workspace_id` — Default workspace for vault resolution
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) when is_list(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @doc """
-  List cached models for a provider.
-
-  Reads from ETS first for low-latency access. Falls back to
-  SQLite on cache miss and populates ETS for subsequent reads.
-
-  ## Examples
-
-      iex> ModelRegistry.list_models("anthropic")
-      [%CachedModel{provider: "anthropic", model_id: "claude-3-opus-20240229", ...}]
-  """
-  @spec list_models(String.t()) :: [CachedModel.t()]
-  def list_models(provider) when is_binary(provider) do
-    case ets_lookup(provider) do
-      {:ok, models} ->
-        models
-
-      :miss ->
-        models = load_from_sqlite(provider)
-        ets_put(provider, models)
-        models
-    end
+  @doc false
+  # Internal write funnel — every writer (baseline, probe, session)
+  # ends here. Public only for testing; not part of the stable API.
+  @spec upsert([map()]) :: {:ok, [CachedModel.t()]} | {:error, term()}
+  def upsert(writes) when is_list(writes) do
+    GenServer.call(__MODULE__, {:upsert, writes}, 30_000)
   end
 
   @doc """
-  List all cached models grouped by provider.
+  Return all cached models for a single backend.
 
-  Returns a map of provider => model list. Reads from ETS with
-  SQLite fallback for each configured provider.
-
-  ## Examples
-
-      iex> ModelRegistry.list_all_models()
-      %{"anthropic" => [%CachedModel{}, ...], "openai" => [%CachedModel{}, ...]}
+  Accepts atom or string `backend`. Normalizes via `to_string/1`.
+  Returns an empty list when the backend has no rows.
   """
-  @spec list_all_models() :: %{String.t() => [CachedModel.t()]}
-  def list_all_models do
-    CachedModel.valid_providers()
-    |> Enum.map(fn provider -> {provider, list_models(provider)} end)
-    |> Enum.reject(fn {_provider, models} -> models == [] end)
-    |> Map.new()
+  @spec list_for_backend(atom() | String.t()) :: [map()]
+  def list_for_backend(backend) do
+    backend_str = to_string(backend)
+    ets_scan_by_backend(backend_str)
   end
 
   @doc """
-  Force refresh a single provider's model list.
-
-  Fetches from the provider API, upserts into SQLite, updates ETS,
-  and removes stale models. Blocks until the refresh completes.
-
-  ## Returns
-
-    * `:ok` — Refresh succeeded
-    * `{:error, reason}` — Refresh failed (stale cache preserved)
+  Return all cached models for a single provider, across every backend.
   """
-  @spec refresh(String.t()) :: :ok | {:error, term()}
-  def refresh(provider) when is_binary(provider) do
-    GenServer.call(__MODULE__, {:refresh, provider}, 30_000)
+  @spec list_for_provider(String.t()) :: [map()]
+  def list_for_provider(provider) when is_binary(provider) do
+    ets_scan_by_provider(provider)
   end
 
   @doc """
-  Force refresh all configured providers.
+  Force an immediate synchronous probe for a single backend.
 
-  Iterates each provider with a configured secret and refreshes
-  sequentially. Returns `:ok` regardless of individual failures
-  (failures are logged).
+  Blocks the caller until the probe task completes or times out.
+  Bypasses the tick schedule. Returns `:ok` on success,
+  `{:error, reason}` on backend failure or timeout.
+  """
+  @spec refresh(atom() | String.t()) :: :ok | {:error, term()}
+  def refresh(backend) do
+    backend_str = to_string(backend)
+    GenServer.call(__MODULE__, {:refresh, backend_str}, @per_backend_refresh_timeout_ms + 1_000)
+  end
+
+  @doc """
+  Force-probe every configured backend sequentially.
+
+  Runs on the GenServer loop, so other calls queue until every
+  configured backend has been probed or timed out. The call
+  deadline is `:infinity` — each inner probe is bounded by
+  `@per_backend_refresh_timeout_ms` (30s), and the reduce is
+  sequential, so the total upper bound is
+  `length(state.backends) * @per_backend_refresh_timeout_ms`.
   """
   @spec refresh_all() :: :ok
   def refresh_all do
-    GenServer.call(__MODULE__, :refresh_all, 120_000)
+    GenServer.call(__MODULE__, :refresh_all, :infinity)
   end
 
   @doc """
-  Update runtime configuration.
+  Register a capability token for session-hook writes.
 
-  Allows changing the workspace ID and provider secret mappings
-  without restarting the GenServer.
+  Called by `AgentBridge.Session` during init to obtain write
+  authorization. The token (an opaque `make_ref()`) must be
+  presented in subsequent `{:session_hook, pid, token, writes}`
+  casts. The token is automatically cleaned up when the session
+  process exits (monitored via `Process.monitor/1`).
+
+  This prevents any arbitrary process on the node from forging
+  a session-hook cast — only the process that registered the
+  token can authorize writes.
+  """
+  @spec register_hook_token(pid(), reference()) :: :ok
+  def register_hook_token(session_pid, token)
+      when is_pid(session_pid) and is_reference(token) do
+    GenServer.call(__MODULE__, {:register_hook_token, session_pid, token})
+  end
+
+  @doc """
+  Update runtime configuration without restarting the GenServer.
 
   ## Options
 
-    * `:workspace_id` — New workspace ID for vault resolution
-    * `:provider_secrets` — New provider => secret_name map
+    * `:backends` — List of backend identifier strings
+    * `:default_interval_ms` — Positive integer
+    * `:backend_intervals` — Map of backend => interval (all values ≥ effective default)
+    * `:backend_configs` — Map of backend => opts map
+    * `:workspace_id` — UUID or nil
+
+  Every option is validated before any change is applied. Invalid
+  input returns `{:error, {:invalid_option, key, reason}}` and leaves
+  state fully unchanged (no partial application). When both
+  `:default_interval_ms` and `:backend_intervals` are supplied in the
+  same call, interval values are validated against the pending new
+  default, not the current state value.
   """
-  @spec configure(keyword()) :: :ok
+  @spec configure(keyword()) :: :ok | {:error, {:invalid_option, atom(), term()}}
   def configure(opts) when is_list(opts) do
     GenServer.call(__MODULE__, {:configure, opts})
+  end
+
+  @doc """
+  Return a map of `backend => [enriched_model]` for every cached row.
+  """
+  @spec list_all_by_backend() :: %{String.t() => [map()]}
+  def list_all_by_backend do
+    safe_ets_tab2list(@ets_table)
+    |> Enum.reduce(%{}, fn
+      {{:row, backend, provider}, row}, acc ->
+        enriched = Enum.map(row.models, &enrich(&1, backend, provider, row.refreshed_at))
+        Map.update(acc, backend, enriched, &(&1 ++ enriched))
+
+      _, acc ->
+        acc
+    end)
+  end
+
+  @doc """
+  Return a map of `provider => [enriched_model]` for every cached row.
+  """
+  @spec list_all_by_provider() :: %{String.t() => [map()]}
+  def list_all_by_provider do
+    safe_ets_tab2list(@ets_table)
+    |> Enum.reduce(%{}, fn
+      {{:row, backend, provider}, row}, acc ->
+        enriched = Enum.map(row.models, &enrich(&1, backend, provider, row.refreshed_at))
+        Map.update(acc, provider, enriched, &(&1 ++ enriched))
+
+      _, acc ->
+        acc
+    end)
   end
 
   # ── GenServer Callbacks ─────────────────────────────────────
 
   @impl true
-  @spec init(keyword()) :: {:ok, State.t()}
+  @spec init(keyword()) :: {:ok, State.t(), {:continue, :load}}
   def init(opts) when is_list(opts) do
-    # Merge Application config with explicit opts (opts take precedence).
     app_config = Application.get_env(:monkey_claw, __MODULE__, [])
     opts = Keyword.merge(app_config, opts)
 
-    refresh_interval =
-      Keyword.get(opts, :refresh_interval_ms, @default_refresh_interval_ms)
+    default_interval = Keyword.get(opts, :default_interval_ms, @default_interval_ms)
+    backend_intervals = Keyword.get(opts, :backend_intervals, %{})
+    backends = Keyword.get(opts, :backends, [])
 
-    if not is_integer(refresh_interval) or refresh_interval <= 0 do
+    unless is_integer(default_interval) and default_interval > 0 do
       raise ArgumentError,
-            "refresh_interval_ms must be a positive integer, got: #{inspect(refresh_interval)}"
+            "ModelRegistry: default_interval_ms must be a positive integer, got: #{inspect(default_interval)}"
     end
 
-    ets_table = create_ets_table()
-    load_all_from_sqlite(ets_table)
+    Enum.each(backend_intervals, fn {backend, interval} ->
+      unless is_integer(interval) and interval > 0 do
+        raise ArgumentError,
+              "ModelRegistry: backend_intervals[#{inspect(backend)}] must be a positive integer, got: #{inspect(interval)}"
+      end
+
+      if interval < default_interval do
+        raise ArgumentError,
+              "ModelRegistry: backend_intervals[#{inspect(backend)}] (#{interval}ms) " <>
+                "must be >= default_interval_ms (#{default_interval}ms)"
+      end
+    end)
+
+    ets_table = ensure_ets_table()
 
     state = %State{
       ets_table: ets_table,
-      refresh_interval_ms: refresh_interval,
+      default_interval: default_interval,
+      backend_intervals: backend_intervals,
+      backends: backends,
       workspace_id: Keyword.get(opts, :workspace_id),
-      provider_secrets: Keyword.get(opts, :provider_secrets, %{}),
-      timer_ref: nil,
-      refreshing: false
+      backend_configs: Keyword.get(opts, :backend_configs, %{}),
+      last_probe_at: Map.new(backends, &{&1, nil}),
+      in_flight: %{},
+      backoff: %{},
+      tick_timer_ref: nil,
+      degraded: false,
+      startup_delay_ms: Keyword.get(opts, :startup_delay_ms, @startup_delay_ms_default)
     }
 
-    {:ok, schedule_refresh(state, @startup_refresh_delay_ms)}
+    {:ok, state, {:continue, :load}}
   end
 
   @impl true
-  def handle_call({:refresh, provider}, _from, %State{} = state) do
-    case do_refresh_provider(provider, state) do
-      :ok -> {:reply, :ok, state}
-      {:error, _} = error -> {:reply, error, state}
+  def handle_continue(:load, %State{} = state) do
+    state = load_existing_and_seed_baseline(state)
+    state = schedule_tick(state, state.startup_delay_ms)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_call({:upsert, writes}, _from, %State{} = state) do
+    result = do_upsert(writes, state)
+    {:reply, result, state}
+  end
+
+  def handle_call({:refresh, backend}, _from, %State{} = state) do
+    case do_synchronous_probe(backend, state) do
+      {:ok, new_state} -> {:reply, :ok, new_state}
+      {{:error, reason}, new_state} -> {:reply, {:error, reason}, new_state}
     end
   end
 
   def handle_call(:refresh_all, _from, %State{} = state) do
-    do_refresh_all(state)
+    state =
+      Enum.reduce(state.backends, state, fn backend, acc ->
+        {_result, new_state} = do_synchronous_probe(backend, acc)
+        new_state
+      end)
+
     {:reply, :ok, state}
   end
 
   def handle_call({:configure, opts}, _from, %State{} = state) do
-    state =
+    case validate_configure_opts(opts, state) do
+      :ok ->
+        new_state = apply_configure_opts(opts, state)
+        {:reply, :ok, new_state}
+
+      {:error, _} = error ->
+        {:reply, error, state}
+    end
+  end
+
+  def handle_call({:register_hook_token, session_pid, token}, _from, %State{} = state) do
+    monitor_ref = Process.monitor(session_pid)
+
+    state = %{
       state
-      |> maybe_update_workspace_id(opts)
-      |> maybe_update_provider_secrets(opts)
+      | hook_tokens: Map.put(state.hook_tokens, session_pid, token),
+        session_monitors: Map.put(state.session_monitors, monitor_ref, session_pid)
+    }
 
     {:reply, :ok, state}
   end
 
   @impl true
-  def handle_info(:scheduled_refresh, %State{refreshing: true} = state) do
-    Logger.debug("ModelRegistry: refresh already in progress, rescheduling")
-    {:noreply, schedule_refresh(%{state | timer_ref: nil})}
+  def handle_cast({:session_hook, session_pid, token, writes}, %State{} = state)
+      when is_pid(session_pid) and is_reference(token) and is_list(writes) do
+    if Map.get(state.hook_tokens, session_pid) == token do
+      _result = do_upsert(writes, state)
+      {:noreply, state}
+    else
+      Logger.warning(
+        "ModelRegistry: rejecting session hook with invalid capability token " <>
+          "from #{inspect(session_pid)}"
+      )
+
+      {:noreply, state}
+    end
   end
 
-  def handle_info(:scheduled_refresh, %State{} = state) do
-    state = %{state | timer_ref: nil, refreshing: true}
-    do_refresh_all(state)
-    state = %{state | refreshing: false}
-    {:noreply, schedule_refresh(state)}
+  def handle_cast(_other, state), do: {:noreply, state}
+
+  @impl true
+  def handle_info(:tick, %State{} = state) do
+    state = maybe_retry_sqlite_load(state)
+    state = Enum.reduce(state.backends, state, &maybe_dispatch_probe/2)
+    state = schedule_next_tick(state)
+    {:noreply, state}
+  end
+
+  def handle_info({ref, result}, %State{in_flight: in_flight} = state) when is_reference(ref) do
+    case Map.pop(in_flight, ref) do
+      {nil, _} ->
+        # Not one of ours — probably a late reply after shutdown.
+        {:noreply, state}
+
+      {backend, remaining} ->
+        # Flush the DOWN message that will follow a successful task.
+        Process.demonitor(ref, [:flush])
+
+        state = %{
+          state
+          | in_flight: remaining,
+            in_flight_backends: Map.delete(state.in_flight_backends, backend)
+        }
+
+        state = handle_probe_result(backend, result, state)
+        state = schedule_next_tick(state)
+        {:noreply, state}
+    end
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %State{in_flight: in_flight} = state)
+      when is_reference(ref) do
+    case Map.pop(in_flight, ref) do
+      {nil, _} ->
+        # Not a probe task — check if it's a session monitor for token cleanup.
+        state = maybe_cleanup_session_token(ref, state)
+        {:noreply, state}
+
+      {backend, remaining} ->
+        Logger.warning(
+          "ModelRegistry: probe task for #{backend} crashed: #{Provider.sanitize_for_log(reason)}"
+        )
+
+        state = %{
+          state
+          | in_flight: remaining,
+            in_flight_backends: Map.delete(state.in_flight_backends, backend)
+        }
+
+        state = apply_backoff(backend, state)
+        state = schedule_next_tick(state)
+        {:noreply, state}
+    end
+  end
+
+  # Defensive catch-all for ETS-TRANSFER messages that arrive outside of
+  # the init/ensure_ets_table receive block. During normal startup, the
+  # transfer is consumed synchronously in ensure_ets_table/0, and
+  # handle_continue(:load) then reconciles ETS from SQLite via
+  # load_existing_and_seed_baseline/1. This clause handles the edge case
+  # where a transfer arrives unexpectedly during runtime — we log it but
+  # take no further action because the table is already owned.
+  def handle_info({:"ETS-TRANSFER", _tid, _from, :model_registry}, %State{} = state) do
+    Logger.info("ModelRegistry received ETS-TRANSFER of :monkey_claw_model_registry")
+    {:noreply, state}
   end
 
   def handle_info(msg, %State{} = state) do
@@ -257,210 +427,707 @@ defmodule MonkeyClaw.ModelRegistry do
     {:noreply, state}
   end
 
-  @impl true
-  def terminate(_reason, %State{} = state) do
-    _state = cancel_timer(state)
-    :ok
+  # ── Private — Tick scheduler ─────────────────────────────────
+
+  defp schedule_tick(state, delay_ms) do
+    _ = if state.tick_timer_ref, do: Process.cancel_timer(state.tick_timer_ref)
+    ref = Process.send_after(self(), :tick, delay_ms)
+    %{state | tick_timer_ref: ref}
   end
 
-  # ── Private — Refresh Logic ─────────────────────────────────
-
-  defp do_refresh_all(%State{provider_secrets: secrets} = state) do
-    Enum.each(secrets, fn {provider, _secret_name} ->
-      case do_refresh_provider(provider, state) do
-        :ok ->
-          Logger.info("ModelRegistry: refreshed #{provider}")
-
-        {:error, reason} ->
-          Logger.warning("ModelRegistry: failed to refresh #{provider}: #{inspect(reason)}")
-      end
-    end)
+  # Compute the earliest time any backend becomes due and schedule
+  # the tick for that time. This ensures backoff retries fire on
+  # time instead of sleeping until the next default_interval tick.
+  defp schedule_next_tick(state) do
+    delay_ms = next_tick_delay_ms(state)
+    schedule_tick(state, delay_ms)
   end
 
-  defp do_refresh_provider(provider, %State{} = state) do
-    opts = build_provider_opts(provider, state)
+  defp next_tick_delay_ms(state) do
+    now = System.monotonic_time(:millisecond)
 
-    with {:ok, model_attrs_list} <- Provider.fetch_models(provider, opts),
-         {:ok, _} <- persist_models(provider, model_attrs_list) do
-      models = load_from_sqlite(provider)
-      ets_put(provider, models)
-      :ok
+    min_delay =
+      state.backends
+      |> Enum.reject(&in_flight?(&1, state))
+      |> Enum.map(fn backend ->
+        case Map.get(state.last_probe_at, backend) do
+          nil ->
+            0
+
+          last ->
+            interval = Map.get(state.backend_intervals, backend, state.default_interval)
+            max(interval - (now - last), 0)
+        end
+      end)
+      |> Enum.min(fn -> state.default_interval end)
+
+    # Floor at 1 second to prevent spin-looping on clock jitter
+    max(min_delay, 1_000)
+  end
+
+  defp maybe_dispatch_probe(backend, state) do
+    cond do
+      map_size(state.in_flight) >= @max_in_flight -> state
+      in_flight?(backend, state) -> state
+      not due?(backend, state) -> state
+      true -> dispatch_probe(backend, state)
+    end
+  end
+
+  defp in_flight?(backend, %State{in_flight_backends: backends}) do
+    Map.has_key?(backends, backend)
+  end
+
+  defp due?(backend, state) do
+    case Map.get(state.last_probe_at, backend) do
+      nil ->
+        true
+
+      last ->
+        now = System.monotonic_time(:millisecond)
+        personal = Map.get(state.backend_intervals, backend, state.default_interval)
+        now - last >= personal
+    end
+  end
+
+  # Builds the {adapter, opts} tuple for a probe, injecting :backend
+  # and :workspace_id so adapters always have the identity context they
+  # need without requiring redundant keys in backend_configs.
+  defp probe_opts(backend, state) do
+    config = Map.get(state.backend_configs, backend, %{})
+    adapter = Map.get(config, :adapter, MonkeyClaw.AgentBridge.Backend.BeamAgent)
+
+    opts =
+      config
+      |> Map.delete(:adapter)
+      |> Map.put_new(:backend, backend)
+      |> Map.put_new(:workspace_id, state.workspace_id)
+
+    {adapter, opts}
+  end
+
+  defp dispatch_probe(backend, state) do
+    {adapter, opts} = probe_opts(backend, state)
+
+    task =
+      Task.Supervisor.async_nolink(MonkeyClaw.TaskSupervisor, fn ->
+        adapter.list_models(opts)
+      end)
+
+    %{
+      state
+      | in_flight: Map.put(state.in_flight, task.ref, backend),
+        in_flight_backends: Map.put(state.in_flight_backends, backend, task.ref)
+    }
+  end
+
+  # ── Private — Synchronous probe ─────────────────────────────
+
+  defp do_synchronous_probe(backend, state) do
+    {adapter, opts} = probe_opts(backend, state)
+
+    task =
+      Task.Supervisor.async_nolink(MonkeyClaw.TaskSupervisor, fn ->
+        adapter.list_models(opts)
+      end)
+
+    deadline = Map.get(opts, :probe_deadline_ms, @per_backend_refresh_timeout_ms)
+
+    timeout =
+      if is_integer(deadline),
+        do: min(deadline, @per_backend_refresh_timeout_ms),
+        else: @per_backend_refresh_timeout_ms
+
+    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+      {:ok, {:ok, models}} when is_list(models) ->
+        new_state = handle_probe_result(backend, {:ok, models}, state)
+        {:ok, new_state}
+
+      {:ok, {:error, reason}} ->
+        new_state = handle_probe_result(backend, {:error, reason}, state)
+        {{:error, reason}, new_state}
+
+      {:ok, malformed} ->
+        new_state = handle_probe_result(backend, malformed, state)
+        {{:error, {:malformed_probe_result, malformed}}, new_state}
+
+      {:exit, reason} ->
+        new_state = apply_backoff(backend, state)
+        {{:error, {:probe_crashed, reason}}, new_state}
+
+      nil ->
+        new_state = apply_backoff(backend, state)
+        {{:error, :probe_timeout}, new_state}
+    end
+  end
+
+  # ── Private — Probe result handling ─────────────────────────
+
+  defp handle_probe_result(backend, {:ok, []}, state) do
+    Logger.debug("ModelRegistry: probe for #{backend} returned empty list, marking healthy")
+    state |> reset_backoff(backend) |> mark_probed(backend)
+  end
+
+  defp handle_probe_result(backend, {:ok, model_attrs_list}, state)
+       when is_list(model_attrs_list) do
+    {valid, invalid} = Enum.split_with(model_attrs_list, &valid_probe_attrs?/1)
+
+    if invalid != [] do
+      Logger.warning(
+        "ModelRegistry: probe for #{backend} returned #{length(invalid)} entries " <>
+          "missing :provider key, treating entire result as malformed"
+      )
+
+      apply_backoff(backend, state)
     else
+      persist_probe_result(backend, valid, state)
+    end
+  end
+
+  defp handle_probe_result(backend, {:error, reason}, state) do
+    Logger.warning(
+      "ModelRegistry: probe failed for #{backend}: #{Provider.sanitize_for_log(reason)}, keeping stale cache"
+    )
+
+    apply_backoff(backend, state)
+  end
+
+  defp handle_probe_result(backend, other, state) do
+    Logger.warning(
+      "ModelRegistry: probe for #{backend} returned malformed result: #{Provider.sanitize_for_log(other)}, " <>
+        "treating as error"
+    )
+
+    apply_backoff(backend, state)
+  end
+
+  defp valid_probe_attrs?(attrs), do: is_map(attrs) and is_binary(Map.get(attrs, :provider))
+
+  defp persist_probe_result(backend, model_attrs_list, state) do
+    now = DateTime.utc_now()
+    mono = System.monotonic_time()
+
+    writes =
+      model_attrs_list
+      |> Enum.group_by(& &1.provider)
+      |> Enum.map(fn {provider, attrs_list} ->
+        %{
+          backend: backend,
+          provider: provider,
+          source: "probe",
+          refreshed_at: now,
+          refreshed_mono: mono,
+          models: Enum.map(attrs_list, &Map.delete(&1, :provider))
+        }
+      end)
+
+    case do_upsert(writes, state) do
+      {:ok, _applied} ->
+        :ok
+
       {:error, reason} ->
         Logger.warning(
-          "ModelRegistry: provider #{provider} refresh failed: #{inspect(reason)}, keeping stale cache"
+          "ModelRegistry: probe upsert failed for #{backend}: #{Provider.sanitize_for_log(reason)}, " <>
+            "ETS cache unchanged"
+        )
+    end
+
+    # Mark probed regardless — the probe itself succeeded (we got models),
+    # only persistence failed. Retrying the probe on the next tick will
+    # attempt the upsert again.
+    state
+    |> reset_backoff(backend)
+    |> mark_probed(backend)
+  end
+
+  defp mark_probed(state, backend) do
+    %{
+      state
+      | last_probe_at: Map.put(state.last_probe_at, backend, System.monotonic_time(:millisecond))
+    }
+  end
+
+  defp reset_backoff(state, backend) do
+    %{state | backoff: Map.delete(state.backoff, backend)}
+  end
+
+  defp apply_backoff(backend, state) do
+    next =
+      case Map.get(state.backoff, backend) do
+        nil -> @backoff_initial_ms
+        current -> min(current * 2, @backoff_max_ms)
+      end
+
+    # Bump last_probe_at so due?/2 skips this backend until `next` ms have passed.
+    # due?/2 returns true when `now - last >= interval`. We want it to return
+    # false for `next` ms, so we set last such that `now - last = interval - next`.
+    interval = Map.get(state.backend_intervals, backend, state.default_interval)
+    now_ms = System.monotonic_time(:millisecond)
+    bumped_last = now_ms - interval + next
+
+    %{
+      state
+      | backoff: Map.put(state.backoff, backend, next),
+        last_probe_at: Map.put(state.last_probe_at, backend, bumped_last)
+    }
+  end
+
+  # ── Private — Upsert funnel ──────────────────────────────────
+
+  defp do_upsert(writes, state) do
+    {valid_changesets, dropped} = validate_writes(writes)
+
+    if dropped > 0 do
+      Logger.warning("ModelRegistry: dropped #{dropped} invalid upsert writes")
+    end
+
+    case Repo.transaction(fn -> apply_upserts(valid_changesets) end) do
+      {:ok, applied} ->
+        Enum.each(applied, fn row ->
+          :ets.insert(state.ets_table, {{:row, row.backend, row.provider}, row})
+        end)
+
+        {:ok, applied}
+
+      {:error, reason} ->
+        Logger.warning(
+          "ModelRegistry: upsert transaction failed: #{Provider.sanitize_for_log(reason)}"
         )
 
         {:error, reason}
     end
+  end
+
+  defp validate_writes(writes) do
+    {valid, dropped} =
+      Enum.reduce(writes, {[], 0}, fn write, {acc, dropped} ->
+        changeset = CachedModel.changeset(%CachedModel{}, write)
+
+        if changeset.valid? do
+          {[{write, changeset} | acc], dropped}
+        else
+          Logger.warning(
+            "ModelRegistry: rejecting write for " <>
+              "#{inspect({Map.get(write, :backend), Map.get(write, :provider)})}: " <>
+              "#{inspect(changeset.errors)}"
+          )
+
+          {acc, dropped + 1}
+        end
+      end)
+
+    {Enum.reverse(valid), dropped}
+  end
+
+  defp apply_upserts(valid_changesets) do
+    Enum.reduce(valid_changesets, [], fn {write, changeset}, applied ->
+      case upsert_single_row(write, changeset) do
+        {:ok, row} ->
+          [row | applied]
+
+        :skipped ->
+          applied
+
+        {:error, reason} ->
+          Logger.warning(
+            "ModelRegistry: upsert failed for #{inspect({write.backend, write.provider})}: " <>
+              Provider.sanitize_for_log(reason)
+          )
+
+          applied
+      end
+    end)
+    |> Enum.reverse()
+  end
+
+  # Serialized writes run entirely inside the GenServer, so the
+  # conditional precedence check does not need to live in raw SQL.
+  # An in-process read-then-compare-then-write is race-free here
+  # because no other process writes to cached_models. The spec's
+  # ON CONFLICT ... WHERE SQL is an equivalent expression of the
+  # same precedence rule.
+  defp upsert_single_row(write, changeset) do
+    existing =
+      Repo.get_by(CachedModel, backend: write.backend, provider: write.provider)
+
+    cond do
+      is_nil(existing) ->
+        Repo.insert(changeset)
+
+      newer?(write, existing) ->
+        existing
+        |> CachedModel.changeset(write)
+        |> Repo.update()
+
+      true ->
+        :skipped
+    end
+  end
+
+  # Monotonic tiebreaker is only meaningful within a single BEAM uptime.
+  # Across restarts, the monotonic origin resets, making cross-restart
+  # comparisons invalid. This is safe in practice because refreshed_at
+  # (microsecond wall-clock) is the primary sort key, and same-microsecond
+  # collisions across a restart boundary are statistically impossible
+  # (restart takes seconds, not microseconds).
+  defp newer?(write, %CachedModel{refreshed_at: existing_at, refreshed_mono: existing_mono}) do
+    case DateTime.compare(write.refreshed_at, existing_at) do
+      :gt -> true
+      :lt -> false
+      :eq -> write.refreshed_mono > existing_mono
+    end
+  end
+
+  # ── Private — ETS ───────────────────────────────────────────
+
+  defp ensure_ets_table do
+    case Process.whereis(EtsHeir) do
+      nil ->
+        # Standalone start (tests without the full tree) — create directly.
+        case :ets.whereis(@ets_table) do
+          :undefined ->
+            :ets.new(@ets_table, [:set, :protected, :named_table, read_concurrency: true])
+
+          ref ->
+            ref
+        end
+
+      _pid ->
+        case EtsHeir.claim(self()) do
+          :ok -> :ok
+          {:error, reason} -> raise "ModelRegistry: EtsHeir claim failed: #{inspect(reason)}"
+        end
+
+        # Wait for the give_away message before returning.
+        receive do
+          {:"ETS-TRANSFER", _tid, _from, :model_registry} -> :ok
+        after
+          @claim_timeout_ms ->
+            raise "ModelRegistry: timeout claiming ETS table from EtsHeir after #{@claim_timeout_ms}ms"
+        end
+
+        :ets.whereis(@ets_table)
+    end
+  end
+
+  defp safe_ets_tab2list(table) do
+    case :ets.whereis(table) do
+      :undefined -> []
+      _ -> :ets.tab2list(table)
+    end
+  end
+
+  defp ets_scan_by_backend(backend) do
+    case :ets.whereis(@ets_table) do
+      :undefined ->
+        []
+
+      tid ->
+        :ets.match_object(tid, {{:row, backend, :_}, :_})
+        |> Enum.flat_map(fn {{:row, ^backend, provider}, row} ->
+          Enum.map(row.models, &enrich(&1, backend, provider, row.refreshed_at))
+        end)
+    end
+  end
+
+  defp ets_scan_by_provider(provider) do
+    case :ets.whereis(@ets_table) do
+      :undefined ->
+        []
+
+      tid ->
+        :ets.match_object(tid, {{:row, :_, provider}, :_})
+        |> Enum.flat_map(fn {{:row, backend, ^provider}, row} ->
+          Enum.map(row.models, &enrich(&1, backend, provider, row.refreshed_at))
+        end)
+    end
+  end
+
+  defp enrich(model, backend, provider, refreshed_at) do
+    %{
+      backend: backend,
+      provider: provider,
+      model_id: model.model_id,
+      display_name: model.display_name,
+      capabilities: model.capabilities,
+      refreshed_at: refreshed_at
+    }
+  end
+
+  # ── Private — Boot sequence ──────────────────────────────────
+
+  defp maybe_retry_sqlite_load(%State{degraded: false} = state), do: state
+
+  defp maybe_retry_sqlite_load(%State{degraded: true} = state) do
+    Logger.info("ModelRegistry: retrying SQLite load from degraded mode")
+
+    case load_sqlite_rows() do
+      {:ok, rows} ->
+        populate_ets(state.ets_table, rows)
+        :ok = seed_baseline_delta(state, rows)
+        Logger.info("ModelRegistry: SQLite load succeeded, exiting degraded mode")
+        %{state | degraded: false}
+
+      {:error, _reason} ->
+        Logger.warning("ModelRegistry: SQLite retry still failing, staying degraded")
+        state
+    end
+  end
+
+  defp load_existing_and_seed_baseline(state) do
+    case load_sqlite_rows() do
+      {:ok, rows} ->
+        populate_ets(state.ets_table, rows)
+        :ok = seed_baseline_delta(state, rows)
+        state
+
+      {:error, reason} ->
+        Logger.warning(
+          "ModelRegistry: SQLite load failed (#{inspect(reason)}), falling back to baseline-only ETS"
+        )
+
+        :ok = seed_baseline_ets_only(state)
+        %{state | degraded: true}
+    end
+  end
+
+  defp load_sqlite_rows do
+    {:ok, Repo.all(CachedModel)}
   rescue
-    error ->
+    # Primary: environmental DB failures (connection down, file locked,
+    # corrupt page, pool timeout).
+    e in [DBConnection.ConnectionError, Exqlite.Error] ->
+      {:error, e}
+
+    # Fallback: any other exception (e.g. DBConnection.OwnershipError
+    # during supervisor restart when the Ecto sandbox reclaims the
+    # checkout from the killed process). Without this clause the
+    # GenServer restart-loops until the supervisor gives up, which is
+    # worse than degraded mode.
+    e ->
       Logger.warning(
-        "ModelRegistry: provider #{provider} refresh crashed: #{Exception.format(:error, error, __STACKTRACE__)}"
+        "ModelRegistry: unexpected error loading SQLite rows " <>
+          "(#{inspect(e.__struct__)}): #{Exception.message(e)}, " <>
+          "falling back to degraded mode"
       )
 
-      {:error, :refresh_crashed}
+      {:error, e}
   end
 
-  defp build_provider_opts(provider, %State{workspace_id: workspace_id, provider_secrets: secrets}) do
-    opts = []
-    opts = if workspace_id, do: Keyword.put(opts, :workspace_id, workspace_id), else: opts
-
-    case Map.get(secrets, provider) do
-      nil -> opts
-      secret_name -> Keyword.put(opts, :secret_name, secret_name)
-    end
+  defp populate_ets(table, rows) do
+    Enum.each(rows, fn %CachedModel{} = row ->
+      :ets.insert(table, {{:row, row.backend, row.provider}, row})
+    end)
   end
 
-  # ── Private — SQLite Persistence ────────────────────────────
+  defp seed_baseline_delta(state, existing_rows) do
+    existing_keys =
+      MapSet.new(existing_rows, fn %CachedModel{backend: b, provider: p} -> {b, p} end)
 
-  defp persist_models(provider, model_attrs_list) do
+    {:ok, entries} = Baseline.load!()
+    now = DateTime.utc_now()
+    mono = System.monotonic_time()
+
+    entries
+    |> Enum.reject(fn entry -> MapSet.member?(existing_keys, {entry.backend, entry.provider}) end)
+    |> Enum.each(fn entry ->
+      attrs = %{
+        backend: entry.backend,
+        provider: entry.provider,
+        source: "baseline",
+        refreshed_at: now,
+        refreshed_mono: mono,
+        models: entry.models
+      }
+
+      case %CachedModel{} |> CachedModel.changeset(attrs) |> Repo.insert() do
+        {:ok, row} ->
+          :ets.insert(state.ets_table, {{:row, row.backend, row.provider}, row})
+
+        {:error, changeset} ->
+          Logger.warning(
+            "ModelRegistry: baseline entry rejected by changeset: #{inspect(changeset.errors)}"
+          )
+      end
+    end)
+
+    :ok
+  end
+
+  defp seed_baseline_ets_only(state) do
+    {:ok, entries} = Baseline.load!()
     now = DateTime.utc_now()
 
-    Repo.transaction(fn ->
-      upsert_models(provider, model_attrs_list, now)
-      delete_stale_models(provider, model_attrs_list)
+    Enum.each(entries, fn entry ->
+      models =
+        Enum.map(entry.models, fn m ->
+          struct(CachedModel.Model, m)
+        end)
+
+      row = %CachedModel{
+        backend: entry.backend,
+        provider: entry.provider,
+        source: "baseline",
+        refreshed_at: now,
+        refreshed_mono: System.monotonic_time(),
+        models: models
+      }
+
+      :ets.insert(state.ets_table, {{:row, entry.backend, entry.provider}, row})
+    end)
+
+    :ok
+  end
+
+  # ── Private — configure/1 validation ────────────────────────
+
+  defp validate_configure_opts(opts, state) do
+    effective_default = effective_default_interval(opts, state)
+
+    with :ok <- validate_opt_keys(opts),
+         :ok <- validate_default_interval_if_present(opts) do
+      validate_rest(opts, state, effective_default)
+    end
+  end
+
+  defp validate_opt_keys(opts) do
+    allowed = [
+      :backends,
+      :default_interval_ms,
+      :backend_intervals,
+      :backend_configs,
+      :workspace_id
+    ]
+
+    Enum.reduce_while(opts, :ok, fn {key, value}, :ok ->
+      if key in allowed do
+        {:cont, :ok}
+      else
+        {:halt, {:error, {:invalid_option, key, value}}}
+      end
     end)
   end
 
-  defp upsert_models(provider, model_attrs_list, now) do
-    Enum.each(model_attrs_list, fn attrs ->
-      upsert_single_model(provider, attrs, now)
+  defp validate_default_interval_if_present(opts) do
+    case Keyword.fetch(opts, :default_interval_ms) do
+      {:ok, value} -> validate_option(:default_interval_ms, value, nil)
+      :error -> :ok
+    end
+  end
+
+  defp effective_default_interval(opts, state) do
+    Keyword.get(opts, :default_interval_ms, state.default_interval)
+  end
+
+  defp validate_rest(opts, state, effective_default) do
+    Enum.reduce_while(opts, :ok, fn {key, value}, :ok ->
+      case validate_option(key, value, %{state | default_interval: effective_default}) do
+        :ok -> {:cont, :ok}
+        {:error, _} = error -> {:halt, error}
+      end
     end)
   end
 
-  defp upsert_single_model(provider, attrs, now) do
-    changeset =
-      %CachedModel{}
-      |> CachedModel.create_changeset(%{
-        provider: provider,
-        model_id: attrs.model_id,
-        display_name: attrs.display_name,
-        capabilities: attrs.capabilities,
-        refreshed_at: now
-      })
+  defp validate_option(:default_interval_ms, value, _state)
+       when is_integer(value) and value > 0,
+       do: :ok
 
-    case Repo.insert(changeset,
-           on_conflict: {:replace, [:display_name, :capabilities, :refreshed_at, :updated_at]},
-           conflict_target: [:provider, :model_id]
-         ) do
-      {:ok, model} ->
-        model
+  defp validate_option(:default_interval_ms, value, _state),
+    do: {:error, {:invalid_option, :default_interval_ms, value}}
 
-      {:error, changeset} ->
-        Repo.rollback({:upsert_failed, changeset})
+  defp validate_option(:backends, value, _state) when is_list(value) do
+    if Enum.all?(value, &is_binary/1) do
+      :ok
+    else
+      {:error, {:invalid_option, :backends, value}}
     end
   end
 
-  defp delete_stale_models(provider, model_attrs_list) do
-    current_model_ids = Enum.map(model_attrs_list, & &1.model_id)
+  defp validate_option(:backends, value, _state),
+    do: {:error, {:invalid_option, :backends, value}}
 
-    from(m in CachedModel,
-      where: m.provider == ^provider and m.model_id not in ^current_model_ids
-    )
-    |> Repo.delete_all()
+  defp validate_option(:backend_intervals, value, state) when is_map(value) do
+    min = state.default_interval
+
+    if Enum.all?(value, fn {k, v} -> is_binary(k) and is_integer(v) and v >= min end) do
+      :ok
+    else
+      {:error, {:invalid_option, :backend_intervals, value}}
+    end
   end
 
-  defp load_from_sqlite(provider) do
-    from(m in CachedModel,
-      where: m.provider == ^provider,
-      order_by: [asc: m.display_name]
-    )
-    |> Repo.all()
-  end
+  defp validate_option(:backend_intervals, value, _state),
+    do: {:error, {:invalid_option, :backend_intervals, value}}
 
-  defp load_all_from_sqlite(ets_table) do
-    models_by_provider =
-      from(m in CachedModel, order_by: [asc: m.display_name])
-      |> Repo.all()
-      |> Enum.group_by(& &1.provider)
+  @allowed_backend_config_keys [
+    :adapter,
+    :secret_name,
+    :base_url,
+    :probe_deadline_ms,
+    :workspace_id
+  ]
 
-    Enum.each(models_by_provider, fn {provider, models} ->
-      refreshed_at =
-        models
-        |> Enum.map(& &1.refreshed_at)
-        |> Enum.max(fn a, b -> DateTime.compare(a, b) != :lt end, fn -> DateTime.utc_now() end)
-
-      :ets.insert(ets_table, {provider, models, refreshed_at})
+  defp validate_option(:backend_configs, value, _state) when is_map(value) do
+    Enum.reduce_while(value, :ok, fn {_backend, config}, :ok ->
+      if is_map(config) and Enum.all?(Map.keys(config), &(&1 in @allowed_backend_config_keys)) do
+        {:cont, :ok}
+      else
+        {:halt, {:error, {:invalid_option, :backend_configs, value}}}
+      end
     end)
   end
 
-  # ── Private — ETS Operations ────────────────────────────────
+  defp validate_option(:backend_configs, value, _state),
+    do: {:error, {:invalid_option, :backend_configs, value}}
 
-  defp create_ets_table do
-    case :ets.whereis(@ets_table) do
-      :undefined ->
-        :ets.new(@ets_table, [:set, :public, :named_table, read_concurrency: true])
+  defp validate_option(:workspace_id, nil, _state), do: :ok
 
-      ref ->
-        ref
+  defp validate_option(:workspace_id, value, _state) when is_binary(value) do
+    case Ecto.UUID.cast(value) do
+      {:ok, _} -> :ok
+      :error -> {:error, {:invalid_option, :workspace_id, value}}
     end
   end
 
-  defp ets_lookup(provider) do
-    case :ets.whereis(@ets_table) do
-      :undefined ->
-        :miss
+  defp validate_option(key, value, _state),
+    do: {:error, {:invalid_option, key, value}}
 
-      _ref ->
-        case :ets.lookup(@ets_table, provider) do
-          [{^provider, models, _refreshed_at}] -> {:ok, models}
-          [] -> :miss
-        end
-    end
+  defp apply_configure_opts(opts, state) do
+    Enum.reduce(opts, state, fn
+      {:backends, v}, acc ->
+        new_probe_at = Map.new(v, fn b -> {b, Map.get(acc.last_probe_at, b)} end)
+        %{acc | backends: v, last_probe_at: new_probe_at}
+
+      {:default_interval_ms, v}, acc ->
+        %{acc | default_interval: v}
+
+      {:backend_intervals, v}, acc ->
+        %{acc | backend_intervals: v}
+
+      {:backend_configs, v}, acc ->
+        %{acc | backend_configs: v}
+
+      {:workspace_id, v}, acc ->
+        %{acc | workspace_id: v}
+    end)
   end
 
-  defp ets_put(provider, models) do
-    case :ets.whereis(@ets_table) do
-      :undefined ->
-        :ok
+  # ── Private — Session hook token cleanup ─────────────────────
 
-      _ref ->
-        now = DateTime.utc_now()
-        :ets.insert(@ets_table, {provider, models, now})
-        :ok
-    end
-  end
+  # Called from the :DOWN handler when a monitored session exits.
+  # Removes the capability token and monitor tracking for the dead
+  # session so stale tokens cannot be replayed.
+  defp maybe_cleanup_session_token(ref, %State{session_monitors: monitors} = state) do
+    case Map.pop(monitors, ref) do
+      {nil, _} ->
+        state
 
-  # ── Private — Timer Management ──────────────────────────────
-
-  defp schedule_refresh(%State{refresh_interval_ms: interval} = state) do
-    schedule_refresh(state, interval)
-  end
-
-  defp schedule_refresh(%State{} = state, delay_ms)
-       when is_integer(delay_ms) and delay_ms >= 0 do
-    ref = Process.send_after(self(), :scheduled_refresh, delay_ms)
-    %{state | timer_ref: ref}
-  end
-
-  defp cancel_timer(%State{timer_ref: nil} = state), do: state
-
-  defp cancel_timer(%State{timer_ref: ref} = state) when is_reference(ref) do
-    _remaining = Process.cancel_timer(ref, info: false)
-
-    receive do
-      :scheduled_refresh -> :ok
-    after
-      0 -> :ok
-    end
-
-    %{state | timer_ref: nil}
-  end
-
-  # ── Private — Configure Helpers ─────────────────────────────
-
-  defp maybe_update_workspace_id(state, opts) do
-    case Keyword.fetch(opts, :workspace_id) do
-      {:ok, workspace_id} -> %{state | workspace_id: workspace_id}
-      :error -> state
-    end
-  end
-
-  defp maybe_update_provider_secrets(state, opts) do
-    case Keyword.fetch(opts, :provider_secrets) do
-      {:ok, secrets} when is_map(secrets) -> %{state | provider_secrets: secrets}
-      _ -> state
+      {session_pid, remaining} ->
+        %{
+          state
+          | hook_tokens: Map.delete(state.hook_tokens, session_pid),
+            session_monitors: remaining
+        }
     end
   end
 end
