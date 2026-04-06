@@ -249,13 +249,18 @@
       <div class="flex gap-2 items-end">
         <form phx-change="select_model" class="flex-none self-end">
           <select name="model" class="select select-bordered select-sm">
-            <option
-              :for={model <- @available_models}
-              value={model.id}
-              selected={model.id == @selected_model}
+            <optgroup
+              :for={{backend, models} <- Enum.sort(@available_models)}
+              label={humanize_backend(backend)}
             >
-              {model.label}
-            </option>
+              <option
+                :for={model <- models}
+                value={model.id}
+                selected={model.id == @selected_model}
+              >
+                {model.label}
+              </option>
+            </optgroup>
           </select>
         </form>
         <form
