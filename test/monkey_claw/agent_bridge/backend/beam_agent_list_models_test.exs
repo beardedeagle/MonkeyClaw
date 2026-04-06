@@ -33,5 +33,23 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgentListModelsTest do
 
       assert {:error, _reason} = result
     end
+
+    test "accepts atom backend without FunctionClauseError" do
+      workspace = insert_workspace!()
+      _ = insert_vault_secret!(workspace, %{name: "anthropic_key", value: "sk-fake"})
+
+      # Atom :claude must resolve to "anthropic" via backend_to_provider/1
+      # without crashing. The HTTP call still fails (unreachable), but the
+      # atom normalization itself succeeds.
+      result =
+        BeamAgent.list_models(%{
+          backend: :claude,
+          workspace_id: workspace.id,
+          secret_name: "anthropic_key",
+          base_url: "http://localhost:1"
+        })
+
+      assert {:error, _reason} = result
+    end
   end
 end
