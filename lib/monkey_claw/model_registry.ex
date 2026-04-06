@@ -34,6 +34,7 @@ defmodule MonkeyClaw.ModelRegistry do
   alias MonkeyClaw.ModelRegistry.Provider
   alias MonkeyClaw.Repo
   alias MonkeyClaw.Vault
+  alias MonkeyClaw.Workspaces
 
   @ets_table :monkey_claw_model_registry
   @default_interval_ms :timer.hours(24)
@@ -403,6 +404,7 @@ defmodule MonkeyClaw.ModelRegistry do
   @impl true
   def handle_info(:tick, %State{} = state) do
     state = maybe_retry_sqlite_load(state)
+    state = maybe_auto_discover(state)
     state = Enum.reduce(state.backends, state, &maybe_dispatch_probe/2)
     state = schedule_next_tick(state)
     {:noreply, state}
@@ -642,6 +644,41 @@ defmodule MonkeyClaw.ModelRegistry do
 
   # Merges discovered backends into GenServer state so future tick
   # probes and refresh_all/0 calls work without reconfiguration.
+  # When no backends are configured, discover them from the first
+  # workspace's vault secrets. Single-user, single-instance: the first
+  # workspace is the only workspace. Fires once per tick when backends
+  # is empty — if no workspace or secrets exist yet, returns state
+  # unchanged and retries on the next tick.
+  defp maybe_auto_discover(%State{backends: []} = state) do
+    case auto_discover_backends() do
+      {[_ | _] = specs, workspace_id} ->
+        Logger.info(
+          "ModelRegistry: auto-discovered #{length(specs)} backend(s) from workspace vault"
+        )
+
+        bootstrap_workspace_config(specs, workspace_id, state)
+
+      _ ->
+        state
+    end
+  end
+
+  defp maybe_auto_discover(state), do: state
+
+  defp auto_discover_backends do
+    case Workspaces.list_workspaces() do
+      [workspace | _] ->
+        {discover_workspace_backends(workspace.id), workspace.id}
+
+      [] ->
+        {[], nil}
+    end
+  rescue
+    e ->
+      Logger.debug("ModelRegistry: auto-discovery skipped: #{Exception.message(e)}")
+      {[], nil}
+  end
+
   defp bootstrap_workspace_config(backend_specs, workspace_id, state) do
     new_backends =
       backend_specs
