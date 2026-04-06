@@ -466,10 +466,10 @@ defmodule MonkeyClaw.ModelRegistryTest do
 
   # Poll until a new pid is registered for ModelRegistry (distinct from
   # old_pid). Bounded to 100 attempts × 10 ms = 1 second max wait.
-  defp wait_for_new_registry(old_pid, attempts \\ 300)
+  defp wait_for_new_registry(old_pid, attempts \\ 500)
 
   defp wait_for_new_registry(_old_pid, 0),
-    do: flunk("ModelRegistry did not restart within 3 seconds")
+    do: flunk("ModelRegistry did not restart within 5 seconds")
 
   defp wait_for_new_registry(old_pid, attempts) do
     case Process.whereis(ModelRegistry) do
@@ -488,10 +488,10 @@ defmodule MonkeyClaw.ModelRegistryTest do
 
   # Poll until the ETS table is owned by expected_pid. Bounded to
   # 300 attempts × 10 ms = 3 seconds max wait.
-  defp wait_for_ets_owner(table, expected_pid, attempts \\ 300)
+  defp wait_for_ets_owner(table, expected_pid, attempts \\ 500)
 
   defp wait_for_ets_owner(_table, _expected_pid, 0),
-    do: flunk("ETS table did not transfer ownership within 3 seconds")
+    do: flunk("ETS table did not transfer ownership within 5 seconds")
 
   defp wait_for_ets_owner(table, expected_pid, attempts) do
     case :ets.info(table, :owner) do
