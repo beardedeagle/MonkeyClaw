@@ -86,7 +86,7 @@ defmodule MonkeyClaw.AgentBridge.Backend.Test do
   end
 
   @impl MonkeyClaw.AgentBridge.Backend
-  def checkpoint_save(pid, label) do
+  def checkpoint_save(pid, label, _file_paths) do
     GenServer.call(pid, {:checkpoint_save, label})
   end
 

@@ -207,15 +207,16 @@ defmodule MonkeyClaw.AgentBridge.Backend do
   # ── Checkpoint Operations (Experiment Support) ───────────────
 
   @doc """
-  Save a checkpoint of the current session state.
+  Snapshot the given files for later rollback.
 
-  Returns a checkpoint identifier that can be used with
-  `checkpoint_rewind/2` to restore the session to this point.
+  Captures the content, permissions, and existence of each file in
+  `file_paths` so that `checkpoint_rewind/2` can restore them.
+  Returns a checkpoint identifier (UUID) for the snapshot.
 
-  Used by the experiment Runner to snapshot state before each
+  Used by the experiment Runner to snapshot scoped files before each
   iteration, enabling rollback on rejection.
   """
-  @callback checkpoint_save(session_pid(), label :: String.t()) ::
+  @callback checkpoint_save(session_pid(), label :: String.t(), file_paths :: [String.t()]) ::
               {:ok, checkpoint_id :: String.t()} | {:error, term()}
 
   @doc """

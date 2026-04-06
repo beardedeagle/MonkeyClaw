@@ -122,27 +122,22 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
 
   # ── Checkpoint Operations ────────────────────────────────────
 
-  # BeamAgent.Checkpoint may not yet export these functions.
-  # Suppress Dialyzer warnings; function_exported?/3 guard
-  # ensures runtime safety until the API is available.
-
   @impl true
-  def checkpoint_save(pid, label) do
-    if function_exported?(BeamAgent.Checkpoint, :save, 2) do
-      # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      apply(BeamAgent.Checkpoint, :save, [pid, label])
-    else
-      {:error, :not_supported}
+  def checkpoint_save(pid, label, file_paths) do
+    with {:ok, info} <- BeamAgent.session_info(pid) do
+      uuid = "#{label}-#{:erlang.unique_integer([:positive, :monotonic])}"
+
+      case BeamAgent.Checkpoint.snapshot(info.session_id, uuid, file_paths) do
+        {:ok, _cp} -> {:ok, uuid}
+        {:error, _} = error -> error
+      end
     end
   end
 
   @impl true
   def checkpoint_rewind(pid, checkpoint_id) do
-    if function_exported?(BeamAgent.Checkpoint, :rewind, 2) do
-      # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      apply(BeamAgent.Checkpoint, :rewind, [pid, checkpoint_id])
-    else
-      {:error, :not_supported}
+    with {:ok, info} <- BeamAgent.session_info(pid) do
+      BeamAgent.Checkpoint.rewind(info.session_id, checkpoint_id)
     end
   end
 end
