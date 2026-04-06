@@ -317,7 +317,7 @@ defmodule MonkeyClaw.ModelRegistry do
   def handle_info(:tick, %State{} = state) do
     state = maybe_retry_sqlite_load(state)
     state = Enum.reduce(state.backends, state, &maybe_dispatch_probe/2)
-    state = schedule_tick(state, state.default_interval)
+    state = schedule_next_tick(state)
     {:noreply, state}
   end
 
@@ -338,6 +338,7 @@ defmodule MonkeyClaw.ModelRegistry do
         }
 
         state = handle_probe_result(backend, result, state)
+        state = schedule_next_tick(state)
         {:noreply, state}
     end
   end
@@ -360,6 +361,7 @@ defmodule MonkeyClaw.ModelRegistry do
         }
 
         state = apply_backoff(backend, state)
+        state = schedule_next_tick(state)
         {:noreply, state}
     end
   end
@@ -387,6 +389,36 @@ defmodule MonkeyClaw.ModelRegistry do
     _ = if state.tick_timer_ref, do: Process.cancel_timer(state.tick_timer_ref)
     ref = Process.send_after(self(), :tick, delay_ms)
     %{state | tick_timer_ref: ref}
+  end
+
+  # Compute the earliest time any backend becomes due and schedule
+  # the tick for that time. This ensures backoff retries fire on
+  # time instead of sleeping until the next default_interval tick.
+  defp schedule_next_tick(state) do
+    delay_ms = next_tick_delay_ms(state)
+    schedule_tick(state, delay_ms)
+  end
+
+  defp next_tick_delay_ms(state) do
+    now = System.monotonic_time(:millisecond)
+
+    min_delay =
+      state.backends
+      |> Enum.reject(&in_flight?(&1, state))
+      |> Enum.map(fn backend ->
+        case Map.get(state.last_probe_at, backend) do
+          nil ->
+            0
+
+          last ->
+            interval = Map.get(state.backend_intervals, backend, state.default_interval)
+            max(interval - (now - last), 0)
+        end
+      end)
+      |> Enum.min(fn -> state.default_interval end)
+
+    # Floor at 1 second to prevent spin-looping on clock jitter
+    max(min_delay, 1_000)
   end
 
   defp maybe_dispatch_probe(backend, state) do

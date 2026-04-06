@@ -924,24 +924,20 @@ defmodule MonkeyClaw.AgentBridge.Session do
     :ok
   end
 
-  # Resolve the backend name for ModelRegistry tagging. Prefers the
-  # explicit `:backend_name` opt, which callers SHOULD set when the
-  # backend module wraps multiple providers (e.g., BeamAgent handles
-  # claude, codex, gemini, opencode, and copilot). Falls back to
-  # "unknown" with a warning when neither opt is present — there is
-  # no hardcoded module-to-name mapping because BeamAgent is not
-  # 1:1 with a single backend identity.
+  # Resolve the backend name for ModelRegistry tagging from the
+  # standard `:backend` key produced by `Scope.session_opts/1`
+  # (e.g., `:claude`, `:gemini`, `:codex`). Converts the atom to
+  # a string for the registry's `(backend, provider)` composite key.
   @spec resolve_backend_name(map(), module()) :: String.t()
   defp resolve_backend_name(session_opts, backend) do
-    case Map.get(session_opts, :backend_name) do
-      name when is_binary(name) and byte_size(name) > 0 ->
-        name
+    case Map.get(session_opts, :backend) do
+      name when is_atom(name) and not is_nil(name) ->
+        Atom.to_string(name)
 
       _ ->
         Logger.warning(
-          "Session: no :backend_name in session_opts for #{inspect(backend)} in fire_model_hook; " <>
-            "ModelRegistry rows will be written under backend \"unknown\". " <>
-            "Pass :backend_name in session_opts to set an explicit name."
+          "Session: no :backend in session_opts for #{inspect(backend)} in fire_model_hook; " <>
+            "ModelRegistry rows will be written under backend \"unknown\"."
         )
 
         "unknown"
