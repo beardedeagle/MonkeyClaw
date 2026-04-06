@@ -17,8 +17,8 @@ defmodule MonkeyClawWeb.VaultLive do
       Encrypted values are never displayed after creation.
     * **Tokens tab** — List and delete OAuth tokens with
       active/expired status indicators.
-    * **Models tab** — Browse cached models grouped by provider,
-      trigger refresh from provider APIs.
+    * **Models tab** — Browse cached models grouped by provider
+      with per-model backend tags, trigger on-demand refresh.
 
   ## Security Invariant
 
@@ -556,7 +556,7 @@ defmodule MonkeyClawWeb.VaultLive do
                 <tr>
                   <th>Model ID</th>
                   <th>Display Name</th>
-                  <th>Provider</th>
+                  <th>Backend</th>
                 </tr>
               </thead>
               <tbody>
@@ -564,8 +564,8 @@ defmodule MonkeyClawWeb.VaultLive do
                   <td class="font-mono text-sm">{model.model_id}</td>
                   <td class="text-sm">{model.display_name}</td>
                   <td>
-                    <span class="badge badge-primary badge-sm">
-                      {provider_label(model.provider)}
+                    <span class="badge badge-secondary badge-sm">
+                      {model.backend}
                     </span>
                   </td>
                 </tr>
