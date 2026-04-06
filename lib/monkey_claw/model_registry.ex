@@ -485,6 +485,40 @@ defmodule MonkeyClaw.ModelRegistry do
 
   defp handle_probe_result(backend, {:ok, model_attrs_list}, state)
        when is_list(model_attrs_list) do
+    {valid, invalid} = Enum.split_with(model_attrs_list, &valid_probe_attrs?/1)
+
+    if invalid != [] do
+      Logger.warning(
+        "ModelRegistry: probe for #{backend} returned #{length(invalid)} entries " <>
+          "missing :provider key, treating entire result as malformed"
+      )
+
+      apply_backoff(backend, state)
+    else
+      persist_probe_result(backend, valid, state)
+    end
+  end
+
+  defp handle_probe_result(backend, {:error, reason}, state) do
+    Logger.warning(
+      "ModelRegistry: probe failed for #{backend}: #{Provider.sanitize_for_log(reason)}, keeping stale cache"
+    )
+
+    apply_backoff(backend, state)
+  end
+
+  defp handle_probe_result(backend, other, state) do
+    Logger.warning(
+      "ModelRegistry: probe for #{backend} returned malformed result: #{Provider.sanitize_for_log(other)}, " <>
+        "treating as error"
+    )
+
+    apply_backoff(backend, state)
+  end
+
+  defp valid_probe_attrs?(attrs), do: is_map(attrs) and is_binary(Map.get(attrs, :provider))
+
+  defp persist_probe_result(backend, model_attrs_list, state) do
     now = DateTime.utc_now()
     mono = System.monotonic_time()
 
@@ -519,23 +553,6 @@ defmodule MonkeyClaw.ModelRegistry do
     state
     |> reset_backoff(backend)
     |> mark_probed(backend)
-  end
-
-  defp handle_probe_result(backend, {:error, reason}, state) do
-    Logger.warning(
-      "ModelRegistry: probe failed for #{backend}: #{Provider.sanitize_for_log(reason)}, keeping stale cache"
-    )
-
-    apply_backoff(backend, state)
-  end
-
-  defp handle_probe_result(backend, other, state) do
-    Logger.warning(
-      "ModelRegistry: probe for #{backend} returned malformed result: #{Provider.sanitize_for_log(other)}, " <>
-        "treating as error"
-    )
-
-    apply_backoff(backend, state)
   end
 
   defp mark_probed(state, backend) do
@@ -716,25 +733,29 @@ defmodule MonkeyClaw.ModelRegistry do
   end
 
   defp ets_scan_by_backend(backend) do
-    safe_ets_tab2list(@ets_table)
-    |> Enum.flat_map(fn
-      {{:row, ^backend, provider}, row} ->
-        Enum.map(row.models, &enrich(&1, backend, provider, row.refreshed_at))
-
-      _ ->
+    case :ets.whereis(@ets_table) do
+      :undefined ->
         []
-    end)
+
+      tid ->
+        :ets.match_object(tid, {{:row, backend, :_}, :_})
+        |> Enum.flat_map(fn {{:row, ^backend, provider}, row} ->
+          Enum.map(row.models, &enrich(&1, backend, provider, row.refreshed_at))
+        end)
+    end
   end
 
   defp ets_scan_by_provider(provider) do
-    safe_ets_tab2list(@ets_table)
-    |> Enum.flat_map(fn
-      {{:row, backend, ^provider}, row} ->
-        Enum.map(row.models, &enrich(&1, backend, provider, row.refreshed_at))
-
-      _ ->
+    case :ets.whereis(@ets_table) do
+      :undefined ->
         []
-    end)
+
+      tid ->
+        :ets.match_object(tid, {{:row, :_, provider}, :_})
+        |> Enum.flat_map(fn {{:row, backend, ^provider}, row} ->
+          Enum.map(row.models, &enrich(&1, backend, provider, row.refreshed_at))
+        end)
+    end
   end
 
   defp enrich(model, backend, provider, refreshed_at) do

@@ -267,7 +267,7 @@ defmodule MonkeyClaw.ModelRegistry.Provider do
   # content.
   @spec sanitize_for_log(term()) :: String.t()
   def sanitize_for_log(term) do
-    inspected = inspect(term, limit: :infinity, printable_limit: 4096)
+    inspected = inspect(term, limit: 200, printable_limit: 4096)
 
     case SecretScanner.scan_and_redact(inspected) do
       {:ok, redacted, _count} -> redacted
