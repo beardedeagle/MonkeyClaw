@@ -41,6 +41,7 @@ defmodule MonkeyClaw.ModelRegistry do
   @backoff_initial_ms 5_000
   @backoff_max_ms 300_000
   @per_backend_refresh_timeout_ms 30_000
+  @max_in_flight 10
 
   # ── State ───────────────────────────────────────────────────
 
@@ -363,6 +364,13 @@ defmodule MonkeyClaw.ModelRegistry do
     end
   end
 
+  # Defensive catch-all for ETS-TRANSFER messages that arrive outside of
+  # the init/ensure_ets_table receive block. During normal startup, the
+  # transfer is consumed synchronously in ensure_ets_table/0, and
+  # handle_continue(:load) then reconciles ETS from SQLite via
+  # load_existing_and_seed_baseline/1. This clause handles the edge case
+  # where a transfer arrives unexpectedly during runtime — we log it but
+  # take no further action because the table is already owned.
   def handle_info({:"ETS-TRANSFER", _tid, _from, :model_registry}, %State{} = state) do
     Logger.info("ModelRegistry received ETS-TRANSFER of :monkey_claw_model_registry")
     {:noreply, state}
@@ -383,6 +391,7 @@ defmodule MonkeyClaw.ModelRegistry do
 
   defp maybe_dispatch_probe(backend, state) do
     cond do
+      map_size(state.in_flight) >= @max_in_flight -> state
       in_flight?(backend, state) -> state
       not due?(backend, state) -> state
       true -> dispatch_probe(backend, state)
