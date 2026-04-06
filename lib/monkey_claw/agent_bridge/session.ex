@@ -72,7 +72,8 @@ defmodule MonkeyClaw.AgentBridge.Session do
     claude: "anthropic",
     codex: "openai",
     gemini: "google",
-    opencode: "anthropic"
+    opencode: "anthropic",
+    copilot: "github_copilot"
   }
 
   # Default query timeout: 2 minutes (LLM queries can be slow)

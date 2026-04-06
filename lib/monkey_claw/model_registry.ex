@@ -617,7 +617,8 @@ defmodule MonkeyClaw.ModelRegistry do
   @provider_to_backend %{
     "anthropic" => "claude",
     "openai" => "codex",
-    "google" => "gemini"
+    "google" => "gemini",
+    "github_copilot" => "copilot"
   }
 
   # Discovers which vault secrets in a workspace map to known backends.
@@ -688,7 +689,9 @@ defmodule MonkeyClaw.ModelRegistry do
 
     new_configs =
       Enum.reduce(backend_specs, state.backend_configs, fn {backend, secret_name}, acc ->
-        Map.put_new(acc, backend, %{secret_name: secret_name})
+        Map.update(acc, backend, %{secret_name: secret_name}, fn config ->
+          Map.put(config, :secret_name, secret_name)
+        end)
       end)
 
     new_last_probe =

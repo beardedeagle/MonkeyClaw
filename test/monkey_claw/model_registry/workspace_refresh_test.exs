@@ -3,9 +3,13 @@ defmodule MonkeyClaw.ModelRegistry.WorkspaceRefreshTest do
   Integration tests for ModelRegistry.refresh_for_workspace/1.
 
   Verifies that the workspace-aware refresh path discovers vault
-  secrets, maps providers to backends, probes upstream (which fails
-  deterministically via unreachable localhost), and auto-configures
-  the registry state for future tick probes.
+  secrets, maps providers to backends, probes upstream APIs, and
+  auto-configures the registry state for future tick probes.
+
+  Tests with fake API keys hit real provider endpoints and receive
+  fast 401 rejections — probes fail gracefully (the backend is still
+  auto-configured) so the tests verify the full discovery-to-bootstrap
+  pipeline without needing a stub server.
 
   Runs serially because ModelRegistry is a named singleton.
   """
