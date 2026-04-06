@@ -122,20 +122,27 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
 
   # ── Checkpoint Operations ────────────────────────────────────
 
-  # BeamAgent.Checkpoint does not yet export save/2 or rewind/2.
-  # These raise until the upstream API ships. The experiment Runner
-  # rescues at the trust boundary and degrades gracefully (nil
-  # checkpoint_id skips rewind). No silent stubs.
-  # Dialyzer: intentional no_return — these always raise.
-  @dialyzer {:nowarn_function, [checkpoint_save: 2, checkpoint_rewind: 2]}
+  # BeamAgent.Checkpoint may not yet export these functions.
+  # Suppress Dialyzer warnings; function_exported?/3 guard
+  # ensures runtime safety until the API is available.
 
   @impl true
-  def checkpoint_save(_pid, _label) do
-    raise "BeamAgent.Checkpoint.save/2 is not yet available in beam_agent"
+  def checkpoint_save(pid, label) do
+    if function_exported?(BeamAgent.Checkpoint, :save, 2) do
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      apply(BeamAgent.Checkpoint, :save, [pid, label])
+    else
+      {:error, :not_supported}
+    end
   end
 
   @impl true
-  def checkpoint_rewind(_pid, _checkpoint_id) do
-    raise "BeamAgent.Checkpoint.rewind/2 is not yet available in beam_agent"
+  def checkpoint_rewind(pid, checkpoint_id) do
+    if function_exported?(BeamAgent.Checkpoint, :rewind, 2) do
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      apply(BeamAgent.Checkpoint, :rewind, [pid, checkpoint_id])
+    else
+      {:error, :not_supported}
+    end
   end
 end
