@@ -9,22 +9,36 @@ defmodule MonkeyClawWeb.ChatLive do
   Conversations are held in-memory for the duration of the LiveView
   session — no persistence layer yet.
 
+  ## Model Selection
+
+  Available models are sourced from `ModelRegistry.list_all_by_backend/0`,
+  which reads the ETS cache directly (no GenServer call). Models are
+  grouped by backend in `<optgroup>` elements so the user can pick any
+  model from any configured backend. When the registry is empty (before
+  first refresh or when no vault secrets are configured), a hardcoded
+  Anthropic default set is used as a fallback.
+
+  Selecting a model updates the LiveView assign and pushes the choice to
+  the active `AgentBridge.Session` via `AgentBridge.set_model/2`.
+
   ## Routes
 
     * `/chat` — Default workspace, default model
     * `/chat/:workspace_id` — Specific workspace
-    * `/chat?backend=claude` — Pre-selects a model matching the backend
+    * `/chat?backend=claude` — Pre-selects the first model for that backend
 
   ## Flow
 
   1. On mount, resolves workspace from URL params (or finds/creates default)
-  2. If a `backend` query param is present, pre-selects a matching model
-  3. User submits a message via the chat form
-  4. Message is dispatched asynchronously through
+  2. Loads available models from `ModelRegistry` (or config fallback)
+  3. If a `backend` query param is present, pre-selects the first model
+     for that backend via direct map lookup
+  4. User submits a message via the chat form
+  5. Message is dispatched asynchronously through
      `Conversation.stream_message/4`
-  5. Streaming chunks are accumulated and displayed progressively
-  6. Final response is appended to the message list when the stream completes
-  7. First user message auto-titles the conversation in the sidebar
+  6. Streaming chunks are accumulated and displayed progressively
+  7. Final response is appended to the message list when the stream completes
+  8. First user message auto-titles the conversation in the sidebar
 
   ## Streaming
 
