@@ -62,7 +62,9 @@ defmodule MonkeyClaw.ModelRegistry do
       in_flight_backends: %{},
       backoff: %{},
       tick_timer_ref: nil,
-      degraded: false
+      degraded: false,
+      hook_tokens: %{},
+      session_monitors: %{}
     ]
 
     @type t :: %__MODULE__{
@@ -78,7 +80,9 @@ defmodule MonkeyClaw.ModelRegistry do
             backoff: %{String.t() => pos_integer()},
             tick_timer_ref: reference() | nil,
             degraded: boolean(),
-            startup_delay_ms: non_neg_integer()
+            startup_delay_ms: non_neg_integer(),
+            hook_tokens: %{pid() => reference()},
+            session_monitors: %{reference() => pid()}
           }
   end
 
@@ -154,6 +158,25 @@ defmodule MonkeyClaw.ModelRegistry do
   @spec refresh_all() :: :ok
   def refresh_all do
     GenServer.call(__MODULE__, :refresh_all, :infinity)
+  end
+
+  @doc """
+  Register a capability token for session-hook writes.
+
+  Called by `AgentBridge.Session` during init to obtain write
+  authorization. The token (an opaque `make_ref()`) must be
+  presented in subsequent `{:session_hook, pid, token, writes}`
+  casts. The token is automatically cleaned up when the session
+  process exits (monitored via `Process.monitor/1`).
+
+  This prevents any arbitrary process on the node from forging
+  a session-hook cast — only the process that registered the
+  token can authorize writes.
+  """
+  @spec register_hook_token(pid(), reference()) :: :ok
+  def register_hook_token(session_pid, token)
+      when is_pid(session_pid) and is_reference(token) do
+    GenServer.call(__MODULE__, {:register_hook_token, session_pid, token})
   end
 
   @doc """
@@ -296,15 +319,28 @@ defmodule MonkeyClaw.ModelRegistry do
     end
   end
 
+  def handle_call({:register_hook_token, session_pid, token}, _from, %State{} = state) do
+    monitor_ref = Process.monitor(session_pid)
+
+    state = %{
+      state
+      | hook_tokens: Map.put(state.hook_tokens, session_pid, token),
+        session_monitors: Map.put(state.session_monitors, monitor_ref, session_pid)
+    }
+
+    {:reply, :ok, state}
+  end
+
   @impl true
-  def handle_cast({:session_hook, session_pid, writes}, %State{} = state)
-      when is_pid(session_pid) and is_list(writes) do
-    if session_registered?(session_pid) do
+  def handle_cast({:session_hook, session_pid, token, writes}, %State{} = state)
+      when is_pid(session_pid) and is_reference(token) and is_list(writes) do
+    if Map.get(state.hook_tokens, session_pid) == token do
       _result = do_upsert(writes, state)
       {:noreply, state}
     else
-      Logger.debug(
-        "ModelRegistry: rejecting session hook from unregistered pid #{inspect(session_pid)}"
+      Logger.warning(
+        "ModelRegistry: rejecting session hook with invalid capability token " <>
+          "from #{inspect(session_pid)}"
       )
 
       {:noreply, state}
@@ -347,6 +383,8 @@ defmodule MonkeyClaw.ModelRegistry do
       when is_reference(ref) do
     case Map.pop(in_flight, ref) do
       {nil, _} ->
+        # Not a probe task — check if it's a session monitor for token cleanup.
+        state = maybe_cleanup_session_token(ref, state)
         {:noreply, state}
 
       {backend, remaining} ->
@@ -1068,18 +1106,22 @@ defmodule MonkeyClaw.ModelRegistry do
     end)
   end
 
-  # ── Private — Session hook auth ──────────────────────────────
+  # ── Private — Session hook token cleanup ─────────────────────
 
-  # Returns true when the given pid is registered in SessionRegistry,
-  # meaning the cast originates from a live AgentBridge session process.
-  # Unregistered pids are rejected to prevent unauthenticated writes.
-  @spec session_registered?(pid()) :: boolean()
-  defp session_registered?(pid) do
-    case Registry.keys(MonkeyClaw.AgentBridge.SessionRegistry, pid) do
-      [] -> false
-      _ -> true
+  # Called from the :DOWN handler when a monitored session exits.
+  # Removes the capability token and monitor tracking for the dead
+  # session so stale tokens cannot be replayed.
+  defp maybe_cleanup_session_token(ref, %State{session_monitors: monitors} = state) do
+    case Map.pop(monitors, ref) do
+      {nil, _} ->
+        state
+
+      {session_pid, remaining} ->
+        %{
+          state
+          | hook_tokens: Map.delete(state.hook_tokens, session_pid),
+            session_monitors: remaining
+        }
     end
-  rescue
-    ArgumentError -> false
   end
 end

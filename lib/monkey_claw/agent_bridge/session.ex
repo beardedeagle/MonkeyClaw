@@ -428,7 +428,11 @@ defmodule MonkeyClaw.AgentBridge.Session do
       _ = broadcast(id, {:session_started, id})
       Logger.info("AgentBridge session #{id} started (beam_agent: #{beam_session_id})")
 
-      fire_model_hook(backend, session_opts, self())
+      if Process.whereis(MonkeyClaw.ModelRegistry) do
+        hook_token = make_ref()
+        :ok = MonkeyClaw.ModelRegistry.register_hook_token(self(), hook_token)
+        fire_model_hook(backend, session_opts, self(), hook_token)
+      end
 
       {:ok, active_state}
     else
@@ -880,12 +884,14 @@ defmodule MonkeyClaw.AgentBridge.Session do
   # Fire an authenticated async cast to ModelRegistry with the freshly
   # observed model list from this session. Runs under TaskSupervisor
   # so adapter latency or crashes never block session lifecycle while
-  # retaining OTP-level crash visibility. The session pid is already
-  # registered in SessionRegistry by the time init/1 runs (`:via`
-  # registration is synchronous before init).
-  # The registry verifies the pid before accepting the payload (spec C3).
-  @spec fire_model_hook(module(), map(), pid()) :: :ok
-  defp fire_model_hook(backend, session_opts, session_pid) do
+  # retaining OTP-level crash visibility.
+  #
+  # The cast includes a capability token (opaque `make_ref()`) that
+  # was registered with ModelRegistry during session init. Only the
+  # session that registered the token can authorize writes — this
+  # prevents forged casts from arbitrary processes on the node.
+  @spec fire_model_hook(module(), map(), pid(), reference()) :: :ok
+  defp fire_model_hook(backend, session_opts, session_pid, hook_token) do
     _ =
       Task.Supervisor.start_child(MonkeyClaw.TaskSupervisor, fn ->
         try do
@@ -909,7 +915,10 @@ defmodule MonkeyClaw.AgentBridge.Session do
                   }
                 end)
 
-              GenServer.cast(MonkeyClaw.ModelRegistry, {:session_hook, session_pid, payload})
+              GenServer.cast(
+                MonkeyClaw.ModelRegistry,
+                {:session_hook, session_pid, hook_token, payload}
+              )
 
             _ ->
               :ok

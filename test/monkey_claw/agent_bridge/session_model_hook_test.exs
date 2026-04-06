@@ -81,9 +81,9 @@ defmodule MonkeyClaw.AgentBridge.SessionModelHookTest do
     end
   end
 
-  describe "session hook — unregistered pid guard" do
-    test "registry ignores cast from unregistered pid with debug log" do
-      unregistered_payload = [
+  describe "session hook — forged token guard" do
+    test "registry rejects cast with unregistered capability token" do
+      forged_payload = [
         %{
           backend: "claude",
           provider: "anthropic",
@@ -94,7 +94,8 @@ defmodule MonkeyClaw.AgentBridge.SessionModelHookTest do
         }
       ]
 
-      GenServer.cast(ModelRegistry, {:session_hook, self(), unregistered_payload})
+      forged_token = make_ref()
+      GenServer.cast(ModelRegistry, {:session_hook, self(), forged_token, forged_payload})
       :timer.sleep(50)
 
       assert ModelRegistry.list_for_backend("claude") == []
