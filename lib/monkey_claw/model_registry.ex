@@ -33,6 +33,7 @@ defmodule MonkeyClaw.ModelRegistry do
   alias MonkeyClaw.ModelRegistry.EtsHeir
   alias MonkeyClaw.ModelRegistry.Provider
   alias MonkeyClaw.Repo
+  alias MonkeyClaw.Vault
 
   @ets_table :monkey_claw_model_registry
   @default_interval_ms :timer.hours(24)
@@ -158,6 +159,26 @@ defmodule MonkeyClaw.ModelRegistry do
   @spec refresh_all() :: :ok
   def refresh_all do
     GenServer.call(__MODULE__, :refresh_all, :infinity)
+  end
+
+  @doc """
+  Probe upstream APIs using vault secrets from the given workspace.
+
+  Discovers which vault secrets map to known backends via a static
+  `provider → backend` mapping, then probes each backend synchronously
+  with the corresponding secret name and workspace ID. On success,
+  auto-configures `state.backends`, `state.backend_configs`, and
+  `state.workspace_id` so future tick probes continue without manual
+  intervention.
+
+  Returns `:ok` when at least one backend was probed (individual probe
+  failures are logged but do not fail the call), or
+  `{:error, :no_backends_discovered}` when no vault secrets map to a
+  known backend.
+  """
+  @spec refresh_for_workspace(Ecto.UUID.t()) :: :ok | {:error, :no_backends_discovered}
+  def refresh_for_workspace(workspace_id) when is_binary(workspace_id) do
+    GenServer.call(__MODULE__, {:refresh_for_workspace, workspace_id}, :infinity)
   end
 
   @doc """
@@ -312,6 +333,30 @@ defmodule MonkeyClaw.ModelRegistry do
       end)
 
     {:reply, :ok, state}
+  end
+
+  def handle_call({:refresh_for_workspace, workspace_id}, _from, %State{} = state) do
+    case discover_workspace_backends(workspace_id) do
+      [] ->
+        {:reply, {:error, :no_backends_discovered}, state}
+
+      backend_specs ->
+        state = bootstrap_workspace_config(backend_specs, workspace_id, state)
+
+        state =
+          Enum.reduce(backend_specs, state, fn {backend, secret_name}, acc ->
+            {_result, new_state} =
+              do_synchronous_probe(
+                backend,
+                probe_opts_for_workspace(backend, workspace_id, secret_name),
+                acc
+              )
+
+            new_state
+          end)
+
+        {:reply, :ok, state}
+    end
   end
 
   def handle_call({:configure, opts}, _from, %State{} = state) do
@@ -524,8 +569,10 @@ defmodule MonkeyClaw.ModelRegistry do
   # ── Private — Synchronous probe ─────────────────────────────
 
   defp do_synchronous_probe(backend, state) do
-    {adapter, opts} = probe_opts(backend, state)
+    do_synchronous_probe(backend, probe_opts(backend, state), state)
+  end
 
+  defp do_synchronous_probe(backend, {adapter, opts}, state) do
     task =
       Task.Supervisor.async_nolink(MonkeyClaw.TaskSupervisor, fn ->
         adapter.list_models(opts)
@@ -559,6 +606,66 @@ defmodule MonkeyClaw.ModelRegistry do
         new_state = apply_backoff(backend, state)
         {{:error, :probe_timeout}, new_state}
     end
+  end
+
+  # ── Private — Workspace-aware probing ──────────────────────
+
+  # Static reverse mapping from vault secret provider to ModelRegistry
+  # backend name. Mirrors the forward mapping in BeamAgent.backend_to_provider/1.
+  @provider_to_backend %{
+    "anthropic" => "claude",
+    "openai" => "codex",
+    "google" => "gemini"
+  }
+
+  # Discovers which vault secrets in a workspace map to known backends.
+  # Returns [{backend, secret_name}] — one entry per discoverable backend.
+  @spec discover_workspace_backends(Ecto.UUID.t()) :: [{String.t(), String.t()}]
+  defp discover_workspace_backends(workspace_id) do
+    workspace_id
+    |> Vault.list_secrets()
+    |> Enum.flat_map(fn secret ->
+      case Map.get(@provider_to_backend, secret.provider) do
+        nil -> []
+        backend -> [{backend, secret.name}]
+      end
+    end)
+    |> Enum.uniq_by(fn {backend, _} -> backend end)
+  end
+
+  # Builds {adapter, opts} for a workspace-derived probe — bypasses
+  # state.backend_configs and injects workspace_id + secret_name directly.
+  defp probe_opts_for_workspace(backend, workspace_id, secret_name) do
+    {MonkeyClaw.AgentBridge.Backend.BeamAgent,
+     %{backend: backend, workspace_id: workspace_id, secret_name: secret_name}}
+  end
+
+  # Merges discovered backends into GenServer state so future tick
+  # probes and refresh_all/0 calls work without reconfiguration.
+  defp bootstrap_workspace_config(backend_specs, workspace_id, state) do
+    new_backends =
+      backend_specs
+      |> Enum.map(fn {backend, _} -> backend end)
+      |> Enum.concat(state.backends)
+      |> Enum.uniq()
+
+    new_configs =
+      Enum.reduce(backend_specs, state.backend_configs, fn {backend, secret_name}, acc ->
+        Map.put_new(acc, backend, %{secret_name: secret_name})
+      end)
+
+    new_last_probe =
+      Enum.reduce(new_backends, state.last_probe_at, fn backend, acc ->
+        Map.put_new(acc, backend, nil)
+      end)
+
+    %{
+      state
+      | backends: new_backends,
+        backend_configs: new_configs,
+        workspace_id: workspace_id,
+        last_probe_at: new_last_probe
+    }
   end
 
   # ── Private — Probe result handling ─────────────────────────
