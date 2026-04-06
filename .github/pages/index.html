@@ -330,7 +330,7 @@
       <div class="feature">
         <div class="feature-icon">&#129302;</div>
         <h3>Model Registry</h3>
-        <p>Periodic provider model list cache with SQLite persistence and ETS write-through for low-latency reads. GenServer-managed refresh cycles for Anthropic, OpenAI, and Google APIs with graceful degradation on failures.</p>
+        <p>Backend-keyed model registry with per-backend probes, SQLite persistence, and ETS read-through cache. Four write sources (baseline, probe, session hook, on-demand), ETS heir crash survival, and exponential backoff with graceful degradation on failures.</p>
       </div>
     </div>
   </section>

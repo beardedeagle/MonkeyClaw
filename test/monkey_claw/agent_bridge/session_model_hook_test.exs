@@ -47,6 +47,7 @@ defmodule MonkeyClaw.AgentBridge.SessionModelHookTest do
         id: session_id,
         backend: Backend.Test,
         session_opts: %{
+          backend_name: "test",
           list_models_response:
             {:ok,
              [

@@ -878,19 +878,20 @@ defmodule MonkeyClaw.AgentBridge.Session do
   end
 
   # Fire an authenticated async cast to ModelRegistry with the freshly
-  # observed model list from this session. Runs in an unsupervised Task
-  # so adapter latency or crashes never block session lifecycle. The
-  # session pid is already registered in SessionRegistry by the time
-  # init/1 runs (`:via` registration is synchronous before init).
+  # observed model list from this session. Runs under TaskSupervisor
+  # so adapter latency or crashes never block session lifecycle while
+  # retaining OTP-level crash visibility. The session pid is already
+  # registered in SessionRegistry by the time init/1 runs (`:via`
+  # registration is synchronous before init).
   # The registry verifies the pid before accepting the payload (spec C3).
   @spec fire_model_hook(module(), map(), pid()) :: :ok
   defp fire_model_hook(backend, session_opts, session_pid) do
     _ =
-      Task.start(fn ->
+      Task.Supervisor.start_child(MonkeyClaw.TaskSupervisor, fn ->
         try do
           case backend.list_models(session_opts) do
             {:ok, model_attrs_list} when is_list(model_attrs_list) ->
-              backend_name = Map.get(session_opts, :backend_name, infer_backend_name(backend))
+              backend_name = resolve_backend_name(session_opts, backend)
               now = DateTime.utc_now()
               mono = System.monotonic_time()
 
@@ -914,25 +915,37 @@ defmodule MonkeyClaw.AgentBridge.Session do
               :ok
           end
         rescue
-          _ -> :ok
+          e ->
+            Logger.debug("Session: fire_model_hook failed: #{Exception.message(e)}")
+            :ok
         end
       end)
 
     :ok
   end
 
-  @spec infer_backend_name(module()) :: String.t()
-  defp infer_backend_name(MonkeyClaw.AgentBridge.Backend.Test), do: "test"
-  defp infer_backend_name(MonkeyClaw.AgentBridge.Backend.BeamAgent), do: "claude"
+  # Resolve the backend name for ModelRegistry tagging. Prefers the
+  # explicit `:backend_name` opt, which callers SHOULD set when the
+  # backend module wraps multiple providers (e.g., BeamAgent handles
+  # claude, codex, gemini, opencode, and copilot). Falls back to
+  # "unknown" with a warning when neither opt is present — there is
+  # no hardcoded module-to-name mapping because BeamAgent is not
+  # 1:1 with a single backend identity.
+  @spec resolve_backend_name(map(), module()) :: String.t()
+  defp resolve_backend_name(session_opts, backend) do
+    case Map.get(session_opts, :backend_name) do
+      name when is_binary(name) and byte_size(name) > 0 ->
+        name
 
-  defp infer_backend_name(other) do
-    Logger.warning(
-      "Session: unknown backend module #{inspect(other)} in fire_model_hook; " <>
-        "ModelRegistry rows will be written under backend \"unknown\". " <>
-        "Pass :backend_name in session_opts to set an explicit name."
-    )
+      _ ->
+        Logger.warning(
+          "Session: no :backend_name in session_opts for #{inspect(backend)} in fire_model_hook; " <>
+            "ModelRegistry rows will be written under backend \"unknown\". " <>
+            "Pass :backend_name in session_opts to set an explicit name."
+        )
 
-    "unknown"
+        "unknown"
+    end
   end
 
   # Kill an active stream task and clean up its state.

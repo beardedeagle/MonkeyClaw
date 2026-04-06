@@ -25,6 +25,7 @@ defmodule MonkeyClaw.ModelRegistry.EtsHeir do
 
   @ets_table :monkey_claw_model_registry
 
+  @doc "Start the ETS heir process under `__MODULE__`."
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(_opts \\ []) do
     GenServer.start_link(__MODULE__, [], name: __MODULE__)
@@ -55,7 +56,7 @@ defmodule MonkeyClaw.ModelRegistry.EtsHeir do
         _tid =
           :ets.new(@ets_table, [
             :set,
-            :public,
+            :protected,
             :named_table,
             {:read_concurrency, true},
             {:heir, self(), :model_registry}

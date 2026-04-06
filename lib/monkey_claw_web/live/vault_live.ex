@@ -36,6 +36,8 @@ defmodule MonkeyClawWeb.VaultLive do
 
   use MonkeyClawWeb, :live_view
 
+  require Logger
+
   import Ecto.Query
 
   alias MonkeyClaw.ModelRegistry
@@ -611,7 +613,9 @@ defmodule MonkeyClawWeb.VaultLive do
   defp list_models do
     ModelRegistry.list_all_by_provider()
   rescue
-    _ -> %{}
+    e ->
+      Logger.warning("VaultLive: failed to load models: #{Exception.message(e)}")
+      %{}
   end
 
   defp safe_refresh_models do

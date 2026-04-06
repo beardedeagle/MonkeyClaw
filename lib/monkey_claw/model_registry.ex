@@ -31,6 +31,7 @@ defmodule MonkeyClaw.ModelRegistry do
   alias MonkeyClaw.ModelRegistry.Baseline
   alias MonkeyClaw.ModelRegistry.CachedModel
   alias MonkeyClaw.ModelRegistry.EtsHeir
+  alias MonkeyClaw.ModelRegistry.Provider
   alias MonkeyClaw.Repo
 
   @ets_table :monkey_claw_model_registry
@@ -57,6 +58,7 @@ defmodule MonkeyClaw.ModelRegistry do
       backend_configs: %{},
       last_probe_at: %{},
       in_flight: %{},
+      in_flight_backends: %{},
       backoff: %{},
       tick_timer_ref: nil,
       degraded: false
@@ -71,6 +73,7 @@ defmodule MonkeyClaw.ModelRegistry do
             backend_configs: %{String.t() => map()},
             last_probe_at: %{String.t() => integer() | nil},
             in_flight: %{reference() => String.t()},
+            in_flight_backends: %{String.t() => reference()},
             backoff: %{String.t() => pos_integer()},
             tick_timer_ref: reference() | nil,
             degraded: boolean(),
@@ -96,24 +99,9 @@ defmodule MonkeyClaw.ModelRegistry do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @doc """
-  Apply a batch of writes to the cache.
-
-  Each write is a map with keys `:backend`, `:provider`, `:source`,
-  `:refreshed_at`, `:refreshed_mono`, `:models`. Every write is
-  validated through `CachedModel.changeset/2` — invalid writes are
-  dropped with a log. Valid writes go through a single SQLite
-  transaction with conditional upsert precedence on
-  `(refreshed_at, refreshed_mono)`. Returns the list of rows that
-  actually won their conditional upsert (stale writes are silently
-  dropped).
-
-  ETS is updated only after the transaction commits, so ETS rows
-  always correspond to persisted SQLite rows.
-
-  This is the single write funnel — every writer (baseline, probe,
-  session) ends here.
-  """
+  @doc false
+  # Internal write funnel — every writer (baseline, probe, session)
+  # ends here. Public only for testing; not part of the stable API.
   @spec upsert([map()]) :: {:ok, [CachedModel.t()]}
   def upsert(writes) when is_list(writes) do
     GenServer.call(__MODULE__, {:upsert, writes}, 30_000)
@@ -326,6 +314,7 @@ defmodule MonkeyClaw.ModelRegistry do
 
   @impl true
   def handle_info(:tick, %State{} = state) do
+    state = maybe_retry_sqlite_load(state)
     state = Enum.reduce(state.backends, state, &maybe_dispatch_probe/2)
     state = schedule_tick(state, state.default_interval)
     {:noreply, state}
@@ -341,7 +330,12 @@ defmodule MonkeyClaw.ModelRegistry do
         # Flush the DOWN message that will follow a successful task.
         Process.demonitor(ref, [:flush])
 
-        state = %{state | in_flight: remaining}
+        state = %{
+          state
+          | in_flight: remaining,
+            in_flight_backends: Map.delete(state.in_flight_backends, backend)
+        }
+
         state = handle_probe_result(backend, result, state)
         {:noreply, state}
     end
@@ -354,9 +348,16 @@ defmodule MonkeyClaw.ModelRegistry do
         {:noreply, state}
 
       {backend, remaining} ->
-        Logger.warning("ModelRegistry: probe task for #{backend} crashed: #{inspect(reason)}")
+        Logger.warning(
+          "ModelRegistry: probe task for #{backend} crashed: #{Provider.sanitize_for_log(reason)}"
+        )
 
-        state = %{state | in_flight: remaining}
+        state = %{
+          state
+          | in_flight: remaining,
+            in_flight_backends: Map.delete(state.in_flight_backends, backend)
+        }
+
         state = apply_backoff(backend, state)
         {:noreply, state}
     end
@@ -375,6 +376,7 @@ defmodule MonkeyClaw.ModelRegistry do
   # ── Private — Tick scheduler ─────────────────────────────────
 
   defp schedule_tick(state, delay_ms) do
+    _ = if state.tick_timer_ref, do: Process.cancel_timer(state.tick_timer_ref)
     ref = Process.send_after(self(), :tick, delay_ms)
     %{state | tick_timer_ref: ref}
   end
@@ -387,8 +389,8 @@ defmodule MonkeyClaw.ModelRegistry do
     end
   end
 
-  defp in_flight?(backend, %State{in_flight: map}) do
-    Enum.any?(map, fn {_ref, b} -> b == backend end)
+  defp in_flight?(backend, %State{in_flight_backends: backends}) do
+    Map.has_key?(backends, backend)
   end
 
   defp due?(backend, state) do
@@ -427,7 +429,11 @@ defmodule MonkeyClaw.ModelRegistry do
         adapter.list_models(opts)
       end)
 
-    %{state | in_flight: Map.put(state.in_flight, task.ref, backend)}
+    %{
+      state
+      | in_flight: Map.put(state.in_flight, task.ref, backend),
+        in_flight_backends: Map.put(state.in_flight_backends, backend, task.ref)
+    }
   end
 
   # ── Private — Synchronous probe ─────────────────────────────
@@ -502,7 +508,7 @@ defmodule MonkeyClaw.ModelRegistry do
 
       {:error, reason} ->
         Logger.warning(
-          "ModelRegistry: probe upsert failed for #{backend}: #{inspect(reason)}, " <>
+          "ModelRegistry: probe upsert failed for #{backend}: #{Provider.sanitize_for_log(reason)}, " <>
             "ETS cache unchanged"
         )
     end
@@ -517,7 +523,7 @@ defmodule MonkeyClaw.ModelRegistry do
 
   defp handle_probe_result(backend, {:error, reason}, state) do
     Logger.warning(
-      "ModelRegistry: probe failed for #{backend}: #{inspect(reason)}, keeping stale cache"
+      "ModelRegistry: probe failed for #{backend}: #{Provider.sanitize_for_log(reason)}, keeping stale cache"
     )
 
     apply_backoff(backend, state)
@@ -525,7 +531,7 @@ defmodule MonkeyClaw.ModelRegistry do
 
   defp handle_probe_result(backend, other, state) do
     Logger.warning(
-      "ModelRegistry: probe for #{backend} returned malformed result: #{inspect(other)}, " <>
+      "ModelRegistry: probe for #{backend} returned malformed result: #{Provider.sanitize_for_log(other)}, " <>
         "treating as error"
     )
 
@@ -582,7 +588,10 @@ defmodule MonkeyClaw.ModelRegistry do
         {:ok, applied}
 
       {:error, reason} ->
-        Logger.warning("ModelRegistry: upsert transaction failed: #{inspect(reason)}")
+        Logger.warning(
+          "ModelRegistry: upsert transaction failed: #{Provider.sanitize_for_log(reason)}"
+        )
+
         {:error, reason}
     end
   end
@@ -620,7 +629,7 @@ defmodule MonkeyClaw.ModelRegistry do
         {:error, reason} ->
           Logger.warning(
             "ModelRegistry: upsert failed for #{inspect({write.backend, write.provider})}: " <>
-              inspect(reason)
+              Provider.sanitize_for_log(reason)
           )
 
           applied
@@ -653,6 +662,12 @@ defmodule MonkeyClaw.ModelRegistry do
     end
   end
 
+  # Monotonic tiebreaker is only meaningful within a single BEAM uptime.
+  # Across restarts, the monotonic origin resets, making cross-restart
+  # comparisons invalid. This is safe in practice because refreshed_at
+  # (microsecond wall-clock) is the primary sort key, and same-microsecond
+  # collisions across a restart boundary are statistically impossible
+  # (restart takes seconds, not microseconds).
   defp newer?(write, %CachedModel{refreshed_at: existing_at, refreshed_mono: existing_mono}) do
     case DateTime.compare(write.refreshed_at, existing_at) do
       :gt -> true
@@ -669,7 +684,7 @@ defmodule MonkeyClaw.ModelRegistry do
         # Standalone start (tests without the full tree) — create directly.
         case :ets.whereis(@ets_table) do
           :undefined ->
-            :ets.new(@ets_table, [:set, :public, :named_table, read_concurrency: true])
+            :ets.new(@ets_table, [:set, :protected, :named_table, read_concurrency: true])
 
           ref ->
             ref
@@ -734,6 +749,24 @@ defmodule MonkeyClaw.ModelRegistry do
   end
 
   # ── Private — Boot sequence ──────────────────────────────────
+
+  defp maybe_retry_sqlite_load(%State{degraded: false} = state), do: state
+
+  defp maybe_retry_sqlite_load(%State{degraded: true} = state) do
+    Logger.info("ModelRegistry: retrying SQLite load from degraded mode")
+
+    case load_sqlite_rows() do
+      {:ok, rows} ->
+        populate_ets(state.ets_table, rows)
+        :ok = seed_baseline_delta(state, rows)
+        Logger.info("ModelRegistry: SQLite load succeeded, exiting degraded mode")
+        %{state | degraded: false}
+
+      {:error, _reason} ->
+        Logger.warning("ModelRegistry: SQLite retry still failing, staying degraded")
+        state
+    end
+  end
 
   defp load_existing_and_seed_baseline(state) do
     case load_sqlite_rows() do
@@ -920,7 +953,23 @@ defmodule MonkeyClaw.ModelRegistry do
   defp validate_option(:backend_intervals, value, _state),
     do: {:error, {:invalid_option, :backend_intervals, value}}
 
-  defp validate_option(:backend_configs, value, _state) when is_map(value), do: :ok
+  @allowed_backend_config_keys [
+    :adapter,
+    :secret_name,
+    :base_url,
+    :probe_deadline_ms,
+    :workspace_id
+  ]
+
+  defp validate_option(:backend_configs, value, _state) when is_map(value) do
+    Enum.reduce_while(value, :ok, fn {_backend, config}, :ok ->
+      if is_map(config) and Enum.all?(Map.keys(config), &(&1 in @allowed_backend_config_keys)) do
+        {:cont, :ok}
+      else
+        {:halt, {:error, {:invalid_option, :backend_configs, value}}}
+      end
+    end)
+  end
 
   defp validate_option(:backend_configs, value, _state),
     do: {:error, {:invalid_option, :backend_configs, value}}
@@ -939,11 +988,21 @@ defmodule MonkeyClaw.ModelRegistry do
 
   defp apply_configure_opts(opts, state) do
     Enum.reduce(opts, state, fn
-      {:backends, v}, acc -> %{acc | backends: v}
-      {:default_interval_ms, v}, acc -> %{acc | default_interval: v}
-      {:backend_intervals, v}, acc -> %{acc | backend_intervals: v}
-      {:backend_configs, v}, acc -> %{acc | backend_configs: v}
-      {:workspace_id, v}, acc -> %{acc | workspace_id: v}
+      {:backends, v}, acc ->
+        new_probe_at = Map.new(v, fn b -> {b, Map.get(acc.last_probe_at, b)} end)
+        %{acc | backends: v, last_probe_at: new_probe_at}
+
+      {:default_interval_ms, v}, acc ->
+        %{acc | default_interval: v}
+
+      {:backend_intervals, v}, acc ->
+        %{acc | backend_intervals: v}
+
+      {:backend_configs, v}, acc ->
+        %{acc | backend_configs: v}
+
+      {:workspace_id, v}, acc ->
+        %{acc | workspace_id: v}
     end)
   end
 
@@ -959,6 +1018,6 @@ defmodule MonkeyClaw.ModelRegistry do
       _ -> true
     end
   rescue
-    _ -> false
+    ArgumentError -> false
   end
 end

@@ -156,6 +156,12 @@ defmodule MonkeyClaw.ModelRegistry.Provider do
     end
   end
 
+  # Google's API requires the key as a URL query parameter (`?key=...`),
+  # which means the secret appears in the URL and may be captured by HTTP
+  # proxies, server access logs, or Req debug output. This is a Google API
+  # design constraint — Anthropic and OpenAI use HTTP headers instead.
+  # Ensure Req debug logging is disabled in production and any intermediate
+  # proxies do not log query strings.
   defp google_request(api_key, opts) do
     base_url = base_url("google", opts)
 
