@@ -877,6 +877,11 @@ defmodule MonkeyClaw.Experiments.Runner do
           "Experiment #{state.experiment_id} checkpoint rewind failed: #{inspect(reason)}"
         )
     end
+  rescue
+    e ->
+      Logger.warning(
+        "Experiment #{state.experiment_id} checkpoint rewind unavailable: #{Exception.message(e)}"
+      )
   end
 
   # ── Private: Cancel ──────────────────────────────────────────
@@ -1042,13 +1047,28 @@ defmodule MonkeyClaw.Experiments.Runner do
   defp strategy_opts(state, extra), do: Map.merge(strategy_opts(state), extra)
 
   defp prepare_opts(state) do
-    # Save checkpoint before iteration
+    # Trust boundary: the backend adapter may raise if checkpoint
+    # support is not yet available (e.g., BeamAgent.Checkpoint).
+    # Rescue here and degrade to nil — the nil guard on
+    # try_checkpoint_rewind/2 skips rewind when no checkpoint exists.
     checkpoint_id =
-      if state.session_pid do
-        case state.backend.checkpoint_save(state.session_pid, "iteration-#{state.iteration + 1}") do
-          {:ok, id} -> id
-          {:error, _} -> nil
+      try do
+        if state.session_pid do
+          case state.backend.checkpoint_save(
+                 state.session_pid,
+                 "iteration-#{state.iteration + 1}"
+               ) do
+            {:ok, id} -> id
+            {:error, _} -> nil
+          end
         end
+      rescue
+        e ->
+          Logger.warning(
+            "Experiment #{state.experiment_id} checkpoint save unavailable: #{Exception.message(e)}"
+          )
+
+          nil
       end
 
     strategy_opts(state, %{checkpoint_id: checkpoint_id})
