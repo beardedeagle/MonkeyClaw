@@ -31,9 +31,7 @@ defmodule MonkeyClaw.ModelRegistry.AuthDiscoveryTest do
         else: Application.delete_env(:monkey_claw, MonkeyClaw.ModelRegistry.Baseline)
     end)
 
-    start_supervised!(
-      {MonkeyClaw.ModelRegistry.EtsHeir, [table_name: :monkey_claw_model_registry]}
-    )
+    start_supervised!(MonkeyClaw.ModelRegistry.EtsHeir)
 
     # Large delays to prevent auto-tick from interfering with test probes.
     start_supervised!(

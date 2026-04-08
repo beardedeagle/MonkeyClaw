@@ -187,6 +187,7 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
     ArgumentError -> {:error, {:unknown_backend, backend}}
   end
 
+  defp normalize_backend(nil), do: {:error, :backend_required}
   defp normalize_backend(other), do: {:error, {:unknown_backend, other}}
 
   # Map MonkeyClaw backend atoms to their upstream provider string.
