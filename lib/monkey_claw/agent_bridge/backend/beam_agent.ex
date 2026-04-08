@@ -2,19 +2,20 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
   @moduledoc """
   Production backend adapter wrapping the BeamAgent runtime.
 
-  Each callback delegates to the corresponding `BeamAgent` or
-  `BeamAgent.Threads` function. This module exists solely to
-  satisfy the `MonkeyClaw.AgentBridge.Backend` behaviour contract,
-  keeping the Session GenServer decoupled from the concrete
-  BeamAgent API.
+  Session lifecycle, queries, threads, and checkpoints delegate
+  directly to `BeamAgent` and `BeamAgent.Threads`.
+
+  Model listing uses beam_agent's own session-based catalog:
+  checks `BeamAgent.Auth.status/1` for authentication, starts a
+  temporary session to query `BeamAgent.Catalog.supported_models/1`,
+  normalizes the results to `model_attrs` shape, and stops the
+  session. No direct HTTP calls to provider APIs.
 
   This is the default backend used when no `:backend` key is
   present in the session config.
   """
 
   @behaviour MonkeyClaw.AgentBridge.Backend
-
-  alias MonkeyClaw.ModelRegistry.Provider
 
   @impl true
   def start_session(opts), do: BeamAgent.start_session(opts)
@@ -82,45 +83,127 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
   @impl true
   def thread_list(pid), do: BeamAgent.Threads.thread_list(pid)
 
+  # ── Model Listing ───────────────────────────────────────────
+
+  # Known beam_agent backends for validation and normalization.
+  @known_backends ~w(claude codex copilot opencode gemini)a
+
+  # BeamAgent.Auth.status/1 is not yet exported by beam_agent_ex.
+  # Suppress Dialyzer with @dialyzer; the function_exported?/3 guard
+  # ensures runtime safety until the API is available.
+  @dialyzer {:nowarn_function, list_models: 1}
   @impl true
   def list_models(opts) when is_map(opts) do
     backend = Map.get(opts, :backend)
-    provider = backend_to_provider(backend)
 
-    provider_opts =
-      opts
-      |> Map.to_list()
-      |> Keyword.take([:workspace_id, :secret_name, :api_key, :base_url])
+    with {:ok, backend_atom} <- normalize_backend(backend),
+         true <- function_exported?(BeamAgent.Auth, :status, 1),
+         {:ok, %{authenticated: true}} <- BeamAgent.Auth.status(backend_atom) do
+      list_models_via_session(backend_atom)
+    else
+      false ->
+        {:error, :not_supported}
 
-    case Provider.fetch_models(provider, provider_opts) do
-      {:ok, models} ->
-        {:ok, Enum.map(models, &annotate_provider(&1, provider))}
+      {:ok, %{authenticated: false}} ->
+        {:error, :not_authenticated}
 
       {:error, _} = error ->
         error
     end
   end
 
-  # Map the MonkeyClaw backend identifier to the upstream provider name.
-  # Static table — future SDK and local backends extend this.
-  defp backend_to_provider(atom) when is_atom(atom) and not is_nil(atom),
-    do: backend_to_provider(Atom.to_string(atom))
+  # Start a temporary session, query the backend's model catalog, and
+  # stop. The session lifecycle is intentionally synchronous — the CLI
+  # init handshake populates the model catalog, and supported_models/1
+  # reads from that init data. The 30s probe timeout in ModelRegistry
+  # bounds the outer deadline.
+  @spec list_models_via_session(atom()) :: {:ok, [map()]} | {:error, term()}
+  defp list_models_via_session(backend_atom) do
+    provider = backend_to_provider(backend_atom)
 
-  defp backend_to_provider("claude"), do: "anthropic"
-  defp backend_to_provider("codex"), do: "openai"
-  defp backend_to_provider("gemini"), do: "google"
-  defp backend_to_provider("opencode"), do: "anthropic"
-  defp backend_to_provider("copilot"), do: "github_copilot"
-  defp backend_to_provider(nil), do: "anthropic"
-  defp backend_to_provider(other) when is_binary(other), do: other
+    case BeamAgent.start_session(%{backend: backend_atom}) do
+      {:ok, session} ->
+        try do
+          case BeamAgent.Catalog.supported_models(session) do
+            {:ok, models} when is_list(models) ->
+              {:ok, Enum.map(models, &normalize_model(&1, provider))}
 
-  defp annotate_provider(%{model_id: id, display_name: name, capabilities: caps}, provider) do
+            {:error, _} = error ->
+              error
+          end
+        after
+          BeamAgent.stop(session)
+        end
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  # Validate and normalize the backend identifier to a known atom.
+  # Accepts atoms, binaries, and strings. Returns {:error, ...} for
+  # unrecognized backends so the probe reports a clear failure rather
+  # than crashing.
+  @spec normalize_backend(term()) :: {:ok, atom()} | {:error, {:unknown_backend, term()}}
+  defp normalize_backend(backend) when is_atom(backend) and backend in @known_backends,
+    do: {:ok, backend}
+
+  defp normalize_backend(backend) when is_binary(backend) do
+    atom = String.to_existing_atom(backend)
+    if atom in @known_backends, do: {:ok, atom}, else: {:error, {:unknown_backend, backend}}
+  rescue
+    ArgumentError -> {:error, {:unknown_backend, backend}}
+  end
+
+  defp normalize_backend(other), do: {:error, {:unknown_backend, other}}
+
+  # Map MonkeyClaw backend atoms to their upstream provider string.
+  # Single source of truth for the :provider field in model_attrs.
+  @dialyzer {:nowarn_function, backend_to_provider: 1}
+  @spec backend_to_provider(atom()) :: String.t()
+  defp backend_to_provider(:claude), do: "anthropic"
+  defp backend_to_provider(:codex), do: "openai"
+  defp backend_to_provider(:gemini), do: "google"
+  defp backend_to_provider(:opencode), do: "anthropic"
+  defp backend_to_provider(:copilot), do: "github_copilot"
+  defp backend_to_provider(other), do: Atom.to_string(other)
+
+  # Normalize a beam_agent model entry (binary or atom keys from the
+  # CLI init handshake JSON) into the model_attrs shape expected by
+  # CachedModel.changeset/2.
+  @dialyzer {:nowarn_function, normalize_model: 2}
+  @spec normalize_model(map() | binary(), String.t()) :: map()
+  defp normalize_model(model_id, provider) when is_binary(model_id) do
+    %{provider: provider, model_id: model_id, display_name: model_id, capabilities: %{}}
+  end
+
+  defp normalize_model(model, provider) when is_map(model) do
+    model_id =
+      coalesce_key(
+        model,
+        [:model_id, "model_id", :model, "model", :name, "name", :id, "id"],
+        "unknown"
+      )
+
     %{
       provider: provider,
-      model_id: id,
-      display_name: name,
-      capabilities: caps
+      model_id: to_string(model_id),
+      display_name:
+        to_string(coalesce_key(model, [:display_name, "display_name", :name, "name"], model_id)),
+      capabilities: coalesce_key(model, [:capabilities, "capabilities"], %{})
     }
+  end
+
+  # Return the first non-nil value found for any of the candidate keys,
+  # or the default when none match.
+  @spec coalesce_key(map(), [atom() | String.t()], term()) :: term()
+  defp coalesce_key(map, keys, default) do
+    Enum.reduce_while(keys, default, fn key, acc ->
+      case Map.fetch(map, key) do
+        {:ok, value} when not is_nil(value) -> {:halt, value}
+        _ -> {:cont, acc}
+      end
+    end)
   end
 
   # ── Checkpoint Operations ────────────────────────────────────

@@ -61,20 +61,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
   alias MonkeyClaw.AgentBridge.CliResolver
   alias MonkeyClaw.AgentBridge.Telemetry, as: BridgeTelemetry
   alias MonkeyClaw.Sessions
-  alias MonkeyClaw.Vault
   alias MonkeyClaw.Workspaces
-
-  # Maps backend atoms to upstream provider strings for vault secret
-  # discovery in the session model hook. When a session starts, we need
-  # the provider name to find the matching vault secret so the hook can
-  # pass credentials to `backend.list_models/1`.
-  @backend_to_provider %{
-    claude: "anthropic",
-    codex: "openai",
-    gemini: "google",
-    opencode: "anthropic",
-    copilot: "github_copilot"
-  }
 
   # Default query timeout: 2 minutes (LLM queries can be slow)
   @default_query_timeout 120_000
@@ -444,7 +431,7 @@ defmodule MonkeyClaw.AgentBridge.Session do
       if Process.whereis(MonkeyClaw.ModelRegistry) do
         hook_token = make_ref()
         :ok = MonkeyClaw.ModelRegistry.register_hook_token(self(), hook_token)
-        fire_model_hook(backend, session_opts, id, self(), hook_token)
+        fire_model_hook(backend, session_opts, self(), hook_token)
       end
 
       {:ok, active_state}
@@ -903,14 +890,12 @@ defmodule MonkeyClaw.AgentBridge.Session do
   # was registered with ModelRegistry during session init. Only the
   # session that registered the token can authorize writes — this
   # prevents forged casts from arbitrary processes on the node.
-  @spec fire_model_hook(module(), map(), String.t(), pid(), reference()) :: :ok
-  defp fire_model_hook(backend, session_opts, workspace_id, session_pid, hook_token) do
+  @spec fire_model_hook(module(), map(), pid(), reference()) :: :ok
+  defp fire_model_hook(backend, session_opts, session_pid, hook_token) do
     _ =
       Task.Supervisor.start_child(MonkeyClaw.TaskSupervisor, fn ->
         try do
-          enriched_opts = enrich_model_hook_opts(session_opts, workspace_id)
-
-          case backend.list_models(enriched_opts) do
+          case backend.list_models(session_opts) do
             {:ok, model_attrs_list} when is_list(model_attrs_list) ->
               backend_name = resolve_backend_name(session_opts, backend)
               now = DateTime.utc_now()
@@ -967,41 +952,6 @@ defmodule MonkeyClaw.AgentBridge.Session do
         "unknown"
     end
   end
-
-  # Inject `:workspace_id` and `:secret_name` into session_opts so
-  # `BeamAgent.list_models/1` can resolve API credentials via the vault.
-  #
-  # `Scope.session_opts/1` strips these keys (they aren't persona config),
-  # but the session's `:id` IS the workspace_id, and the matching vault
-  # secret is discoverable from the backend's provider mapping.
-  defp enrich_model_hook_opts(session_opts, workspace_id) do
-    opts = Map.put(session_opts, :workspace_id, workspace_id)
-
-    case discover_secret_for_backend(workspace_id, Map.get(session_opts, :backend)) do
-      {:ok, secret_name} -> Map.put(opts, :secret_name, secret_name)
-      :error -> opts
-    end
-  end
-
-  # Query the vault for a secret matching this backend's upstream provider.
-  # Returns `{:ok, secret_name}` or `:error`. Raises are intentionally
-  # NOT rescued here — the caller's try/rescue in `fire_model_hook`
-  # handles all exceptions so supervision stays clean.
-  defp discover_secret_for_backend(workspace_id, backend_atom)
-       when is_binary(workspace_id) and is_atom(backend_atom) and not is_nil(backend_atom) do
-    case Map.get(@backend_to_provider, backend_atom) do
-      nil ->
-        :error
-
-      provider ->
-        case Enum.find(Vault.list_secrets(workspace_id), &(&1.provider == provider)) do
-          %{name: name} -> {:ok, name}
-          nil -> :error
-        end
-    end
-  end
-
-  defp discover_secret_for_backend(_, _), do: :error
 
   # Kill an active stream task and clean up its state.
   # Safe to call when no stream is active (returns state unchanged).

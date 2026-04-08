@@ -11,6 +11,14 @@ defmodule MonkeyClaw.ModelRegistry do
   All four validate through the same changeset before touching SQLite
   or ETS.
 
+  ## Auto-Discovery
+
+  When no backends are configured, the registry auto-discovers
+  authenticated backends by probing all five known backends via
+  `BeamAgent.Auth.status/1`. Backends that report `authenticated: true`
+  are added to the probe schedule. Vault-based workspace discovery
+  remains available as an explicit action via `refresh_for_workspace/1`.
+
   ## Process Justification
 
     * **Stateful** — owns ETS table lifecycle via heir and maintains
@@ -19,9 +27,6 @@ defmodule MonkeyClaw.ModelRegistry do
       race conditions on the conditional upsert precedence
     * **Single instance** — registered under `__MODULE__`; one
       registry per node
-
-  Design spec: `docs/superpowers/specs/2026-04-05-list-models-per-backend-design.md`
-  (local-only; not committed to the repository).
   """
 
   use GenServer
@@ -31,10 +36,12 @@ defmodule MonkeyClaw.ModelRegistry do
   alias MonkeyClaw.ModelRegistry.Baseline
   alias MonkeyClaw.ModelRegistry.CachedModel
   alias MonkeyClaw.ModelRegistry.EtsHeir
-  alias MonkeyClaw.ModelRegistry.Provider
   alias MonkeyClaw.Repo
   alias MonkeyClaw.Vault
-  alias MonkeyClaw.Workspaces
+  alias MonkeyClaw.Vault.SecretScanner
+
+  # All known beam_agent backends for auth-based auto-discovery.
+  @all_known_backends [:claude, :codex, :copilot, :opencode, :gemini]
 
   @ets_table :monkey_claw_model_registry
   @default_interval_ms :timer.hours(24)
@@ -163,14 +170,18 @@ defmodule MonkeyClaw.ModelRegistry do
   end
 
   @doc """
-  Probe upstream APIs using vault secrets from the given workspace.
+  Probe backends using vault secrets from the given workspace.
 
-  Discovers which vault secrets map to known backends via a static
-  `provider → backend` mapping, then probes each backend synchronously
-  with the corresponding secret name and workspace ID. On success,
-  auto-configures `state.backends`, `state.backend_configs`, and
-  `state.workspace_id` so future tick probes continue without manual
-  intervention.
+  Secondary discovery path for users who manage API keys through the
+  vault. Discovers which vault secrets map to known backends via a
+  static `provider → backend` mapping, then probes each backend
+  synchronously with the corresponding secret name and workspace ID.
+  On success, auto-configures `state.backends`, `state.backend_configs`,
+  and `state.workspace_id` so future tick probes continue without
+  manual intervention.
+
+  For auth-based discovery (primary path), see `maybe_auto_discover/1`
+  which probes all backends via `BeamAgent.Auth.status/1`.
 
   Returns `:ok` when at least one backend was probed (individual probe
   failures are logged but do not fail the call), or
@@ -442,7 +453,7 @@ defmodule MonkeyClaw.ModelRegistry do
 
       {backend, remaining} ->
         Logger.warning(
-          "ModelRegistry: probe task for #{backend} crashed: #{Provider.sanitize_for_log(reason)}"
+          "ModelRegistry: probe task for #{backend} crashed: #{sanitize_for_log(reason)}"
         )
 
         state = %{
@@ -614,6 +625,11 @@ defmodule MonkeyClaw.ModelRegistry do
 
   # Static reverse mapping from vault secret provider to ModelRegistry
   # backend name. Mirrors the forward mapping in BeamAgent.backend_to_provider/1.
+  #
+  # Note: :opencode is intentionally excluded — it shares the "anthropic"
+  # provider with :claude, making the reverse mapping ambiguous. The
+  # auth-based discovery path (primary) handles :opencode independently
+  # via BeamAgent.Auth.status(:opencode).
   @provider_to_backend %{
     "anthropic" => "claude",
     "openai" => "codex",
@@ -645,39 +661,71 @@ defmodule MonkeyClaw.ModelRegistry do
 
   # Merges discovered backends into GenServer state so future tick
   # probes and refresh_all/0 calls work without reconfiguration.
-  # When no backends are configured, discover them from the first
-  # workspace's vault secrets. Single-user, single-instance: the first
-  # workspace is the only workspace. Fires once per tick when backends
-  # is empty — if no workspace or secrets exist yet, returns state
-  # unchanged and retries on the next tick.
+  # When no backends are configured, probe all known backends via
+  # BeamAgent.Auth.status/1 to find which ones are authenticated on the
+  # system. Fires once per tick when backends is empty — if none are
+  # authenticated yet, returns state unchanged and retries on the next
+  # tick.
   defp maybe_auto_discover(%State{backends: []} = state) do
-    case auto_discover_backends() do
-      {[_ | _] = specs, workspace_id} ->
-        Logger.info(
-          "ModelRegistry: auto-discovered #{length(specs)} backend(s) from workspace vault"
-        )
+    case discover_authenticated_backends() do
+      [_ | _] = backends ->
+        Logger.info("ModelRegistry: auto-discovered #{length(backends)} authenticated backend(s)")
 
-        bootstrap_workspace_config(specs, workspace_id, state)
+        bootstrap_authenticated_backends(backends, state)
 
-      _ ->
+      [] ->
         state
     end
   end
 
   defp maybe_auto_discover(state), do: state
 
-  defp auto_discover_backends do
-    case Workspaces.list_workspaces() do
-      [workspace | _] ->
-        {discover_workspace_backends(workspace.id), workspace.id}
-
-      [] ->
-        {[], nil}
+  # Probe all known backends via BeamAgent.Auth.status/1 and return
+  # backend name strings for those that are currently authenticated.
+  # Suppresses Dialyzer because Auth.status/1 is not yet exported by
+  # beam_agent_ex; the function_exported?/3 guard ensures runtime safety.
+  @dialyzer {:nowarn_function, discover_authenticated_backends: 0}
+  @spec discover_authenticated_backends() :: [String.t()]
+  defp discover_authenticated_backends do
+    if function_exported?(BeamAgent.Auth, :status, 1) do
+      @all_known_backends
+      |> Enum.filter(&backend_authenticated?/1)
+      |> Enum.map(&Atom.to_string/1)
+    else
+      []
     end
   rescue
+    # Covers all calls within this function body, including
+    # backend_authenticated?/1 which calls BeamAgent.Auth.status/1.
+    # The tick handler is the trust boundary for external calls.
     e ->
-      Logger.debug("ModelRegistry: auto-discovery skipped: #{Exception.message(e)}")
-      {[], nil}
+      Logger.debug("ModelRegistry: auth-based discovery skipped: #{Exception.message(e)}")
+      []
+  end
+
+  @dialyzer {:nowarn_function, backend_authenticated?: 1}
+  @spec backend_authenticated?(atom()) :: boolean()
+  defp backend_authenticated?(backend) do
+    match?({:ok, %{authenticated: true}}, BeamAgent.Auth.status(backend))
+  end
+
+  # Configure state with auth-discovered backends. Unlike
+  # bootstrap_workspace_config/3, no secret_name or workspace_id is
+  # injected — the BeamAgent adapter handles auth internally via
+  # temporary sessions.
+  @spec bootstrap_authenticated_backends([String.t()], State.t()) :: State.t()
+  defp bootstrap_authenticated_backends(backends, state) do
+    new_backends =
+      backends
+      |> Enum.concat(state.backends)
+      |> Enum.uniq()
+
+    new_last_probe =
+      Enum.reduce(new_backends, state.last_probe_at, fn backend, acc ->
+        Map.put_new(acc, backend, nil)
+      end)
+
+    %{state | backends: new_backends, last_probe_at: new_last_probe}
   end
 
   defp bootstrap_workspace_config(backend_specs, workspace_id, state) do
@@ -733,7 +781,7 @@ defmodule MonkeyClaw.ModelRegistry do
 
   defp handle_probe_result(backend, {:error, reason}, state) do
     Logger.warning(
-      "ModelRegistry: probe failed for #{backend}: #{Provider.sanitize_for_log(reason)}, keeping stale cache"
+      "ModelRegistry: probe failed for #{backend}: #{sanitize_for_log(reason)}, keeping stale cache"
     )
 
     apply_backoff(backend, state)
@@ -741,7 +789,7 @@ defmodule MonkeyClaw.ModelRegistry do
 
   defp handle_probe_result(backend, other, state) do
     Logger.warning(
-      "ModelRegistry: probe for #{backend} returned malformed result: #{Provider.sanitize_for_log(other)}, " <>
+      "ModelRegistry: probe for #{backend} returned malformed result: #{sanitize_for_log(other)}, " <>
         "treating as error"
     )
 
@@ -774,7 +822,7 @@ defmodule MonkeyClaw.ModelRegistry do
 
       {:error, reason} ->
         Logger.warning(
-          "ModelRegistry: probe upsert failed for #{backend}: #{Provider.sanitize_for_log(reason)}, " <>
+          "ModelRegistry: probe upsert failed for #{backend}: #{sanitize_for_log(reason)}, " <>
             "ETS cache unchanged"
         )
     end
@@ -837,9 +885,7 @@ defmodule MonkeyClaw.ModelRegistry do
         {:ok, applied}
 
       {:error, reason} ->
-        Logger.warning(
-          "ModelRegistry: upsert transaction failed: #{Provider.sanitize_for_log(reason)}"
-        )
+        Logger.warning("ModelRegistry: upsert transaction failed: #{sanitize_for_log(reason)}")
 
         {:error, reason}
     end
@@ -878,7 +924,7 @@ defmodule MonkeyClaw.ModelRegistry do
         {:error, reason} ->
           Logger.warning(
             "ModelRegistry: upsert failed for #{inspect({write.backend, write.provider})}: " <>
-              Provider.sanitize_for_log(reason)
+              sanitize_for_log(reason)
           )
 
           applied
@@ -1206,22 +1252,16 @@ defmodule MonkeyClaw.ModelRegistry do
   defp validate_option(:backend_intervals, value, _state),
     do: {:error, {:invalid_option, :backend_intervals, value}}
 
-  @allowed_backend_config_keys [
-    :adapter,
-    :secret_name,
-    :base_url,
-    :probe_deadline_ms,
-    :workspace_id
-  ]
-
+  # Structural validation only — each config must be a map keyed by
+  # backend name strings. Adapter-specific keys pass through to
+  # `probe_opts/2` untouched so custom adapters can receive their own
+  # configuration without an allowlist gate.
   defp validate_option(:backend_configs, value, _state) when is_map(value) do
-    Enum.reduce_while(value, :ok, fn {_backend, config}, :ok ->
-      if is_map(config) and Enum.all?(Map.keys(config), &(&1 in @allowed_backend_config_keys)) do
-        {:cont, :ok}
-      else
-        {:halt, {:error, {:invalid_option, :backend_configs, value}}}
-      end
-    end)
+    if Enum.all?(value, fn {_backend, config} -> is_map(config) end) do
+      :ok
+    else
+      {:error, {:invalid_option, :backend_configs, value}}
+    end
   end
 
   defp validate_option(:backend_configs, value, _state),
@@ -1275,6 +1315,21 @@ defmodule MonkeyClaw.ModelRegistry do
           | hook_tokens: Map.delete(state.hook_tokens, session_pid),
             session_monitors: remaining
         }
+    end
+  end
+
+  # ── Private — Log sanitization ──────────────────────────────
+
+  # Produces a redacted string representation of any term, suitable
+  # for Logger output. Inspects the term and routes the resulting
+  # string through SecretScanner to scrub any embedded credentials.
+  @spec sanitize_for_log(term()) :: String.t()
+  defp sanitize_for_log(term) do
+    inspected = inspect(term, limit: 200, printable_limit: 4096)
+
+    case SecretScanner.scan_and_redact(inspected) do
+      {:ok, redacted, _count} -> redacted
+      {:error, _} -> "[LOG_SANITIZE_FAILED]"
     end
   end
 end

@@ -532,15 +532,20 @@ cached models grouped by provider, trigger refresh).
 Unified model cache keyed on `(backend, provider)` with per-backend
 probes, SQLite persistence, and ETS read-through for low-latency reads.
 
-Five-layer architecture:
+Auto-discovers authenticated backends via `BeamAgent.Auth.status/1` on
+each tick when no backends are configured. The BeamAgent adapter starts
+a temporary session per backend, queries `BeamAgent.Catalog.supported_models/1`
+from the CLI init handshake data, and normalizes results to `model_attrs`
+shape. No direct HTTP calls to provider APIs.
+
+Four-layer architecture:
 
 | Layer | Module | Owns |
 |-------|--------|------|
-| **ModelRegistry** | `MonkeyClaw.ModelRegistry` | GenServer — ETS table lifecycle, tick scheduler, per-backend probe dispatch, serialized writes via single upsert funnel |
+| **ModelRegistry** | `MonkeyClaw.ModelRegistry` | GenServer — ETS table lifecycle, tick scheduler, per-backend probe dispatch, auth-based auto-discovery, serialized writes via single upsert funnel |
 | **CachedModel** | `MonkeyClaw.ModelRegistry.CachedModel` | Ecto schema — `(backend, provider)` unique key, embedded model list, trust-boundary changeset validation |
 | **Baseline** | `MonkeyClaw.ModelRegistry.Baseline` | Boot seed loader — reads baseline model entries from `runtime.exs`, cold-start availability |
 | **EtsHeir** | `MonkeyClaw.ModelRegistry.EtsHeir` | ETS crash survival — heir process reclaims the table when the registry crashes and re-transfers on restart |
-| **Provider** | `MonkeyClaw.ModelRegistry.Provider` | HTTP fetching via Req for Anthropic, OpenAI, and Google APIs; called by the BeamAgent backend adapter |
 
 Four independent writers populate the cache: **Baseline** (boot seed),
 **Probe** (periodic per-backend tasks via `TaskSupervisor`),
