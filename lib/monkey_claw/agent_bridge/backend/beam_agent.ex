@@ -121,6 +121,12 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
   #
   # The 15s readiness timeout is well within ModelRegistry's 30s probe
   # deadline.
+  #
+  # The defensive {:ok, map()} clauses handle backends that return the
+  # raw models metadata object (with "availableModels" sub-key) instead
+  # of a flat list. Dialyzer flags these as unreachable based on the
+  # upstream spec, but they're needed for runtime safety.
+  @dialyzer {:nowarn_function, list_models_via_session: 1}
   @spec list_models_via_session(atom()) :: {:ok, [map()]} | {:error, term()}
   defp list_models_via_session(backend_atom) do
     provider = backend_to_provider(backend_atom)
@@ -132,6 +138,19 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
             case BeamAgent.Catalog.supported_models(session) do
               {:ok, models} when is_list(models) ->
                 {:ok, Enum.map(models, &normalize_model(&1, provider))}
+
+              # Some backends (Gemini) wrap model data in a map with
+              # an "availableModels" sub-key when the raw init_response
+              # is returned instead of a flat list.  Extract the nested
+              # list so the probe doesn't crash on a CaseClauseError.
+              {:ok, %{"availableModels" => models}} when is_list(models) ->
+                {:ok, Enum.map(models, &normalize_model(&1, provider))}
+
+              {:ok, %{<<"availableModels">> => models}} when is_list(models) ->
+                {:ok, Enum.map(models, &normalize_model(&1, provider))}
+
+              {:ok, _unexpected} ->
+                {:error, :unsupported_model_format}
 
               {:error, _} = error ->
                 error

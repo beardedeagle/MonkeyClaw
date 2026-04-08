@@ -49,7 +49,11 @@ defmodule MonkeyClaw.ModelRegistry.CachedModel do
   @max_models_per_row 500
   @max_model_field_length 256
   @max_capabilities_bytes 8 * 1024
-  @model_field_pattern ~r/\A[\p{L}\p{N}._\-: \/]+\z/u
+  # Model IDs and display names from upstream providers contain a wide
+  # range of characters: parentheses (Gemini "Flash (Thinking)"),
+  # brackets, plus signs, commas, at-signs, etc.  Reject only control
+  # characters and null bytes — everything else is valid UTF-8 display text.
+  @model_field_pattern ~r/\A[^\x00-\x1f\x7f]+\z/u
 
   @primary_key {:id, :binary_id, autogenerate: true}
   schema "cached_models" do

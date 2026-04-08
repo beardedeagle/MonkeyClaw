@@ -681,25 +681,27 @@ defmodule MonkeyClaw.ModelRegistry do
 
   # Probe all known backends via BeamAgent.Auth.status/1 and return
   # backend name strings for those that are currently authenticated.
+  # Each backend is probed independently — a crash in one does not
+  # prevent discovery of the others.
   @dialyzer {:nowarn_function, discover_authenticated_backends: 0}
   @spec discover_authenticated_backends() :: [String.t()]
   defp discover_authenticated_backends do
     @all_known_backends
     |> Enum.filter(&backend_authenticated?/1)
     |> Enum.map(&Atom.to_string/1)
-  rescue
-    # Covers all calls within this function body, including
-    # backend_authenticated?/1 which calls BeamAgent.Auth.status/1.
-    # The tick handler is the trust boundary for external calls.
-    e ->
-      Logger.debug("ModelRegistry: auth-based discovery skipped: #{Exception.message(e)}")
-      []
   end
 
   @dialyzer {:nowarn_function, backend_authenticated?: 1}
   @spec backend_authenticated?(atom()) :: boolean()
   defp backend_authenticated?(backend) do
     match?({:ok, %{authenticated: true}}, BeamAgent.Auth.status(backend))
+  rescue
+    # Isolate per-backend failures so one crashing auth check does
+    # not discard discoveries from the other four backends.
+    e ->
+      Logger.debug("ModelRegistry: auth check for #{backend} failed: #{Exception.message(e)}")
+
+      false
   end
 
   # When vault discovery returns empty, probe auth-discovered or
@@ -935,7 +937,7 @@ defmodule MonkeyClaw.ModelRegistry do
           Logger.warning(
             "ModelRegistry: rejecting write for " <>
               "#{inspect({Map.get(write, :backend), Map.get(write, :provider)})}: " <>
-              "#{inspect(changeset.errors)}"
+              "#{inspect(collect_all_errors(changeset))}"
           )
 
           {acc, dropped + 1}
@@ -943,6 +945,39 @@ defmodule MonkeyClaw.ModelRegistry do
       end)
 
     {Enum.reverse(valid), dropped}
+  end
+
+  # Collect all errors from a changeset including embedded changeset
+  # errors, which Ecto stores in the :changes map rather than the
+  # top-level :errors list.  Without this, a failing cast_embed
+  # produces an opaque log line with `[]` for errors.
+  @spec collect_all_errors(Ecto.Changeset.t()) :: keyword()
+  defp collect_all_errors(changeset) do
+    changeset.errors ++ collect_embedded_errors(changeset.changes)
+  end
+
+  @spec collect_embedded_errors(map()) :: keyword()
+  defp collect_embedded_errors(changes) do
+    Enum.flat_map(changes, fn
+      {field, embeds} when is_list(embeds) ->
+        extract_embed_errors(field, embeds)
+
+      _ ->
+        []
+    end)
+  end
+
+  @spec extract_embed_errors(atom(), [Ecto.Changeset.t() | term()]) :: keyword()
+  defp extract_embed_errors(field, embeds) do
+    embeds
+    |> Enum.with_index()
+    |> Enum.flat_map(fn
+      {%Ecto.Changeset{valid?: false, errors: errs}, idx} ->
+        Enum.map(errs, fn {k, v} -> {:"#{field}[#{idx}].#{k}", v} end)
+
+      _ ->
+        []
+    end)
   end
 
   defp apply_upserts(valid_changesets) do
