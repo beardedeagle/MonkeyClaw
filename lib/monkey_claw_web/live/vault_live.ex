@@ -18,7 +18,11 @@ defmodule MonkeyClawWeb.VaultLive do
     * **Tokens tab** — List and delete OAuth tokens with
       active/expired status indicators.
     * **Models tab** — Browse cached models grouped by provider
-      with per-model backend tags, trigger on-demand refresh.
+      with per-model backend tags. Refresh requests a
+      workspace-scoped registry update via
+      `ModelRegistry.refresh_for_workspace/1`, which discovers
+      backends through vault secrets or CLI auth status and
+      auto-configures the registry for future tick probes.
 
   ## Security Invariant
 
@@ -207,7 +211,7 @@ defmodule MonkeyClawWeb.VaultLive do
   # ── Model Events ───────────────────────────────────────────
 
   def handle_event("refresh_models", _params, socket) do
-    case spawn_refresh_task() do
+    case spawn_refresh_task(socket.assigns.workspace_id) do
       {:ok, _child} ->
         {:noreply, assign(socket, :refreshing_models, true)}
 
@@ -618,8 +622,8 @@ defmodule MonkeyClawWeb.VaultLive do
       %{}
   end
 
-  defp safe_refresh_models do
-    ModelRegistry.refresh_all()
+  defp safe_refresh_models(workspace_id) do
+    ModelRegistry.refresh_for_workspace(workspace_id)
   rescue
     e -> {:error, Exception.message(e)}
   end
@@ -628,21 +632,23 @@ defmodule MonkeyClawWeb.VaultLive do
   # success or {:error, reason} if the registry or supervisor is
   # unavailable. Split into two functions to satisfy Credo's max
   # nesting depth of 2.
-  @spec spawn_refresh_task() :: {:ok, pid()} | {:error, String.t()}
-  defp spawn_refresh_task do
+  @spec spawn_refresh_task(Ecto.UUID.t() | nil) :: {:ok, pid()} | {:error, String.t()}
+  defp spawn_refresh_task(nil), do: {:error, "No workspace available"}
+
+  defp spawn_refresh_task(workspace_id) do
     case Process.whereis(ModelRegistry) do
       nil -> {:error, "Model registry is not running"}
-      _pid -> start_refresh_child()
+      _pid -> start_refresh_child(workspace_id)
     end
   end
 
-  defp start_refresh_child do
+  defp start_refresh_child(workspace_id) do
     lv = self()
 
     case Task.Supervisor.start_child(MonkeyClaw.TaskSupervisor, fn ->
            result =
              try do
-               safe_refresh_models()
+               safe_refresh_models(workspace_id)
              catch
                kind, reason -> {:error, "#{kind}: #{inspect(reason)}"}
              end

@@ -194,6 +194,41 @@ defmodule MonkeyClaw.ModelRegistry.CachedModelTest do
       assert cs.valid?
     end
 
+    test "accepts display names with parentheses and brackets" do
+      # Real-world Gemini model names include suffixes like "(Thinking)".
+      models = [
+        %{
+          model_id: "gemini-2.0-flash-thinking",
+          display_name: "Gemini 2.0 Flash (Thinking)",
+          capabilities: %{}
+        },
+        %{
+          model_id: "gemini-2.5-pro-preview",
+          display_name: "Gemini 2.5 Pro [Preview]",
+          capabilities: %{}
+        }
+      ]
+
+      cs = CachedModel.changeset(%CachedModel{}, %{@embed_attrs | models: models})
+      assert cs.valid?
+    end
+
+    test "accepts model names with plus, comma, ampersand, at-sign" do
+      models = [
+        %{model_id: "flash+", display_name: "Flash+, Enhanced & Fast", capabilities: %{}},
+        %{model_id: "model@latest", display_name: "Model @latest", capabilities: %{}}
+      ]
+
+      cs = CachedModel.changeset(%CachedModel{}, %{@embed_attrs | models: models})
+      assert cs.valid?
+    end
+
+    test "rejects model_id with tab character" do
+      models = [%{model_id: "bad\tid", display_name: "D", capabilities: %{}}]
+      cs = CachedModel.changeset(%CachedModel{}, %{@embed_attrs | models: models})
+      refute cs.valid?
+    end
+
     test "rejects capabilities larger than 8 KiB when encoded" do
       giant = %{blob: String.duplicate("x", 9_000)}
       models = [%{model_id: "m", display_name: "M", capabilities: giant}]
