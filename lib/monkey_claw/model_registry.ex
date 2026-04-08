@@ -170,23 +170,17 @@ defmodule MonkeyClaw.ModelRegistry do
   end
 
   @doc """
-  Probe backends using vault secrets from the given workspace.
+  Probe backends for the given workspace.
 
-  Secondary discovery path for users who manage API keys through the
-  vault. Discovers which vault secrets map to known backends via a
-  static `provider → backend` mapping, then probes each backend
-  synchronously with the corresponding secret name and workspace ID.
-  On success, auto-configures `state.backends`, `state.backend_configs`,
-  and `state.workspace_id` so future tick probes continue without
-  manual intervention.
-
-  For auth-based discovery (primary path), see `maybe_auto_discover/1`
-  which probes all backends via `BeamAgent.Auth.status/1`.
+  Tries vault-based discovery first (secrets with a known provider
+  mapping), then falls back to already-configured backends (populated
+  by auth-based auto-discovery at startup), and finally attempts
+  auth-based discovery directly if nothing else is available.
 
   Returns `:ok` when at least one backend was probed (individual probe
   failures are logged but do not fail the call), or
-  `{:error, :no_backends_discovered}` when no vault secrets map to a
-  known backend.
+  `{:error, :no_backends_discovered}` when no backends could be
+  resolved from any source.
   """
   @spec refresh_for_workspace(Ecto.UUID.t()) :: :ok | {:error, :no_backends_discovered}
   def refresh_for_workspace(workspace_id) when is_binary(workspace_id) do
@@ -349,10 +343,7 @@ defmodule MonkeyClaw.ModelRegistry do
 
   def handle_call({:refresh_for_workspace, workspace_id}, _from, %State{} = state) do
     case discover_workspace_backends(workspace_id) do
-      [] ->
-        {:reply, {:error, :no_backends_discovered}, state}
-
-      backend_specs ->
+      [_ | _] = backend_specs ->
         state = bootstrap_workspace_config(backend_specs, workspace_id, state)
 
         state =
@@ -368,6 +359,10 @@ defmodule MonkeyClaw.ModelRegistry do
           end)
 
         {:reply, :ok, state}
+
+      [] ->
+        # No vault secrets — fall back to auth-discovered or existing backends
+        refresh_with_auth_fallback(state)
     end
   end
 
@@ -701,6 +696,46 @@ defmodule MonkeyClaw.ModelRegistry do
   @spec backend_authenticated?(atom()) :: boolean()
   defp backend_authenticated?(backend) do
     match?({:ok, %{authenticated: true}}, BeamAgent.Auth.status(backend))
+  end
+
+  # When vault discovery returns empty, probe auth-discovered or
+  # already-configured backends instead. Returns a GenServer reply tuple.
+  @spec refresh_with_auth_fallback(State.t()) ::
+          {:reply, :ok | {:error, :no_backends_discovered}, State.t()}
+  defp refresh_with_auth_fallback(state) do
+    {backends, state} = resolve_auth_backends(state)
+
+    case backends do
+      [] ->
+        {:reply, {:error, :no_backends_discovered}, state}
+
+      _ ->
+        state =
+          Enum.reduce(backends, state, fn backend, acc ->
+            {_result, new_state} = do_synchronous_probe(backend, acc)
+            new_state
+          end)
+
+        {:reply, :ok, state}
+    end
+  end
+
+  # Resolve backends for a refresh when vault discovery returned empty.
+  # Prefers already-configured backends (populated by startup auto-discovery),
+  # falls back to a fresh auth-discovery pass if state has none.
+  @spec resolve_auth_backends(State.t()) :: {[String.t()], State.t()}
+  defp resolve_auth_backends(%State{backends: [_ | _]} = state) do
+    {state.backends, state}
+  end
+
+  defp resolve_auth_backends(%State{backends: []} = state) do
+    case discover_authenticated_backends() do
+      [_ | _] = backends ->
+        {backends, bootstrap_authenticated_backends(backends, state)}
+
+      [] ->
+        {[], state}
+    end
   end
 
   # Configure state with auth-discovered backends. Unlike

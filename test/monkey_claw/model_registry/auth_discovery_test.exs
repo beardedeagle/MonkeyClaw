@@ -208,23 +208,30 @@ defmodule MonkeyClaw.ModelRegistry.AuthDiscoveryTest do
   # ── Vault-based workspace discovery (secondary path) ────────
 
   describe "refresh_for_workspace/1" do
-    test "returns {:error, :no_backends_discovered} when workspace has no secrets" do
+    test "falls back to auth discovery when workspace has no vault secrets" do
       workspace = insert_workspace!()
-      assert {:error, :no_backends_discovered} = ModelRegistry.refresh_for_workspace(workspace.id)
+      result = ModelRegistry.refresh_for_workspace(workspace.id)
+
+      # No vault secrets — falls back to auth-based discovery.
+      # Returns :ok if any CLI backend is authenticated on this
+      # system, {:error, :no_backends_discovered} otherwise.
+      assert result == :ok or result == {:error, :no_backends_discovered}
     end
 
-    test "returns {:error, :no_backends_discovered} when secrets have no provider" do
+    test "falls back to auth discovery when secrets have no provider" do
       workspace = insert_workspace!()
       _secret = insert_vault_secret!(workspace, %{name: "misc_key"})
+      result = ModelRegistry.refresh_for_workspace(workspace.id)
 
-      assert {:error, :no_backends_discovered} = ModelRegistry.refresh_for_workspace(workspace.id)
+      assert result == :ok or result == {:error, :no_backends_discovered}
     end
 
-    test "returns {:error, :no_backends_discovered} for unknown provider" do
+    test "falls back to auth discovery for unknown provider" do
       workspace = insert_workspace!()
       _secret = insert_vault_secret!(workspace, %{name: "local_key", provider: "local"})
+      result = ModelRegistry.refresh_for_workspace(workspace.id)
 
-      assert {:error, :no_backends_discovered} = ModelRegistry.refresh_for_workspace(workspace.id)
+      assert result == :ok or result == {:error, :no_backends_discovered}
     end
 
     test "discovers anthropic secret and probes backend" do

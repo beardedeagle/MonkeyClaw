@@ -140,5 +140,20 @@ config :monkey_claw, MonkeyClaw.ModelRegistry.Baseline,
       models: [
         %{model_id: "gemini-2.5-pro", display_name: "Gemini 2.5 Pro", capabilities: %{}}
       ]
+    },
+    %{
+      backend: "copilot",
+      provider: "github_copilot",
+      models: [
+        %{model_id: "gpt-4o", display_name: "GPT-4o", capabilities: %{}},
+        %{model_id: "claude-3.5-sonnet", display_name: "Claude 3.5 Sonnet", capabilities: %{}}
+      ]
+    },
+    %{
+      backend: "opencode",
+      provider: "anthropic",
+      models: [
+        %{model_id: "claude-sonnet-4-6", display_name: "Claude Sonnet 4.6", capabilities: %{}}
+      ]
     }
   ]
