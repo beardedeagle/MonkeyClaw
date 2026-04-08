@@ -110,11 +110,17 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
     end
   end
 
-  # Start a temporary session, query the backend's model catalog, and
-  # stop. The session lifecycle is intentionally synchronous — the CLI
-  # init handshake populates the model catalog, and supported_models/1
-  # reads from that init data. The 30s probe timeout in ModelRegistry
-  # bounds the outer deadline.
+  # Start a temporary session, wait for the CLI init handshake to
+  # complete, query the backend's model catalog, and stop.
+  #
+  # start_session/1 returns {:ok, pid} before the session state machine
+  # reaches :ready — the CLI init handshake runs asynchronously.
+  # supported_models/1 reads from init_response, which is only populated
+  # once the handshake completes. await_session_ready/2 polls health/1
+  # to gate the catalog query.
+  #
+  # The 15s readiness timeout is well within ModelRegistry's 30s probe
+  # deadline.
   @spec list_models_via_session(atom()) :: {:ok, [map()]} | {:error, term()}
   defp list_models_via_session(backend_atom) do
     provider = backend_to_provider(backend_atom)
@@ -122,12 +128,14 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
     case BeamAgent.start_session(%{backend: backend_atom}) do
       {:ok, session} ->
         try do
-          case BeamAgent.Catalog.supported_models(session) do
-            {:ok, models} when is_list(models) ->
-              {:ok, Enum.map(models, &normalize_model(&1, provider))}
+          with :ok <- await_session_ready(session, 15_000) do
+            case BeamAgent.Catalog.supported_models(session) do
+              {:ok, models} when is_list(models) ->
+                {:ok, Enum.map(models, &normalize_model(&1, provider))}
 
-            {:error, _} = error ->
-              error
+              {:error, _} = error ->
+                error
+            end
           end
         after
           BeamAgent.stop(session)
@@ -135,6 +143,32 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
 
       {:error, _} = error ->
         error
+    end
+  end
+
+  # Poll BeamAgent.health/1 until the session reaches :ready state,
+  # indicating the CLI init handshake has completed and init_response
+  # is populated with the backend's model catalog.
+  #
+  # Returns :ok when ready, {:error, :session_not_ready} on timeout or
+  # terminal state (:error, :unknown).
+  @poll_interval_ms 100
+  @spec await_session_ready(pid(), integer()) :: :ok | {:error, :session_not_ready}
+  defp await_session_ready(_session, remaining_ms) when remaining_ms <= 0 do
+    {:error, :session_not_ready}
+  end
+
+  defp await_session_ready(session, remaining_ms) do
+    case BeamAgent.health(session) do
+      :ready ->
+        :ok
+
+      state when state in [:connecting, :initializing] ->
+        Process.sleep(@poll_interval_ms)
+        await_session_ready(session, remaining_ms - @poll_interval_ms)
+
+      _terminal ->
+        {:error, :session_not_ready}
     end
   end
 
