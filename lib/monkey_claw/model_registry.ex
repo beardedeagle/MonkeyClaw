@@ -607,6 +607,10 @@ defmodule MonkeyClaw.ModelRegistry do
         {{:error, {:malformed_probe_result, malformed}}, new_state}
 
       {:exit, reason} ->
+        Logger.error(
+          "ModelRegistry: synchronous probe for #{backend} crashed: #{sanitize_for_log(reason)}"
+        )
+
         new_state = apply_backoff(backend, state)
         {{:error, {:probe_crashed, reason}}, new_state}
 
@@ -1286,7 +1290,12 @@ defmodule MonkeyClaw.ModelRegistry do
   # `probe_opts/2` untouched so custom adapters can receive their own
   # configuration without an allowlist gate.
   defp validate_option(:backend_configs, value, _state) when is_map(value) do
-    if Enum.all?(value, fn {_backend, config} -> is_map(config) end) do
+    all_valid =
+      Enum.all?(value, fn {key, config} ->
+        is_binary(key) and is_map(config)
+      end)
+
+    if all_valid do
       :ok
     else
       {:error, {:invalid_option, :backend_configs, value}}

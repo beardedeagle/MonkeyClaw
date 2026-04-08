@@ -18,9 +18,10 @@ defmodule MonkeyClawWeb.VaultLive do
     * **Tokens tab** — List and delete OAuth tokens with
       active/expired status indicators.
     * **Models tab** — Browse cached models grouped by provider
-      with per-model backend tags. Refresh probes upstream APIs
-      using vault secrets from the current workspace via
-      `ModelRegistry.refresh_for_workspace/1`, which also
+      with per-model backend tags. Refresh requests a
+      workspace-scoped registry update via
+      `ModelRegistry.refresh_for_workspace/1`, which discovers
+      backends through vault secrets or CLI auth status and
       auto-configures the registry for future tick probes.
 
   ## Security Invariant

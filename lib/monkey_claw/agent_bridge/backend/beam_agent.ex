@@ -91,6 +91,11 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
   @dialyzer {:nowarn_function, list_models: 1}
   @impl true
   def list_models(opts) when is_map(opts) do
+    # This adapter authenticates via CLI auth status, not vault secrets.
+    # Opts like :workspace_id and :secret_name are defined in the
+    # behaviour type for adapters that use direct API key auth, but
+    # BeamAgent session startup handles auth internally — only :backend
+    # is consumed here.
     backend = Map.get(opts, :backend)
 
     with {:ok, backend_atom} <- normalize_backend(backend),

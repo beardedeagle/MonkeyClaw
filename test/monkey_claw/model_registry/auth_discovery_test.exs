@@ -203,6 +203,51 @@ defmodule MonkeyClaw.ModelRegistry.AuthDiscoveryTest do
       # Registry is still responsive.
       assert ModelRegistry.list_for_backend("codex") == []
     end
+
+    @tag capture_log: true
+    test "probe crash containing secret-shaped value is redacted in ModelRegistry logs" do
+      # A secret-shaped value (Anthropic API key pattern) embedded in
+      # the crash message must be redacted by sanitize_for_log/1 before
+      # it reaches the ModelRegistry log output.
+      secret = "sk-ant-api03-TESTSECRET1234567890abcdef"
+
+      :ok =
+        ModelRegistry.configure(
+          backends: ["codex"],
+          backend_configs: %{
+            "codex" => %{
+              adapter: TestBackend,
+              list_models_response: {:crash, "auth failed with key #{secret}"}
+            }
+          }
+        )
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          ModelRegistry.refresh("codex")
+        end)
+
+      # Extract only ModelRegistry-emitted log lines. The OTP Task
+      # crash reporter also logs the raw exception — that's a separate
+      # concern handled by Logger filters, not sanitize_for_log/1.
+      registry_lines =
+        log
+        |> String.split("\n")
+        |> Enum.filter(&String.contains?(&1, "ModelRegistry:"))
+        |> Enum.join("\n")
+
+      # At least one ModelRegistry log line must exist for the crash.
+      assert registry_lines != "",
+             "Expected ModelRegistry to log the probe crash"
+
+      # The raw secret MUST NOT appear in ModelRegistry log lines.
+      refute registry_lines =~ secret,
+             "Raw secret leaked into ModelRegistry log output"
+
+      # The redaction marker MUST appear in the sanitized output.
+      assert registry_lines =~ "[REDACTED",
+             "Expected [REDACTED marker in sanitized ModelRegistry log output"
+    end
   end
 
   # ── Vault-based workspace discovery (secondary path) ────────
