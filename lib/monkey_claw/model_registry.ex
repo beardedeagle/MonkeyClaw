@@ -682,18 +682,12 @@ defmodule MonkeyClaw.ModelRegistry do
 
   # Probe all known backends via BeamAgent.Auth.status/1 and return
   # backend name strings for those that are currently authenticated.
-  # Suppresses Dialyzer because Auth.status/1 is not yet exported by
-  # beam_agent_ex; the function_exported?/3 guard ensures runtime safety.
   @dialyzer {:nowarn_function, discover_authenticated_backends: 0}
   @spec discover_authenticated_backends() :: [String.t()]
   defp discover_authenticated_backends do
-    if function_exported?(BeamAgent.Auth, :status, 1) do
-      @all_known_backends
-      |> Enum.filter(&backend_authenticated?/1)
-      |> Enum.map(&Atom.to_string/1)
-    else
-      []
-    end
+    @all_known_backends
+    |> Enum.filter(&backend_authenticated?/1)
+    |> Enum.map(&Atom.to_string/1)
   rescue
     # Covers all calls within this function body, including
     # backend_authenticated?/1 which calls BeamAgent.Auth.status/1.

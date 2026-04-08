@@ -88,22 +88,15 @@ defmodule MonkeyClaw.AgentBridge.Backend.BeamAgent do
   # Known beam_agent backends for validation and normalization.
   @known_backends ~w(claude codex copilot opencode gemini)a
 
-  # BeamAgent.Auth.status/1 is not yet exported by beam_agent_ex.
-  # Suppress Dialyzer with @dialyzer; the function_exported?/3 guard
-  # ensures runtime safety until the API is available.
   @dialyzer {:nowarn_function, list_models: 1}
   @impl true
   def list_models(opts) when is_map(opts) do
     backend = Map.get(opts, :backend)
 
     with {:ok, backend_atom} <- normalize_backend(backend),
-         true <- function_exported?(BeamAgent.Auth, :status, 1),
          {:ok, %{authenticated: true}} <- BeamAgent.Auth.status(backend_atom) do
       list_models_via_session(backend_atom)
     else
-      false ->
-        {:error, :not_supported}
-
       {:ok, %{authenticated: false}} ->
         {:error, :not_authenticated}
 
